@@ -2243,6 +2243,7 @@ Dump::visit (LetStmt &e)
 
   visit_field ("type", e.get_type ());
   visit_field ("init_expr", e.get_init_expr ());
+  visit_field ("else_block", e.get_else_block ());
 
   end ("LetStmt");
 }

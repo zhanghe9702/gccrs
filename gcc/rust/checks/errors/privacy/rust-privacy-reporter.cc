@@ -759,6 +759,8 @@ PrivacyReporter::visit (HIR::LetStmt &stmt)
 
   if (stmt.get_init_expr ())
     stmt.get_init_expr ()->accept_vis (*this);
+  if (stmt.get_else_block ())
+    stmt.get_else_block ()->accept_vis (*this);
 }
 
 void

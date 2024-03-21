@@ -76,10 +76,14 @@ public:
       {
 	ResolveExpr::go (stmt.get_init_expr (), prefix, canonical_prefix);
       }
-
+    if (stmt.has_else_block ())
+      {
+	ResolveExpr::go (stmt.get_else_block (), prefix, canonical_prefix);
+      }
     PatternDeclaration::go (stmt.get_pattern (), Rib::ItemType::Var);
     if (stmt.has_type ())
       ResolveType::go (stmt.get_type ());
+
   }
 
   void visit (AST::TupleStruct &struct_decl) override

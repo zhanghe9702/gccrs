@@ -21,6 +21,8 @@
 #include "rust-compile-expr.h"
 #include "rust-compile-type.h"
 #include "rust-compile-var-decl.h"
+#include "rust-compile-block.h"
+#include "tree.h"
 
 namespace Rust {
 namespace Compile {
@@ -69,11 +71,41 @@ CompileStmt::visit (HIR::LetStmt &stmt)
     return;
 
   tree init = CompileExpr::Compile (stmt.get_init_expr ().get (), ctx);
+  tree else_block = NULL_TREE;
+  tree check_expr = NULL_TREE;
+  if (stmt.has_else_block ())
+  {
+    else_block = CompileExpr::Compile (stmt.get_else_block ().get (), ctx);
+    check_expr
+      = CompilePatternCheckExpr::Compile (stmt.get_pattern ().get (),
+						init, ctx);
+  }
+
   // FIXME use error_mark_node, check that CompileExpr returns error_mark_node
   // on failure and make this an assertion
   if (init == nullptr)
     return;
+  // refutable init
+//   if (stmt.has_else_block ())
+//   {
+//     tree check_expr
+// 	    = CompilePatternCheckExpr::Compile (stmt.get_pattern ().get (),
+// 						init, ctx);
+//     Bvariable *var = nullptr;
+//     rust_assert (
+//       ctx->lookup_var_decl (stmt_pattern.get_mappings ().get_hirid (), &var));
+//     auto init_stmt = Backend::init_statement (fnctx.fndecl, var, init);
 
+//     Bvariable *tmp = NULL;
+//     tree else_block
+//       = CompileBlock::compile (stmt.get_else_block ().get (), ctx, tmp);
+//     tree if_stmt
+//       = Backend::if_statement (NULL_TREE, check_expr, init_stmt,
+// 				     else_block, stmt.get_locus ());
+//     ctx->add_statement (if_stmt);
+//     return;
+//   }
+  // irrefutable init
   TyTy::BaseType *actual = nullptr;
   bool ok = ctx->get_tyctx ()->lookup_type (
     stmt.get_init_expr ()->get_mappings ().get_hirid (), &actual);
@@ -85,7 +117,7 @@ CompileStmt::visit (HIR::LetStmt &stmt)
   init = coercion_site (stmt.get_mappings ().get_hirid (), init, actual,
 			expected, lvalue_locus, rvalue_locus);
 
-  CompilePatternLet::Compile (&stmt_pattern, init, ty, rvalue_locus, ctx);
+  CompilePatternLet::Compile (&stmt_pattern, init, check_expr, else_block, ty, rvalue_locus, ctx);
 }
 
 } // namespace Compile

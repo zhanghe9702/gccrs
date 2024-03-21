@@ -79,6 +79,7 @@ TypeCheckStmt::visit (HIR::LetStmt &stmt)
   HIR::Pattern &stmt_pattern = *stmt.get_pattern ();
   TyTy::BaseType *init_expr_ty = nullptr;
   location_t init_expr_locus = UNKNOWN_LOCATION;
+  location_t else_block_locus = UNKNOWN_LOCATION;
   if (stmt.has_init_expr ())
     {
       init_expr_locus = stmt.get_init_expr ()->get_locus ();
@@ -106,6 +107,18 @@ TypeCheckStmt::visit (HIR::LetStmt &stmt)
 		     TyTy::TyWithLocation (init_expr_ty, init_expr_locus),
 		     stmt.get_locus ());
       TypeCheckPattern::Resolve (&stmt_pattern, specified_ty);
+      if (stmt.has_else_block ())
+      {
+	auto block_expr_ty
+	  = TypeCheckExpr::Resolve (stmt.get_else_block ().get ());
+	/* FIXME: if not NEVER type , what to do? */
+	if (block_expr_ty->get_kind () != TyTy::NEVER)
+	{
+	  else_block_locus = stmt.get_else_block ().get ()->get_locus ();
+	  rust_debug_loc (else_block_locus, "resolved else block to: {%s}",
+	    stmt.get_else_block ().get ()->as_string ());
+	}
+      }
     }
   else
     {

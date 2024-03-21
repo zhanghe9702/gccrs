@@ -21,6 +21,7 @@
 #include "rust-ast-visitor.h"
 #include "rust-session-manager.h"
 #include "rust-attribute-values.h"
+#include "rust-stmt.h"
 
 namespace Rust {
 
@@ -2508,6 +2509,15 @@ CfgStrip::visit (AST::LetStmt &stmt)
 
       if (init_expr.is_marked_for_strip ())
 	rust_error_at (init_expr.get_locus (),
+		       "cannot strip expression in this position - outer "
+		       "attributes not allowed");
+    }
+  if (stmt.has_else_block ())
+    {
+      auto &else_block = stmt.get_else_block ();
+
+      if (else_block.is_marked_for_strip ())
+	rust_error_at (else_block.get_locus (),
 		       "cannot strip expression in this position - outer "
 		       "attributes not allowed");
     }

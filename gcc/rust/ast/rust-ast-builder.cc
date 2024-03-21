@@ -112,10 +112,10 @@ Builder::block (std::vector<std::unique_ptr<Stmt>> &&stmts,
 
 std::unique_ptr<Stmt>
 Builder::let (std::unique_ptr<Pattern> pattern, std::unique_ptr<Type> type,
-	      std::unique_ptr<Expr> init) const
+  std::unique_ptr<Expr> init, std::unique_ptr<BlockExpr> else_block) const
 {
   return std::unique_ptr<Stmt> (new LetStmt (std::move (pattern),
-					     std::move (init), std::move (type),
+    std::move (init), std::move (else_block), std::move (type),
 					     {}, loc));
 }
 

@@ -19,6 +19,7 @@
 #ifndef RUST_AST_STATEMENT_H
 #define RUST_AST_STATEMENT_H
 
+#include "rust-ast-full-decls.h"
 #include "rust-ast.h"
 #include "rust-path.h"
 #include "rust-expr.h"
@@ -72,6 +73,9 @@ class LetStmt : public Stmt
   // bool has_init_expr;
   std::unique_ptr<Expr> init_expr;
 
+  // bool has_else_block;
+  std::unique_ptr<BlockExpr> else_block;
+
   location_t locus;
 
 public:
@@ -86,15 +90,23 @@ public:
   // Returns whether let statement has an initialisation expression.
   bool has_init_expr () const { return init_expr != nullptr; }
 
+  // Returns whether let statement has an else block expression.
+  bool has_else_block () const { return else_block != nullptr; }
+
   std::string as_string () const override;
 
   LetStmt (std::unique_ptr<Pattern> variables_pattern,
-	   std::unique_ptr<Expr> init_expr, std::unique_ptr<Type> type,
-	   std::vector<Attribute> outer_attrs, location_t locus)
+	  std::unique_ptr<Expr> init_expr,
+    std::unique_ptr<BlockExpr> else_block,
+    std::unique_ptr<Type> type,
+	  std::vector<Attribute> outer_attrs, location_t locus)
     : outer_attrs (std::move (outer_attrs)),
       variables_pattern (std::move (variables_pattern)),
-      type (std::move (type)), init_expr (std::move (init_expr)), locus (locus)
+      type (std::move (type)),
+      init_expr (std::move (init_expr)), else_block (std::move (else_block)),
+      locus (locus)
   {}
+
 
   // Copy constructor with clone
   LetStmt (LetStmt const &other)
@@ -109,6 +121,8 @@ public:
       init_expr = other.init_expr->clone_expr ();
     if (other.type != nullptr)
       type = other.type->clone_type ();
+    if (other.else_block != nullptr)
+      else_block = other.else_block->clone_block_expr ();
   }
 
   // Overloaded assignment operator to clone
@@ -132,7 +146,10 @@ public:
       type = other.type->clone_type ();
     else
       type = nullptr;
-
+    if (other.else_block != nullptr)
+      else_block = other.else_block->clone_block_expr ();
+    else
+      else_block = nullptr;
     return *this;
   }
 
@@ -166,6 +183,11 @@ public:
   {
     rust_assert (has_init_expr ());
     return init_expr;
+  }
+  BlockExpr &get_else_block ()
+  {
+    rust_assert (has_else_block ());
+    return *else_block;
   }
 
   Pattern &get_pattern ()

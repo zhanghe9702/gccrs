@@ -642,12 +642,16 @@ ExprStmtBuilder::visit (HIR::LetStmt &stmt)
 	}
       if (stmt.has_init_expr ())
 	(void) visit_expr (*stmt.get_init_expr (), var);
+      if (stmt.has_else_block ())
+	visit (*stmt.get_else_block ());
     }
   else if (stmt.has_init_expr ())
     {
       auto init = visit_expr (*stmt.get_init_expr ());
       PatternBindingBuilder (ctx, init, stmt.get_type ().get ())
 	.go (*stmt.get_pattern ());
+      if (stmt.has_else_block ())
+	visit (*stmt.get_else_block ());
     }
   else
     {

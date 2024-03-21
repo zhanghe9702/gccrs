@@ -982,6 +982,8 @@ ExpandVisitor::visit (AST::LetStmt &stmt)
 
   if (stmt.has_init_expr ())
     maybe_expand_expr (stmt.get_init_expr_ptr ());
+  if (stmt.has_else_block ())
+    visit (stmt.get_else_block ());
 }
 
 void

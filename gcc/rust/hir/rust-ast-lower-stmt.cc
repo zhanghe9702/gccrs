@@ -16,11 +16,13 @@
 // along with GCC; see the file COPYING3.  If not see
 // <http://www.gnu.org/licenses/>.
 
+#include "rust-ast-lower-block.h"
 #include "rust-ast-lower-item.h"
 #include "rust-ast-lower-stmt.h"
 #include "rust-ast-lower-type.h"
 #include "rust-ast-lower-expr.h"
 #include "rust-ast-lower-pattern.h"
+#include "rust-hir-full-decls.h"
 
 namespace Rust {
 namespace HIR {
@@ -74,7 +76,10 @@ ASTLoweringStmt::visit (AST::LetStmt &stmt)
   HIR::Expr *init_expression
     = stmt.has_init_expr () ? ASTLoweringExpr::translate (stmt.get_init_expr ())
 			    : nullptr;
-
+  bool terminated = false;
+  HIR::BlockExpr *else_block = stmt.has_else_block ()
+    ? ASTLoweringBlock::translate (stmt.get_else_block (), &terminated)
+    : nullptr;
   auto crate_num = mappings->get_current_crate ();
   Analysis::NodeMapping mapping (crate_num, stmt.get_node_id (),
 				 mappings->get_next_hir_id (crate_num),
@@ -83,6 +88,7 @@ ASTLoweringStmt::visit (AST::LetStmt &stmt)
     = new HIR::LetStmt (mapping, std::unique_ptr<HIR::Pattern> (variables),
 			std::unique_ptr<HIR::Expr> (init_expression),
 			std::unique_ptr<HIR::Type> (type),
+			std::unique_ptr<HIR::BlockExpr> (else_block),
 			stmt.get_outer_attrs (), stmt.get_locus ());
 }
 

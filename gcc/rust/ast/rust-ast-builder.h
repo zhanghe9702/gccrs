@@ -19,6 +19,7 @@
 #ifndef AST_BUILDER_H
 #define AST_BUILDER_H
 
+#include "rust-ast-full-decls.h"
 #include "rust-ast-full.h"
 
 namespace Rust {
@@ -54,11 +55,12 @@ public:
 			       std::unique_ptr<Expr> &&tail_expr
 			       = nullptr) const;
 
-  /* Create a let binding with an optional type and initializer (`let <name> :
-   * <type> = <init>`) */
+  /* Create a let binding with an optional type and initializer, else block
+   *(`let <name> : <type> = <init> else? <blockexpr>? `) */
   std::unique_ptr<Stmt> let (std::unique_ptr<Pattern> pattern,
 			     std::unique_ptr<Type> type = nullptr,
-			     std::unique_ptr<Expr> init = nullptr) const;
+			     std::unique_ptr<Expr> init = nullptr,
+    std::unique_ptr<BlockExpr> else_block = nullptr) const;
 
   /**
    * Create a call expression to a function, struct or enum variant, given its

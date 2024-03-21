@@ -2547,6 +2547,9 @@ LetStmt::as_string () const
   if (has_init_expr ())
     str += " = " + init_expr->as_string ();
 
+  if (has_else_block ())
+    str += " else " + else_block->as_string ();
+
   return str;
 }
 

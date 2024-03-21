@@ -230,6 +230,10 @@ public:
       {
 	stmt.get_init_expr ()->accept_vis (*this);
       }
+    if (stmt.has_else_block ())
+      {
+	stmt.get_else_block ()->accept_vis (*this);
+      }
   }
 
   void visit (HIR::StructExprStruct &stct) override

@@ -1265,6 +1265,8 @@ DefaultASTVisitor::visit (AST::LetStmt &stmt)
     visit (stmt.get_type ());
   if (stmt.has_init_expr ())
     visit (stmt.get_init_expr ());
+  if (stmt.has_else_block ())
+    visit (stmt.get_else_block ());
 }
 
 void

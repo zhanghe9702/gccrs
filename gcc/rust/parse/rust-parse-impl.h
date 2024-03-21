@@ -26,6 +26,7 @@
 #include "rust-expr.h"
 #include "rust-item.h"
 #include "rust-common.h"
+#include "rust-lex.h"
 #include "rust-token.h"
 #define INCLUDE_ALGORITHM
 #include "rust-diagnostics.h"
@@ -6245,11 +6246,13 @@ Parser<ManagedTokenSource>::parse_let_stmt (AST::AttrVec outer_attrs,
 
   // parse expression to set variable to (optional)
   std::unique_ptr<AST::Expr> expr = nullptr;
+  // optional else block
+  std::unique_ptr<AST::BlockExpr> else_block = nullptr;
   if (lexer.peek_token ()->get_id () == EQUAL)
     {
       // must have an expression
       lexer.skip_token ();
-
+      // FIXME: must not being lazy boolean expression.
       expr = parse_expr ();
       if (expr == nullptr)
 	{
@@ -6260,6 +6263,22 @@ Parser<ManagedTokenSource>::parse_let_stmt (AST::AttrVec outer_attrs,
 	  skip_after_semicolon ();
 	  return nullptr;
 	}
+      if (lexer.peek_token ()->get_id () == ELSE)
+ 	{
+    lexer.skip_token ();
+	  else_block = parse_block_expr ();
+	  if (else_block == nullptr)
+	   {
+	     Error error (lexer.peek_token ()->get_locus (),
+		       "failed to parse else block in let statement");
+	     add_error (std::move (error));
+
+	     skip_after_semicolon ();
+	     return nullptr;
+	   }
+
+      	}
+
     }
 
   if (restrictions.consume_semi)
@@ -6275,8 +6294,9 @@ Parser<ManagedTokenSource>::parse_let_stmt (AST::AttrVec outer_attrs,
     }
 
   return std::unique_ptr<AST::LetStmt> (
-    new AST::LetStmt (std::move (pattern), std::move (expr), std::move (type),
-		      std::move (outer_attrs), locus));
+    new AST::LetStmt (std::move (pattern),
+      std::move (expr), std::move (else_block), std::move (type),
+		  std::move (outer_attrs), locus));
 }
 
 // Parses a type path.

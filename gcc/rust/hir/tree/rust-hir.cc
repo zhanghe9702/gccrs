@@ -2623,6 +2623,11 @@ LetStmt::as_string () const
       str += " = " + init_expr->as_string ();
     }
 
+  if (has_else_block ())
+    {
+      str += " else " + else_block->as_string ();
+    }
+
   return str;
 }
 
