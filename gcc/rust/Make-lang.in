@@ -98,6 +98,9 @@ GRS_OBJS = \
     rust/rust-derive-copy.o \
     rust/rust-derive-debug.o \
     rust/rust-derive-default.o \
+    rust/rust-derive-partial-eq.o \
+    rust/rust-derive-eq.o \
+    rust/rust-derive-hash.o \
     rust/rust-proc-macro.o \
     rust/rust-macro-invoc-lexer.o \
     rust/rust-proc-macro-invoc-lexer.o \
@@ -232,10 +235,12 @@ GRS_OBJS = \
     rust/rust-unicode.o \
     rust/rust-punycode.o \
     rust/rust-unwrap-segment.o \
+    rust/rust-edition.o \
 	rust/rust-expand-format-args.o \
 	rust/rust-lang-item.o \
 	rust/rust-collect-lang-items.o \
 	rust/rust-desugar-for-loops.o \
+	rust/rust-desugar-question-mark.o \
     $(END)
 # removed object files from here
 

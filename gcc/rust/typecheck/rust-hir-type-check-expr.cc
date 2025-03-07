@@ -225,16 +225,67 @@ TypeCheckExpr::visit (HIR::CallExpr &expr)
   if (resolved_fn_trait_call)
     return;
 
-  bool valid_tyty = function_tyty->get_kind () == TyTy::TypeKind::FNDEF
-		    || function_tyty->get_kind () == TyTy::TypeKind::FNPTR;
+  bool valid_tyty
+    = function_tyty->is<TyTy::FnType> () || function_tyty->is<TyTy::FnPtr> ();
   if (!valid_tyty)
     {
-      rust_error_at (expr.get_locus (),
-		     "Failed to resolve expression of function call");
+      bool emit_error = !function_tyty->is<TyTy::ErrorType> ();
+      if (emit_error)
+	{
+	  rich_location r (line_table, expr.get_locus ());
+	  rust_error_at (r, ErrorCode::E0618, "expected function, found %<%s%>",
+			 function_tyty->get_name ().c_str ());
+	}
       return;
     }
 
   infered = TyTy::TypeCheckCallExpr::go (function_tyty, expr, variant, context);
+
+  auto discriminant_type_lookup
+    = mappings.lookup_lang_item (LangItem::Kind::DISCRIMINANT_TYPE);
+  if (infered->is<TyTy::PlaceholderType> () && discriminant_type_lookup)
+    {
+      const auto &p = *static_cast<const TyTy::PlaceholderType *> (infered);
+      if (p.get_def_id () == discriminant_type_lookup.value ())
+	{
+	  // this is a special case where this will actually return the repr of
+	  // the enum. We dont currently support repr on enum yet to change the
+	  // discriminant type but the default is always isize. We need to
+	  // assert this is a generic function with one param
+	  //
+	  // fn<BookFormat> (v & T=BookFormat{Paperback) -> <placeholder:>
+	  //
+	  // note the default is isize
+
+	  bool ok = context->lookup_builtin ("isize", &infered);
+	  rust_assert (ok);
+
+	  rust_assert (function_tyty->is<TyTy::FnType> ());
+	  auto &fn = *static_cast<TyTy::FnType *> (function_tyty);
+	  rust_assert (fn.has_substitutions ());
+	  rust_assert (fn.get_num_type_params () == 1);
+	  auto &mapping = fn.get_substs ().at (0);
+	  auto param_ty = mapping.get_param_ty ();
+
+	  if (!param_ty->can_resolve ())
+	    {
+	      // this could be a valid error need to test more weird cases and
+	      // look at rustc
+	      rust_internal_error_at (expr.get_locus (),
+				      "something wrong computing return type");
+	      return;
+	    }
+
+	  auto resolved = param_ty->resolve ();
+	  bool is_adt = resolved->is<TyTy::ADTType> ();
+	  if (is_adt)
+	    {
+	      const auto &adt = *static_cast<TyTy::ADTType *> (resolved);
+	      infered = adt.get_repr_options ().repr;
+	      rust_assert (infered != nullptr);
+	    }
+	}
+    }
 }
 
 void
@@ -475,9 +526,18 @@ TypeCheckExpr::visit (HIR::IfExpr &expr)
 				    expr.get_if_condition ().get_locus ()),
 	      expr.get_locus ());
 
-  TypeCheckExpr::Resolve (expr.get_if_block ());
+  TyTy::BaseType *block_type = TypeCheckExpr::Resolve (expr.get_if_block ());
 
-  infered = TyTy::TupleType::get_unit_type ();
+  TyTy::BaseType *unit_ty = nullptr;
+  ok = context->lookup_builtin ("()", &unit_ty);
+  rust_assert (ok);
+
+  infered
+    = coercion_site (expr.get_mappings ().get_hirid (),
+		     TyTy::TyWithLocation (unit_ty),
+		     TyTy::TyWithLocation (block_type,
+					   expr.get_if_block ().get_locus ()),
+		     expr.get_locus ());
 }
 
 void
@@ -1576,7 +1636,7 @@ TypeCheckExpr::visit (HIR::ClosureExpr &expr)
   TyTy::TupleType *closure_args
     = new TyTy::TupleType (implicit_args_id, expr.get_locus (),
 			   parameter_types);
-  context->insert_implicit_type (closure_args);
+  context->insert_implicit_type (closure_args->get_ref (), closure_args);
 
   location_t result_type_locus = expr.has_return_type ()
 				   ? expr.get_return_type ().get_locus ()

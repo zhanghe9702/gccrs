@@ -381,16 +381,13 @@ ForeverStack<N>::find_starting_point (
 {
   auto iterator = segments.begin ();
 
-  // If we need to do path segment resolution, then we start
-  // at the closest module. In order to resolve something like `foo::bar!()`, we
-  // need to get back to the surrounding module, and look for a child module
-  // named `foo`.
-  if (segments.size () > 1)
-    starting_point = find_closest_module (starting_point);
-
   for (; !is_last (iterator, segments); iterator++)
     {
       auto &outer_seg = *iterator;
+
+      if (unwrap_segment_get_lang_item (outer_seg).has_value ())
+	break;
+
       auto &seg = unwrap_type_segment (outer_seg);
       auto is_self_or_crate
 	= seg.is_crate_path_seg () || seg.is_lower_self_seg ();
@@ -416,12 +413,14 @@ ForeverStack<N>::find_starting_point (
       if (seg.is_lower_self_seg ())
 	{
 	  // insert segment resolution and exit
+	  starting_point = find_closest_module (starting_point);
 	  insert_segment_resolution (outer_seg, starting_point.get ().id);
 	  iterator++;
 	  break;
 	}
       if (seg.is_super_path_seg ())
 	{
+	  starting_point = find_closest_module (starting_point);
 	  if (starting_point.get ().is_root ())
 	    {
 	      rust_error_at (seg.get_locus (), ErrorCode::E0433,
@@ -457,6 +456,17 @@ ForeverStack<N>::resolve_segments (
   for (; !is_last (iterator, segments); iterator++)
     {
       auto &outer_seg = *iterator;
+
+      if (auto lang_item = unwrap_segment_get_lang_item (outer_seg))
+	{
+	  NodeId seg_id = Analysis::Mappings::get ().get_lang_item_node (
+	    lang_item.value ());
+	  current_node = &dfs_node (root, seg_id).value ();
+
+	  insert_segment_resolution (outer_seg, seg_id);
+	  continue;
+	}
+
       auto &seg = unwrap_type_segment (outer_seg);
       auto str = seg.as_string ();
       rust_debug ("[ARTHUR]: resolving segment part: %s", str.c_str ());
@@ -469,29 +479,61 @@ ForeverStack<N>::resolve_segments (
 
       tl::optional<typename ForeverStack<N>::Node &> child = tl::nullopt;
 
-      for (auto &kv : current_node->children)
+      /*
+       * On every iteration this loop either
+       *
+       * 1. terminates
+       * 2. decreases the depth of the node pointed to by current_node
+       *
+       * This ensures termination
+       */
+      while (true)
 	{
-	  auto &link = kv.first;
-
-	  if (link.path.map_or (
-		[&str] (Identifier path) {
-		  auto &path_str = path.as_string ();
-		  return str == path_str;
-		},
-		false))
+	  // may set the value of child
+	  for (auto &kv : current_node->children)
 	    {
-	      child = kv.second;
+	      auto &link = kv.first;
+
+	      if (link.path.map_or (
+		    [&str] (Identifier path) {
+		      auto &path_str = path.as_string ();
+		      return str == path_str;
+		    },
+		    false))
+		{
+		  child = kv.second;
+		  break;
+		}
+	    }
+
+	  if (child.has_value ())
+	    {
 	      break;
 	    }
+
+	  if (N == Namespace::Types)
+	    {
+	      auto rib_lookup = current_node->rib.get (seg.as_string ());
+	      if (rib_lookup && !rib_lookup->is_ambiguous ())
+		{
+		  insert_segment_resolution (outer_seg,
+					     rib_lookup->get_node_id ());
+		  return tl::nullopt;
+		}
+	    }
+
+	  if (!is_start (iterator, segments)
+	      || current_node->rib.kind == Rib::Kind::Module
+	      || current_node->is_root ())
+	    {
+	      return tl::nullopt;
+	    }
+
+	  current_node = &current_node->parent.value ();
 	}
 
-      if (!child.has_value ())
-	{
-	  rust_error_at (seg.get_locus (), ErrorCode::E0433,
-			 "failed to resolve path segment %qs", str.c_str ());
-	  return tl::nullopt;
-	}
-
+      // if child didn't contain a value
+      // the while loop above should have return'd or kept looping
       current_node = &child.value ();
       insert_segment_resolution (outer_seg, current_node->id);
     }
@@ -511,6 +553,17 @@ ForeverStack<N>::resolve_path (
   // if there's only one segment, we just use `get`
   if (segments.size () == 1)
     {
+      auto &seg = segments.front ();
+      if (auto lang_item = unwrap_segment_get_lang_item (seg))
+	{
+	  NodeId seg_id = Analysis::Mappings::get ().get_lang_item_node (
+	    lang_item.value ());
+
+	  insert_segment_resolution (seg, seg_id);
+	  // TODO: does NonShadowable matter?
+	  return Rib::Definition::NonShadowable (seg_id);
+	}
+
       auto res = get (unwrap_type_segment (segments.back ()).as_string ());
       if (res && !res->is_ambiguous ())
 	insert_segment_resolution (segments.back (), res->get_node_id ());
@@ -531,6 +584,7 @@ ForeverStack<N>::resolve_path (
       // leave resolution within impl blocks to type checker
       if (final_node.rib.kind == Rib::Kind::TraitOrImpl)
 	return tl::nullopt;
+      // assuming this can't be a lang item segment
       auto res = final_node.rib.get (
 	unwrap_type_segment (segments.back ()).as_string ());
       if (res && !res->is_ambiguous ())

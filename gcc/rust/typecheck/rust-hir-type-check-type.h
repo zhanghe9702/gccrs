@@ -60,19 +60,11 @@ public:
   void visit (HIR::NeverType &type) override;
   void visit (HIR::TraitObjectType &type) override;
   void visit (HIR::ParenthesisedType &type) override;
+  void visit (HIR::ImplTraitType &type) override;
 
-  void visit (HIR::TypePathSegmentFunction &segment) override
-  { /* TODO */
-  }
-  void visit (HIR::TraitBound &bound) override
-  { /* TODO */
-  }
-  void visit (HIR::ImplTraitType &type) override
-  { /* TODO */
-  }
-  void visit (HIR::ImplTraitTypeOneBound &type) override
-  { /* TODO */
-  }
+  // These dont need to be implemented as they are segments or part of types
+  void visit (HIR::TypePathSegmentFunction &segment) override {}
+  void visit (HIR::TraitBound &bound) override {}
 
 private:
   TypeCheckType (HirId id)
@@ -80,14 +72,13 @@ private:
   {}
 
   TyTy::BaseType *resolve_root_path (HIR::TypePath &path, size_t *offset,
-				     NodeId *root_resolved_node_id,
 				     bool *wasBigSelf);
 
   TyTy::BaseType *resolve_segments (
-    NodeId root_resolved_node_id, HirId expr_id,
-    std::vector<std::unique_ptr<HIR::TypePathSegment>> &segments, size_t offset,
-    TyTy::BaseType *tyseg, const Analysis::NodeMapping &expr_mappings,
-    location_t expr_locus, bool tySegIsBigSelf);
+    HirId expr_id, std::vector<std::unique_ptr<HIR::TypePathSegment>> &segments,
+    size_t offset, TyTy::BaseType *tyseg,
+    const Analysis::NodeMapping &expr_mappings, location_t expr_locus,
+    bool tySegIsBigSelf);
 
   bool resolve_associated_type (const std::string &search,
 				TypeCheckBlockContextItem &ctx,

@@ -477,7 +477,8 @@ EarlyNameResolver::visit (AST::MacroInvocation &invoc)
   bool found = resolver.get_macro_scope ().lookup (seg, &resolved_node);
   if (!found)
     {
-      rust_error_at (invoc.get_locus (), "unknown macro: [%s]",
+      rust_error_at (invoc.get_locus (), ErrorCode::E0433,
+		     "could not resolve macro invocation %qs",
 		     seg.get ().c_str ());
       return;
     }
@@ -559,30 +560,6 @@ EarlyNameResolver::visit (AST::TupleStructPattern &pattern)
 {
   pattern.get_items ().accept_vis (*this);
 }
-
-void
-EarlyNameResolver::visit (AST::TraitBound &)
-{}
-
-void
-EarlyNameResolver::visit (AST::ImplTraitType &)
-{}
-
-void
-EarlyNameResolver::visit (AST::TraitObjectType &)
-{}
-
-void
-EarlyNameResolver::visit (AST::ParenthesisedType &)
-{}
-
-void
-EarlyNameResolver::visit (AST::ImplTraitTypeOneBound &)
-{}
-
-void
-EarlyNameResolver::visit (AST::TraitObjectTypeOneBound &)
-{}
 
 void
 EarlyNameResolver::visit (AST::TupleType &)

@@ -23,12 +23,28 @@
 #include "rust-ast.h"
 #include "rust-attribute-values.h"
 #include "rust-diagnostics.h"
+#include "rust-expr.h"
 #include "rust-item.h"
 #include "rust-system.h"
 #include "rust-attributes.h"
 
 namespace Rust {
 namespace HIR {
+
+void
+ASTLoweringBase::visit (AST::MacroInvocation &invoc)
+{
+  rust_fatal_error (invoc.get_locus (), "rogue macro detected during lowering");
+  rust_unreachable ();
+}
+
+void
+ASTLoweringBase::visit (AST::ErrorPropagationExpr &expr)
+{
+  rust_fatal_error (expr.get_locus (),
+		    "missing desugar for question mark operator");
+  rust_unreachable ();
+}
 
 void
 ASTLoweringBase::visit (AST::Token &)
@@ -106,9 +122,6 @@ ASTLoweringBase::visit (AST::BorrowExpr &)
 {}
 void
 ASTLoweringBase::visit (AST::DereferenceExpr &)
-{}
-void
-ASTLoweringBase::visit (AST::ErrorPropagationExpr &)
 {}
 void
 ASTLoweringBase::visit (AST::NegationExpr &)
@@ -371,9 +384,6 @@ ASTLoweringBase::visit (AST::MacroMatcher &)
 {}
 void
 ASTLoweringBase::visit (AST::MacroRulesDefinition &)
-{}
-void
-ASTLoweringBase::visit (AST::MacroInvocation &)
 {}
 void
 ASTLoweringBase::visit (AST::MetaItemPath &)
@@ -666,6 +676,7 @@ ASTLoweringBase::lower_self (AST::Param &param)
   Analysis::NodeMapping mapping (crate_num, self.get_node_id (),
 				 mappings.get_next_hir_id (crate_num),
 				 mappings.get_next_localdef_id (crate_num));
+  mappings.insert_location (mapping.get_hirid (), param.get_locus ());
 
   if (self.has_type ())
     {

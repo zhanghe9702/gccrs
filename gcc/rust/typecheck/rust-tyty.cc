@@ -111,6 +111,9 @@ TypeKindFormat::to_string (TypeKind kind)
     case TypeKind::CLOSURE:
       return "Closure";
 
+    case TypeKind::OPAQUE:
+      return "Opaque";
+
     case TypeKind::ERROR:
       return "ERROR";
     }
@@ -223,7 +226,7 @@ BaseType::is_unit () const
     case FLOAT:
     case USIZE:
     case ISIZE:
-
+    case OPAQUE:
     case STR:
     case DYNAMIC:
     case ERROR:
@@ -549,6 +552,17 @@ BaseType::destructure () const
 	{
 	  x = p->get ();
 	}
+      // else if (auto p = x->try_as<const OpaqueType> ())
+      //   {
+      //     auto pr = p->resolve ();
+
+      //     rust_debug ("XXXXXX")
+
+      //     if (pr == x)
+      //       return pr;
+
+      //     x = pr;
+      //   }
       else
 	{
 	  return x;
@@ -798,6 +812,7 @@ BaseType::has_substitutions_defined () const
     case TUPLE:
     case PARAM:
     case PLACEHOLDER:
+    case OPAQUE:
       return false;
 
       case PROJECTION: {
@@ -859,6 +874,7 @@ BaseType::needs_generic_substitutions () const
     case TUPLE:
     case PARAM:
     case PLACEHOLDER:
+    case OPAQUE:
       return false;
 
       case PROJECTION: {
@@ -892,6 +908,48 @@ BaseType::needs_generic_substitutions () const
     }
 
   return false;
+}
+
+const SubstitutionArgumentMappings &
+BaseType::get_subst_argument_mappings () const
+{
+  static auto empty = SubstitutionArgumentMappings::empty ();
+  const TyTy::BaseType *x = destructure ();
+  switch (x->get_kind ())
+    {
+      case PROJECTION: {
+	const auto &p = *static_cast<const ProjectionType *> (x);
+	const auto &ref = static_cast<const SubstitutionRef &> (p);
+	return ref.get_substitution_arguments ();
+      }
+      break;
+
+      case FNDEF: {
+	const auto &fn = *static_cast<const FnType *> (x);
+	const auto &ref = static_cast<const SubstitutionRef &> (fn);
+	return ref.get_substitution_arguments ();
+      }
+      break;
+
+      case ADT: {
+	const auto &adt = *static_cast<const ADTType *> (x);
+	const auto &ref = static_cast<const SubstitutionRef &> (adt);
+	return ref.get_substitution_arguments ();
+      }
+      break;
+
+      case CLOSURE: {
+	const auto &closure = *static_cast<const ClosureType *> (x);
+	const auto &ref = static_cast<const SubstitutionRef &> (closure);
+	return ref.get_substitution_arguments ();
+      }
+      break;
+
+    default:
+      return empty;
+    }
+
+  return empty;
 }
 
 // InferType
@@ -3379,6 +3437,140 @@ ParamType::is_implicit_self_trait () const
   return is_trait_self;
 }
 
+// OpaqueType
+
+OpaqueType::OpaqueType (location_t locus, HirId ref,
+			std::vector<TypeBoundPredicate> specified_bounds,
+			std::set<HirId> refs)
+  : BaseType (ref, ref, KIND,
+	      {Resolver::CanonicalPath::new_seg (UNKNOWN_NODEID, "impl"),
+	       locus},
+	      specified_bounds, refs)
+{}
+
+OpaqueType::OpaqueType (location_t locus, HirId ref, HirId ty_ref,
+			std::vector<TypeBoundPredicate> specified_bounds,
+			std::set<HirId> refs)
+  : BaseType (ref, ty_ref, KIND,
+	      {Resolver::CanonicalPath::new_seg (UNKNOWN_NODEID, "impl"),
+	       locus},
+	      specified_bounds, refs)
+{}
+
+bool
+OpaqueType::can_resolve () const
+{
+  return get_ref () != get_ty_ref ();
+}
+
+void
+OpaqueType::accept_vis (TyVisitor &vis)
+{
+  vis.visit (*this);
+}
+
+void
+OpaqueType::accept_vis (TyConstVisitor &vis) const
+{
+  vis.visit (*this);
+}
+
+std::string
+OpaqueType::as_string () const
+{
+  return get_name ();
+}
+
+std::string
+OpaqueType::get_name () const
+{
+  return "impl " + raw_bounds_as_name ();
+}
+
+bool
+OpaqueType::can_eq (const BaseType *other, bool emit_errors) const
+{
+  OpaqueCmp r (this, emit_errors);
+  return r.can_eq (other);
+}
+
+BaseType *
+OpaqueType::clone () const
+{
+  return new OpaqueType (ident.locus, get_ref (), get_ty_ref (),
+			 get_specified_bounds (), get_combined_refs ());
+}
+
+BaseType *
+OpaqueType::resolve () const
+{
+  TyVar var (get_ty_ref ());
+  BaseType *r = var.get_tyty ();
+
+  while (r->get_kind () == TypeKind::OPAQUE)
+    {
+      OpaqueType *rr = static_cast<OpaqueType *> (r);
+      if (!rr->can_resolve ())
+	break;
+
+      TyVar v (rr->get_ty_ref ());
+      BaseType *n = v.get_tyty ();
+
+      // fix infinite loop
+      if (r == n)
+	break;
+
+      r = n;
+    }
+
+  if (r->get_kind () == TypeKind::OPAQUE && (r->get_ref () == r->get_ty_ref ()))
+    return TyVar (r->get_ty_ref ()).get_tyty ();
+
+  return r;
+}
+
+bool
+OpaqueType::is_equal (const BaseType &other) const
+{
+  auto other2 = static_cast<const OpaqueType &> (other);
+  if (can_resolve () != other2.can_resolve ())
+    return false;
+
+  if (can_resolve ())
+    return resolve ()->can_eq (other2.resolve (), false);
+
+  return bounds_compatible (other, UNDEF_LOCATION, false);
+}
+
+OpaqueType *
+OpaqueType::handle_substitions (SubstitutionArgumentMappings &subst_mappings)
+{
+  // SubstitutionArg arg = SubstitutionArg::error ();
+  // bool ok = subst_mappings.get_argument_for_symbol (this, &arg);
+  // if (!ok || arg.is_error ())
+  //   return this;
+
+  // OpaqueType *p = static_cast<OpaqueType *> (clone ());
+  // subst_mappings.on_param_subst (*p, arg);
+
+  // // there are two cases one where we substitute directly to a new PARAM and
+  // // otherwise
+  // if (arg.get_tyty ()->get_kind () == TyTy::TypeKind::PARAM)
+  //   {
+  //     p->set_ty_ref (arg.get_tyty ()->get_ref ());
+  //     return p;
+  //   }
+
+  // // this is the new subst that this needs to pass
+  // p->set_ref (mappings.get_next_hir_id ());
+  // p->set_ty_ref (arg.get_tyty ()->get_ref ());
+
+  // return p;
+
+  rust_unreachable ();
+  return nullptr;
+}
+
 // StrType
 
 StrType::StrType (HirId ref, std::set<HirId> refs)
@@ -3489,20 +3681,20 @@ NeverType::clone () const
 
 // placeholder type
 
-PlaceholderType::PlaceholderType (std::string symbol, HirId ref,
+PlaceholderType::PlaceholderType (std::string symbol, DefId id, HirId ref,
 				  std::set<HirId> refs)
   : BaseType (ref, ref, KIND,
 	      {Resolver::CanonicalPath::create_empty (), BUILTINS_LOCATION},
 	      refs),
-    symbol (symbol)
+    symbol (symbol), defId (id)
 {}
 
-PlaceholderType::PlaceholderType (std::string symbol, HirId ref, HirId ty_ref,
-				  std::set<HirId> refs)
+PlaceholderType::PlaceholderType (std::string symbol, DefId id, HirId ref,
+				  HirId ty_ref, std::set<HirId> refs)
   : BaseType (ref, ty_ref, KIND,
 	      {Resolver::CanonicalPath::create_empty (), BUILTINS_LOCATION},
 	      refs),
-    symbol (symbol)
+    symbol (symbol), defId (id)
 {}
 
 std::string
@@ -3546,8 +3738,8 @@ PlaceholderType::can_eq (const BaseType *other, bool emit_errors) const
 BaseType *
 PlaceholderType::clone () const
 {
-  return new PlaceholderType (get_symbol (), get_ref (), get_ty_ref (),
-			      get_combined_refs ());
+  return new PlaceholderType (get_symbol (), get_def_id (), get_ref (),
+			      get_ty_ref (), get_combined_refs ());
 }
 
 void
@@ -3606,6 +3798,12 @@ PlaceholderType::is_equal (const BaseType &other) const
 
   auto other2 = static_cast<const PlaceholderType &> (other);
   return get_symbol ().compare (other2.get_symbol ()) == 0;
+}
+
+DefId
+PlaceholderType::get_def_id () const
+{
+  return defId;
 }
 
 // Projection type

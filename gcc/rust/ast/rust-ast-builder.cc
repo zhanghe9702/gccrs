@@ -21,9 +21,11 @@
 #include "rust-ast.h"
 #include "rust-common.h"
 #include "rust-expr.h"
+#include "rust-keyword-values.h"
 #include "rust-path.h"
 #include "rust-item.h"
 #include "rust-path.h"
+#include "rust-pattern.h"
 #include "rust-system.h"
 #include "rust-token.h"
 #include <memory>
@@ -31,12 +33,31 @@
 namespace Rust {
 namespace AST {
 
+std::unique_ptr<Stmt>
+Builder::statementify (std::unique_ptr<Expr> &&value,
+		       bool semicolon_followed) const
+{
+  return std::make_unique<ExprStmt> (std::move (value), loc,
+				     semicolon_followed);
+}
+
 std::unique_ptr<Expr>
 Builder::literal_string (std::string &&content) const
 {
   return std::unique_ptr<Expr> (
     new AST::LiteralExpr (std::move (content), Literal::LitType::STRING,
 			  PrimitiveCoreType::CORETYPE_STR, {}, loc));
+}
+
+std::unique_ptr<Expr>
+Builder::literal_bool (bool b) const
+{
+  auto str
+    = b ? Values::Keywords::TRUE_LITERAL : Values::Keywords::FALSE_LITERAL;
+
+  return std::unique_ptr<Expr> (
+    new AST::LiteralExpr (std::move (str), Literal::LitType::BOOL,
+			  PrimitiveCoreType::CORETYPE_BOOL, {}, loc));
 }
 
 std::unique_ptr<Expr>
@@ -137,13 +158,14 @@ Builder::function (std::string function_name,
 		   std::vector<std::unique_ptr<Param>> params,
 		   std::unique_ptr<Type> return_type,
 		   std::unique_ptr<BlockExpr> block,
+		   std::vector<std::unique_ptr<GenericParam>> generic_params,
 		   FunctionQualifiers qualifiers, WhereClause where_clause,
 		   Visibility visibility) const
 {
   return std::unique_ptr<Function> (
-    new Function (function_name, qualifiers, {}, std::move (params),
-		  std::move (return_type), where_clause, std::move (block),
-		  visibility, {}, loc));
+    new Function (function_name, qualifiers, std::move (generic_params),
+		  std::move (params), std::move (return_type), where_clause,
+		  std::move (block), visibility, {}, loc));
 }
 
 PathExprSegment
@@ -264,13 +286,14 @@ Builder::reference_type (std::unique_ptr<TypeNoBounds> &&inner_type,
 }
 
 PathInExpression
-Builder::path_in_expression (std::vector<std::string> &&segments) const
+Builder::path_in_expression (std::vector<std::string> &&segments,
+			     bool opening_scope) const
 {
   auto path_segments = std::vector<PathExprSegment> ();
   for (auto &seg : segments)
     path_segments.emplace_back (path_segment (seg));
 
-  return PathInExpression (std::move (path_segments), {}, loc);
+  return PathInExpression (std::move (path_segments), {}, loc, opening_scope);
 }
 
 PathInExpression
@@ -279,23 +302,41 @@ Builder::path_in_expression (LangItem::Kind lang_item) const
   return PathInExpression (lang_item, {}, loc);
 }
 
-std::unique_ptr<Expr>
-Builder::block (std::unique_ptr<Stmt> &&stmt,
+PathInExpression
+Builder::variant_path (const std::string &enum_path,
+		       const std::string &variant) const
+{
+  return PathInExpression ({path_segment (enum_path), path_segment (variant)},
+			   {}, loc, false);
+}
+
+std::unique_ptr<BlockExpr>
+Builder::block (tl::optional<std::unique_ptr<Stmt>> &&stmt,
 		std::unique_ptr<Expr> &&tail_expr) const
 {
   auto stmts = std::vector<std::unique_ptr<Stmt>> ();
-  stmts.emplace_back (std::move (stmt));
+
+  if (stmt)
+    stmts.emplace_back (std::move (*stmt));
 
   return block (std::move (stmts), std::move (tail_expr));
 }
 
-std::unique_ptr<Expr>
+std::unique_ptr<BlockExpr>
+Builder::block () const
+{
+  auto stmts = std::vector<std::unique_ptr<Stmt>> ();
+
+  return block (std::move (stmts));
+}
+
+std::unique_ptr<BlockExpr>
 Builder::block (std::vector<std::unique_ptr<Stmt>> &&stmts,
 		std::unique_ptr<Expr> &&tail_expr) const
 {
-  return std::unique_ptr<Expr> (new BlockExpr (std::move (stmts),
-					       std::move (tail_expr), {}, {},
-					       LoopLabel::error (), loc, loc));
+  return std::unique_ptr<BlockExpr> (
+    new BlockExpr (std::move (stmts), std::move (tail_expr), {}, {},
+		   LoopLabel::error (), loc, loc));
 }
 
 std::unique_ptr<Expr>
@@ -327,6 +368,24 @@ std::unique_ptr<Expr>
 Builder::deref (std::unique_ptr<Expr> &&of) const
 {
   return std::unique_ptr<Expr> (new DereferenceExpr (std::move (of), {}, loc));
+}
+
+std::unique_ptr<Expr>
+Builder::comparison_expr (std::unique_ptr<Expr> &&lhs,
+			  std::unique_ptr<Expr> &&rhs,
+			  ComparisonOperator op) const
+{
+  return std::make_unique<ComparisonExpr> (std::move (lhs), std::move (rhs), op,
+					   loc);
+}
+
+std::unique_ptr<Expr>
+Builder::boolean_operation (std::unique_ptr<Expr> &&lhs,
+			    std::unique_ptr<Expr> &&rhs,
+			    LazyBooleanOperator op) const
+{
+  return std::make_unique<LazyBooleanExpr> (std::move (lhs), std::move (rhs),
+					    op, loc);
 }
 
 std::unique_ptr<Stmt>
@@ -388,6 +447,13 @@ Builder::wildcard () const
   return std::unique_ptr<Pattern> (new WildcardPattern (loc));
 }
 
+std::unique_ptr<Pattern>
+Builder::ref_pattern (std::unique_ptr<Pattern> &&inner) const
+{
+  return std::make_unique<ReferencePattern> (std::move (inner), false, false,
+					     loc);
+}
+
 std::unique_ptr<Path>
 Builder::lang_item_path (LangItem::Kind kind) const
 {
@@ -421,11 +487,9 @@ Builder::match_case (std::unique_ptr<Pattern> &&pattern,
 std::unique_ptr<Expr>
 Builder::loop (std::vector<std::unique_ptr<Stmt>> &&stmts)
 {
-  auto block = std::unique_ptr<BlockExpr> (
-    new BlockExpr (std::move (stmts), nullptr, {}, {}, LoopLabel::error (), loc,
-		   loc));
+  auto block_expr = block (std::move (stmts), nullptr);
 
-  return std::unique_ptr<Expr> (new LoopExpr (std::move (block), loc));
+  return std::unique_ptr<Expr> (new LoopExpr (std::move (block_expr), loc));
 }
 
 std::unique_ptr<TypeParamBound>
@@ -445,6 +509,17 @@ Builder::trait_impl (TypePath trait_path, std::unique_ptr<Type> target,
 		   /* exclam */ false, std::move (trait_items),
 		   std::move (generics), std::move (target), where_clause,
 		   visibility, {}, {}, loc));
+}
+
+std::unique_ptr<GenericParam>
+Builder::generic_type_param (
+  std::string type_representation,
+  std::vector<std::unique_ptr<TypeParamBound>> &&bounds,
+  std::unique_ptr<Type> &&type)
+{
+  return std::make_unique<TypeParam> (type_representation, loc,
+				      std::move (bounds), std::move (type),
+				      std::vector<Attribute> ());
 }
 
 std::unique_ptr<Type>
