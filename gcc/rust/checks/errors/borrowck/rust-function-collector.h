@@ -1,4 +1,4 @@
-// Copyright (C) 2020-2024 Free Software Foundation, Inc.
+// Copyright (C) 2020-2025 Free Software Foundation, Inc.
 
 // This file is part of GCC.
 
@@ -104,6 +104,8 @@ public:
   void visit (HIR::MethodCallExpr &expr) override {}
   void visit (HIR::FieldAccessExpr &expr) override {}
   void visit (HIR::BlockExpr &expr) override {}
+  void visit (HIR::AnonConst &expr) override {}
+  void visit (HIR::ConstBlock &expr) override {}
   void visit (HIR::ContinueExpr &expr) override {}
   void visit (HIR::BreakExpr &expr) override {}
   void visit (HIR::RangeFromToExpr &expr) override {}
@@ -123,6 +125,7 @@ public:
   void visit (HIR::AwaitExpr &expr) override {}
   void visit (HIR::AsyncBlockExpr &expr) override {}
   void visit (HIR::InlineAsm &expr) override {}
+  void visit (HIR::LlvmInlineAsm &expr) override {}
   void visit (HIR::TypeParam &param) override {}
   void visit (HIR::ConstGenericParam &param) override {}
   void visit (HIR::LifetimeWhereClauseItem &item) override {}

@@ -1,4 +1,4 @@
-// Copyright (C) 2020-2024 Free Software Foundation, Inc.
+// Copyright (C) 2020-2025 Free Software Foundation, Inc.
 
 // This file is part of GCC.
 
@@ -232,6 +232,14 @@ ResolverBase::visit (AST::BlockExpr &)
 {}
 
 void
+ResolverBase::visit (AST::AnonConst &)
+{}
+
+void
+ResolverBase::visit (AST::ConstBlock &)
+{}
+
+void
 ResolverBase::visit (AST::ClosureExprInnerTyped &)
 {}
 
@@ -273,6 +281,10 @@ ResolverBase::visit (AST::BoxExpr &)
 
 void
 ResolverBase::visit (AST::ReturnExpr &)
+{}
+
+void
+ResolverBase::visit (AST::TryExpr &)
 {}
 
 void
@@ -325,6 +337,10 @@ ResolverBase::visit (AST::AsyncBlockExpr &)
 
 void
 ResolverBase::visit (AST::InlineAsm &)
+{}
+
+void
+ResolverBase::visit (AST::LlvmInlineAsm &)
 {}
 
 void

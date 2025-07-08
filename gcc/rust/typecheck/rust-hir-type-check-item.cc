@@ -1,4 +1,4 @@
-// Copyright (C) 2020-2024 Free Software Foundation, Inc.
+// Copyright (C) 2020-2025 Free Software Foundation, Inc.
 
 // This file is part of GCC.
 
@@ -203,9 +203,8 @@ TypeCheckItem::visit (HIR::TupleStruct &struct_decl)
       auto &nr_ctx
 	= Resolver2_0::ImmutableNameResolutionContext::get ().resolver ();
 
-      path = nr_ctx.values
-	       .to_canonical_path (struct_decl.get_mappings ().get_nodeid ())
-	       .value ();
+      path
+	= nr_ctx.to_canonical_path (struct_decl.get_mappings ().get_nodeid ());
     }
   else
     {
@@ -232,6 +231,7 @@ TypeCheckItem::visit (HIR::TupleStruct &struct_decl)
     = parse_repr_options (attrs, struct_decl.get_locus ());
 
   auto *type = new TyTy::ADTType (
+    struct_decl.get_mappings ().get_defid (),
     struct_decl.get_mappings ().get_hirid (),
     struct_decl.get_mappings ().get_hirid (),
     struct_decl.get_identifier ().as_string (), ident,
@@ -282,12 +282,8 @@ TypeCheckItem::visit (HIR::StructStruct &struct_decl)
     {
       auto &nr_ctx
 	= Resolver2_0::ImmutableNameResolutionContext::get ().resolver ();
-      auto canonical_path = nr_ctx.types.to_canonical_path (
-	struct_decl.get_mappings ().get_nodeid ());
-
-      if (!canonical_path.has_value ())
-	rust_unreachable ();
-      path = canonical_path.value ();
+      path
+	= nr_ctx.to_canonical_path (struct_decl.get_mappings ().get_nodeid ());
     }
   else
     {
@@ -314,6 +310,7 @@ TypeCheckItem::visit (HIR::StructStruct &struct_decl)
     = parse_repr_options (attrs, struct_decl.get_locus ());
 
   auto *type = new TyTy::ADTType (
+    struct_decl.get_mappings ().get_defid (),
     struct_decl.get_mappings ().get_hirid (),
     struct_decl.get_mappings ().get_hirid (),
     struct_decl.get_identifier ().as_string (), ident,
@@ -353,6 +350,18 @@ TypeCheckItem::visit (HIR::Enum &enum_decl)
       variants.push_back (field_type);
     }
 
+  // Check for zero-variant enum compatibility
+  if (enum_decl.is_zero_variant ())
+    {
+      if (repr.repr_kind == TyTy::ADTType::ReprKind::INT
+	  || repr.repr_kind == TyTy::ADTType::ReprKind::C)
+	{
+	  rust_error_at (enum_decl.get_locus (),
+			 "unsupported representation for zero-variant enum");
+	  return;
+	}
+    }
+
   // get the path
   tl::optional<CanonicalPath> canonical_path;
 
@@ -361,8 +370,8 @@ TypeCheckItem::visit (HIR::Enum &enum_decl)
       auto &nr_ctx
 	= Resolver2_0::ImmutableNameResolutionContext::get ().resolver ();
 
-      canonical_path = nr_ctx.types.to_canonical_path (
-	enum_decl.get_mappings ().get_nodeid ());
+      canonical_path
+	= nr_ctx.to_canonical_path (enum_decl.get_mappings ().get_nodeid ());
     }
   else
     {
@@ -376,7 +385,8 @@ TypeCheckItem::visit (HIR::Enum &enum_decl)
 
   // multi variant ADT
   auto *type
-    = new TyTy::ADTType (enum_decl.get_mappings ().get_hirid (),
+    = new TyTy::ADTType (enum_decl.get_mappings ().get_defid (),
+			 enum_decl.get_mappings ().get_hirid (),
 			 enum_decl.get_mappings ().get_hirid (),
 			 enum_decl.get_identifier ().as_string (), ident,
 			 TyTy::ADTType::ADTKind::ENUM, std::move (variants),
@@ -424,8 +434,8 @@ TypeCheckItem::visit (HIR::Union &union_decl)
       auto &nr_ctx
 	= Resolver2_0::ImmutableNameResolutionContext::get ().resolver ();
 
-      canonical_path = nr_ctx.types.to_canonical_path (
-	union_decl.get_mappings ().get_nodeid ());
+      canonical_path
+	= nr_ctx.to_canonical_path (union_decl.get_mappings ().get_nodeid ());
     }
   else
     {
@@ -447,7 +457,8 @@ TypeCheckItem::visit (HIR::Union &union_decl)
 			  std::move (fields)));
 
   auto *type
-    = new TyTy::ADTType (union_decl.get_mappings ().get_hirid (),
+    = new TyTy::ADTType (union_decl.get_mappings ().get_defid (),
+			 union_decl.get_mappings ().get_hirid (),
 			 union_decl.get_mappings ().get_hirid (),
 			 union_decl.get_identifier ().as_string (), ident,
 			 TyTy::ADTType::ADTKind::UNION, std::move (variants),
@@ -598,10 +609,7 @@ TypeCheckItem::visit (HIR::Function &function)
     {
       auto &nr_ctx
 	= Resolver2_0::ImmutableNameResolutionContext::get ().resolver ();
-      auto canonical_path = nr_ctx.values.to_canonical_path (
-	function.get_mappings ().get_nodeid ());
-
-      path = canonical_path.value ();
+      path = nr_ctx.to_canonical_path (function.get_mappings ().get_nodeid ());
     }
   else
     {
@@ -632,6 +640,38 @@ TypeCheckItem::visit (HIR::Function &function)
 
   context->switch_to_fn_body ();
   auto block_expr_ty = TypeCheckExpr::Resolve (function.get_definition ());
+
+  // emit check for
+  // error[E0121]: the type placeholder `_` is not allowed within types on item
+  const auto placeholder = ret_type->contains_infer ();
+  if (placeholder != nullptr && function.has_return_type ())
+    {
+      // FIXME
+      // this will be a great place for the Default Hir Visitor we want to
+      // grab the locations of the placeholders (HIR::InferredType) their
+      // location, for now maybe we can use their hirid to lookup the location
+      location_t placeholder_locus
+	= mappings.lookup_location (placeholder->get_ref ());
+      location_t type_locus = function.get_return_type ().get_locus ();
+      rich_location r (line_table, placeholder_locus);
+
+      bool have_expected_type
+	= block_expr_ty != nullptr && !block_expr_ty->is<TyTy::ErrorType> ();
+      if (!have_expected_type)
+	{
+	  r.add_range (type_locus);
+	}
+      else
+	{
+	  std::string fixit
+	    = "replace with the correct type " + block_expr_ty->get_name ();
+	  r.add_fixit_replace (type_locus, fixit.c_str ());
+	}
+
+      rust_error_at (r, ErrorCode::E0121,
+		     "the type placeholder %<_%> is not allowed within types "
+		     "on item signatures");
+    }
 
   location_t fn_return_locus = function.has_function_return_type ()
 				 ? function.get_return_type ().get_locus ()
@@ -697,6 +737,25 @@ TypeCheckItem::visit (HIR::ExternBlock &extern_block)
     }
 }
 
+void
+TypeCheckItem::visit (HIR::ExternCrate &extern_crate)
+{
+  if (extern_crate.references_self ())
+    return;
+
+  auto &mappings = Analysis::Mappings::get ();
+  CrateNum num
+    = mappings.lookup_crate_name (extern_crate.get_referenced_crate ())
+	.value ();
+  HIR::Crate &crate = mappings.get_hir_crate (num);
+
+  CrateNum saved_crate_num = mappings.get_current_crate ();
+  mappings.set_current_crate (num);
+  for (auto &item : crate.get_items ())
+    TypeCheckItem::Resolve (*item);
+  mappings.set_current_crate (saved_crate_num);
+}
+
 std::pair<std::vector<TyTy::SubstitutionParamMapping>, TyTy::RegionConstraints>
 TypeCheckItem::resolve_impl_block_substitutions (HIR::ImplBlock &impl_block,
 						 bool &failure_flag)
@@ -721,11 +780,11 @@ TypeCheckItem::resolve_impl_block_substitutions (HIR::ImplBlock &impl_block,
 
       // we don't error out here see: gcc/testsuite/rust/compile/traits2.rs
       // for example
-      specified_bound = get_predicate_from_bound (ref, impl_block.get_type ());
+      specified_bound = get_predicate_from_bound (ref, impl_block.get_type (),
+						  impl_block.get_polarity ());
     }
 
   TyTy::BaseType *self = TypeCheckType::Resolve (impl_block.get_type ());
-
   if (self->is<TyTy::ErrorType> ())
     {
       // we cannot check for unconstrained type arguments when the Self type is
@@ -767,7 +826,14 @@ TypeCheckItem::validate_trait_impl_block (
 
       // we don't error out here see: gcc/testsuite/rust/compile/traits2.rs
       // for example
-      specified_bound = get_predicate_from_bound (ref, impl_block.get_type ());
+      specified_bound = get_predicate_from_bound (ref, impl_block.get_type (),
+						  impl_block.get_polarity ());
+
+      // need to check that if this specified bound has super traits does this
+      // Self
+      // implement them?
+      specified_bound.validate_type_implements_super_traits (
+	*self, impl_block.get_type (), impl_block.get_trait_ref ());
     }
 
   bool is_trait_impl_block = !trait_reference->is_error ();
@@ -827,7 +893,7 @@ TypeCheckItem::validate_trait_impl_block (
 	    }
 
 	  rust_error_at (r, ErrorCode::E0046,
-			 "missing %s in implementation of trait %<%s%>",
+			 "missing %s in implementation of trait %qs",
 			 missing_items_buf.c_str (),
 			 trait_reference->get_name ().c_str ());
 	}

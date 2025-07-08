@@ -1,4 +1,4 @@
-// Copyright (C) 2020-2024 Free Software Foundation, Inc.
+// Copyright (C) 2020-2025 Free Software Foundation, Inc.
 
 // This file is part of GCC.
 
@@ -36,6 +36,8 @@ public:
   static TyTy::BaseType *InferSubst (TyTy::BaseType *base, location_t locus);
 
   bool have_generic_args () const;
+
+  static bool valid_type (TyTy::BaseType *base);
 
   void visit (TyTy::FnType &type) override;
   void visit (TyTy::ADTType &type) override;

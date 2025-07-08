@@ -1,4 +1,4 @@
-// Copyright (C) 2020-2024 Free Software Foundation, Inc.
+// Copyright (C) 2020-2025 Free Software Foundation, Inc.
 
 // This file is part of GCC.
 
@@ -40,7 +40,12 @@ enum CompilerPass
   HIR_LOWERING,
   TYPE_CHECK,
   STATIC_ANALYSIS,
-  CODE_GENERATION
+  CODE_GENERATION,
+
+  // External Rust tooling attributes, like #[rustfmt::skip]
+  EXTERNAL,
+
+  // Do we need to add something here for const fns?
 };
 
 struct BuiltinAttrDefinition

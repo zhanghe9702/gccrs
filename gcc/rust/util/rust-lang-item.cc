@@ -1,4 +1,4 @@
-// Copyright (C) 2020-2024 Free Software Foundation, Inc.
+// Copyright (C) 2020-2025 Free Software Foundation, Inc.
 
 // This file is part of GCC.
 
@@ -118,6 +118,7 @@ const BiMap<std::string, LangItem::Kind> Rust::LangItem::lang_items = {{
 
   {"discriminant_kind", Kind::DISCRIMINANT_KIND},
   {"discriminant_type", Kind::DISCRIMINANT_TYPE},
+  {"manually_drop", Kind::MANUALLY_DROP},
 }};
 
 tl::optional<LangItem::Kind>

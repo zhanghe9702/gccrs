@@ -1,4 +1,4 @@
-// Copyright (C) 2020-2024 Free Software Foundation, Inc.
+// Copyright (C) 2020-2025 Free Software Foundation, Inc.
 
 // This file is part of GCC.
 
@@ -40,6 +40,13 @@ FeatureGate::visit (AST::Crate &crate)
     {
       if (attr.get_path ().as_string () == "feature")
 	{
+	  // check for empty feature, such as `#![feature], this is an error
+	  if (attr.empty_input ())
+	    {
+	      rust_error_at (attr.get_locus (), ErrorCode::E0556,
+			     "malformed %<feature%> attribute input");
+	      continue;
+	    }
 	  const auto &attr_input = attr.get_attr_input ();
 	  auto type = attr_input.get_attr_input_type ();
 	  if (type == AST::AttrInput::AttrInputType::TOKEN_TREE)

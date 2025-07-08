@@ -1,4 +1,4 @@
-// Copyright (C) 2020-2024 Free Software Foundation, Inc.
+// Copyright (C) 2020-2025 Free Software Foundation, Inc.
 
 // This file is part of GCC.
 
@@ -20,6 +20,7 @@
 #include "rust-collect-lang-items.h"
 #include "rust-desugar-for-loops.h"
 #include "rust-desugar-question-mark.h"
+#include "rust-desugar-apit.h"
 #include "rust-diagnostics.h"
 #include "rust-hir-pattern-analysis.h"
 #include "rust-immutable-name-resolution-context.h"
@@ -61,11 +62,9 @@
 #include "tm.h"
 #include "rust-target.h"
 
-extern bool
-saw_errors (void);
+extern bool saw_errors (void);
 
-extern Linemap *
-rust_get_linemap ();
+extern Linemap *rust_get_linemap ();
 
 namespace Rust {
 
@@ -150,9 +149,9 @@ validate_crate_name (const std::string &crate_name, Error &error)
     {
       if (!(is_alphabetic (c.value) || is_numeric (c.value) || c.value == '_'))
 	{
-	  error = Error (UNDEF_LOCATION,
-			 "invalid character %<%s%> in crate name: %<%s%>",
-			 c.as_string ().c_str (), crate_name.c_str ());
+	  error
+	    = Error (UNDEF_LOCATION, "invalid character %qs in crate name: %qs",
+		     c.as_string ().c_str (), crate_name.c_str ());
 	  return false;
 	}
     }
@@ -203,14 +202,16 @@ Session::handle_option (
   switch (code)
     {
     case OPT_I:
-      case OPT_L: {
+    case OPT_L:
+      {
 	// TODO: add search path
 	const std::string p = std::string (arg);
 	add_search_path (p);
       }
       break;
 
-      case OPT_frust_extern_: {
+    case OPT_frust_extern_:
+      {
 	std::string input (arg);
 	ret = handle_extern_option (input);
       }
@@ -251,7 +252,8 @@ Session::handle_option (
       Compile::Mangler::set_mangling (flag_rust_mangling);
       break;
 
-      case OPT_frust_cfg_: {
+    case OPT_frust_cfg_:
+      {
 	auto string_arg = std::string (arg);
 	ret = handle_cfg_option (string_arg);
 	break;
@@ -611,14 +613,11 @@ Session::compile_crate (const char *filename)
     return;
 
   AST::CollectLangItems ().go (parsed_crate);
-  AST::DesugarQuestionMark ().go (parsed_crate);
 
   auto name_resolution_ctx = Resolver2_0::NameResolutionContext ();
   // expansion pipeline stage
 
   expansion (parsed_crate, name_resolution_ctx);
-
-  AST::DesugarForLoops ().go (parsed_crate);
 
   rust_debug ("\033[0;31mSUCCESSFULLY FINISHED EXPANSION \033[0m");
   if (options.dump_option_enabled (CompileOptions::EXPANSION_DUMP))
@@ -983,6 +982,20 @@ Session::expansion (AST::Crate &crate, Resolver2_0::NameResolutionContext &ctx)
       rust_error_at (range, "reached recursion limit");
     }
 
+  // handle AST desugaring
+  if (!saw_errors ())
+    {
+      AST::DesugarForLoops ().go (crate);
+      AST::DesugarQuestionMark ().go (crate);
+      AST::DesugarApit ().go (crate);
+
+      // HACK: we may need a final TopLevel pass
+      // however, this should not count towards the recursion limit
+      // and we don't need a full Early pass
+      if (flag_name_resolution_2_0)
+	Resolver2_0::TopLevel (ctx).go (crate);
+    }
+
   // error reporting - check unused macros, get missing fragment specifiers
 
   // build test harness
@@ -1108,8 +1121,7 @@ Session::load_extern_crate (const std::string &crate_name, location_t locus)
   if (stream == NULL	       // No stream and
       && proc_macros.empty ()) // no proc macros
     {
-      rust_error_at (locus, "failed to locate crate %<%s%>",
-		     import_name.c_str ());
+      rust_error_at (locus, "failed to locate crate %qs", import_name.c_str ());
       return UNKNOWN_NODEID;
     }
 
@@ -1132,7 +1144,7 @@ Session::load_extern_crate (const std::string &crate_name, location_t locus)
   const std::string current_crate_name = mappings.get_current_crate_name ();
   if (current_crate_name.compare (extern_crate.get_crate_name ()) == 0)
     {
-      rust_error_at (locus, "current crate name %<%s%> collides with this",
+      rust_error_at (locus, "current crate name %qs collides with this",
 		     current_crate_name.c_str ());
       return UNKNOWN_NODEID;
     }
@@ -1177,16 +1189,13 @@ Session::load_extern_crate (const std::string &crate_name, location_t locus)
   mappings.insert_bang_proc_macros (crate_num, bang_macros);
   mappings.insert_derive_proc_macros (crate_num, derive_macros);
 
-  // name resolve it
-  Resolver::NameResolution::Resolve (parsed_crate);
-
-  // perform hir lowering
-  std::unique_ptr<HIR::Crate> lowered
-    = HIR::ASTLowering::Resolve (parsed_crate);
-  HIR::Crate &hir = mappings.insert_hir_crate (std::move (lowered));
-
-  // perform type resolution
-  Resolver::TypeResolution::Resolve (hir);
+  // if flag_name_resolution_2_0 is enabled
+  // then we perform resolution later
+  if (!flag_name_resolution_2_0)
+    {
+      // name resolve it
+      Resolver::NameResolution::Resolve (parsed_crate);
+    }
 
   // always restore the crate_num
   mappings.set_current_crate (saved_crate_num);

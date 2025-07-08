@@ -1,4 +1,4 @@
-// Copyright (C) 2020-2024 Free Software Foundation, Inc.
+// Copyright (C) 2020-2025 Free Software Foundation, Inc.
 
 // This file is part of GCC.
 
@@ -543,17 +543,29 @@ private:
   Node root;
 };
 
+enum class ResolutionMode
+{
+  Normal,
+  FromRoot,
+  FromExtern, // extern prelude
+};
+
 template <Namespace N> class ForeverStack
 {
 public:
   ForeverStack ()
-    // FIXME: Is that valid? Do we use the root? If yes, we should give the
-    // crate's node id to ForeverStack's constructor
     : root (Node (Rib (Rib::Kind::Normal), UNKNOWN_NODEID)),
+      lang_prelude (Node (Rib (Rib::Kind::Prelude), UNKNOWN_NODEID, root)),
+      extern_prelude (Node (Rib (Rib::Kind::Prelude), UNKNOWN_NODEID)),
       cursor_reference (root)
   {
     rust_assert (root.is_root ());
     rust_assert (root.is_leaf ());
+
+    // TODO: Should we be using the forever stack root as the crate scope?
+    // TODO: Is this how we should be getting the crate node id?
+    auto &mappings = Analysis::Mappings::get ();
+    root.id = *mappings.crate_num_to_nodeid (mappings.get_current_crate ());
   }
 
   /**
@@ -587,6 +599,9 @@ public:
    *         aborts the program.
    */
   tl::expected<NodeId, DuplicateNameError> insert (Identifier name, NodeId id);
+
+  tl::expected<NodeId, DuplicateNameError> insert_variant (Identifier name,
+							   NodeId id);
 
   /**
    * Insert a new shadowable definition in the innermost `Rib` in this stack
@@ -651,6 +666,8 @@ public:
    * the current map, an empty one otherwise.
    */
   tl::optional<Rib::Definition> get (const Identifier &name);
+  tl::optional<Rib::Definition> get_lang_prelude (const Identifier &name);
+  tl::optional<Rib::Definition> get_lang_prelude (const std::string &name);
 
   /**
    * Resolve a path to its definition in the current `ForeverStack`
@@ -662,11 +679,9 @@ public:
    */
   template <typename S>
   tl::optional<Rib::Definition> resolve_path (
-    const std::vector<S> &segments,
-    std::function<void (const S &, NodeId)> insert_segment_resolution);
-
-  // FIXME: Documentation
-  tl::optional<Resolver::CanonicalPath> to_canonical_path (NodeId id) const;
+    const std::vector<S> &segments, ResolutionMode mode,
+    std::function<void (const S &, NodeId)> insert_segment_resolution,
+    std::vector<Error> &collect_errors);
 
   // FIXME: Documentation
   tl::optional<Rib &> to_rib (NodeId rib_id);
@@ -715,6 +730,7 @@ private:
     {}
 
     bool is_root () const;
+    bool is_prelude () const;
     bool is_leaf () const;
 
     void insert_child (Link link, Node child);
@@ -726,6 +742,9 @@ private:
 
     tl::optional<Node &> parent; // `None` only if the node is a root
   };
+
+  // private overload which allows specifying a starting point
+  tl::optional<Rib::Definition> get (Node &start, const Identifier &name);
 
   /* Should we keep going upon seeing a Rib? */
   enum class KeepGoing
@@ -750,7 +769,19 @@ private:
   const Node &cursor () const;
   void update_cursor (Node &new_cursor);
 
+  /* The forever stack's actual nodes */
   Node root;
+  /*
+   * A special prelude node used currently for resolving language builtins
+   * It has the root node as a parent, and acts as a "special case" for name
+   * resolution
+   */
+  Node lang_prelude;
+  /*
+   * The extern prelude, used for resolving external crates
+   */
+  Node extern_prelude;
+
   std::reference_wrapper<Node> cursor_reference;
 
   void stream_rib (std::stringstream &stream, const Rib &rib,
@@ -769,13 +800,19 @@ private:
   tl::optional<SegIterator<S>> find_starting_point (
     const std::vector<S> &segments,
     std::reference_wrapper<Node> &starting_point,
-    std::function<void (const S &, NodeId)> insert_segment_resolution);
+    std::function<void (const S &, NodeId)> insert_segment_resolution,
+    std::vector<Error> &collect_errors);
 
   template <typename S>
   tl::optional<Node &> resolve_segments (
     Node &starting_point, const std::vector<S> &segments,
     SegIterator<S> iterator,
-    std::function<void (const S &, NodeId)> insert_segment_resolution);
+    std::function<void (const S &, NodeId)> insert_segment_resolution,
+    std::vector<Error> &collect_errors);
+
+  tl::optional<Rib::Definition> resolve_final_segment (Node &final_node,
+						       std::string &seg_name,
+						       bool is_lower_self);
 
   /* Helper functions for forward resolution (to_canonical_path, to_rib...) */
   struct DfsResult
@@ -801,6 +838,21 @@ private:
   tl::optional<Node &> dfs_node (Node &starting_point, NodeId to_find);
   tl::optional<const Node &> dfs_node (const Node &starting_point,
 				       NodeId to_find) const;
+
+public:
+  bool forward_declared (NodeId definition, NodeId usage)
+  {
+    if (peek ().kind != Rib::Kind::ForwardTypeParamBan)
+      return false;
+
+    const auto &definition_rib = dfs_rib (cursor (), definition);
+
+    if (!definition_rib)
+      return false;
+
+    return (definition_rib
+	    && definition_rib.value ().kind == Rib::Kind::ForwardTypeParamBan);
+  }
 };
 
 } // namespace Resolver2_0

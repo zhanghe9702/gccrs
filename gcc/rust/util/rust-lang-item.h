@@ -1,4 +1,4 @@
-// Copyright (C) 2020-2024 Free Software Foundation, Inc.
+// Copyright (C) 2020-2025 Free Software Foundation, Inc.
 
 // This file is part of GCC.
 
@@ -150,6 +150,8 @@ public:
 
     DISCRIMINANT_TYPE,
     DISCRIMINANT_KIND,
+
+    MANUALLY_DROP,
   };
 
   static const BiMap<std::string, Kind> lang_items;

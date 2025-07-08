@@ -1,4 +1,4 @@
-// Copyright (C) 2020-2024 Free Software Foundation, Inc.
+// Copyright (C) 2020-2025 Free Software Foundation, Inc.
 
 // This file is part of GCC.
 
@@ -51,21 +51,12 @@ class TypePath;
 // A type generic parameter (as opposed to a lifetime generic parameter)
 class TypeParam : public GenericParam
 {
-  // bool has_outer_attribute;
-  // std::unique_ptr<Attribute> outer_attr;
   AST::AttrVec outer_attrs;
-
   Identifier type_representation;
-
-  // bool has_type_param_bounds;
-  // TypeParamBounds type_param_bounds;
-  std::vector<std::unique_ptr<TypeParamBound>>
-    type_param_bounds; // inlined form
-
-  // bool has_type;
+  std::vector<std::unique_ptr<TypeParamBound>> type_param_bounds;
   std::unique_ptr<Type> type;
-
   location_t locus;
+  bool was_impl_trait;
 
 public:
   Identifier get_type_representation () const { return type_representation; }
@@ -85,18 +76,19 @@ public:
 	     std::vector<std::unique_ptr<TypeParamBound>> type_param_bounds
 	     = std::vector<std::unique_ptr<TypeParamBound>> (),
 	     std::unique_ptr<Type> type = nullptr,
-	     AST::AttrVec outer_attrs = {})
+	     AST::AttrVec outer_attrs = {}, bool was_impl_trait = false)
     : GenericParam (Analysis::Mappings::get ().get_next_node_id ()),
       outer_attrs (std::move (outer_attrs)),
       type_representation (std::move (type_representation)),
       type_param_bounds (std::move (type_param_bounds)),
-      type (std::move (type)), locus (locus)
+      type (std::move (type)), locus (locus), was_impl_trait (was_impl_trait)
   {}
 
   // Copy constructor uses clone
   TypeParam (TypeParam const &other)
     : GenericParam (other.node_id), outer_attrs (other.outer_attrs),
-      type_representation (other.type_representation), locus (other.locus)
+      type_representation (other.type_representation), locus (other.locus),
+      was_impl_trait (other.was_impl_trait)
   {
     // guard to prevent null pointer dereference
     if (other.type != nullptr)
@@ -114,6 +106,7 @@ public:
     outer_attrs = other.outer_attrs;
     locus = other.locus;
     node_id = other.node_id;
+    was_impl_trait = other.was_impl_trait;
 
     // guard to prevent null pointer dereference
     if (other.type != nullptr)
@@ -153,16 +146,18 @@ public:
     return type;
   }
 
-  // TODO: mutable getter seems kinda dodgy
   std::vector<std::unique_ptr<TypeParamBound>> &get_type_param_bounds ()
   {
     return type_param_bounds;
   }
+
   const std::vector<std::unique_ptr<TypeParamBound>> &
   get_type_param_bounds () const
   {
     return type_param_bounds;
   }
+
+  bool from_impl_trait () const { return was_impl_trait; }
 
 protected:
   // Clone function implementation as virtual method
@@ -434,13 +429,14 @@ class SelfParam : public Param
   bool has_ref;
   bool is_mut;
   // bool has_lifetime; // only possible if also ref
-  Lifetime lifetime;
+  tl::optional<Lifetime> lifetime;
 
   // bool has_type; // only possible if not ref
   std::unique_ptr<Type> type;
 
   // Unrestricted constructor used for error state
-  SelfParam (Lifetime lifetime, bool has_ref, bool is_mut, Type *type)
+  SelfParam (tl::optional<Lifetime> lifetime, bool has_ref, bool is_mut,
+	     Type *type)
     : Param ({}, UNDEF_LOCATION), has_ref (has_ref), is_mut (is_mut),
       lifetime (std::move (lifetime)), type (type)
   {}
@@ -453,7 +449,7 @@ public:
   bool has_type () const { return type != nullptr; }
 
   // Returns whether the self-param has a valid lifetime.
-  bool has_lifetime () const { return !lifetime.is_error (); }
+  bool has_lifetime () const { return lifetime.has_value (); }
 
   // Returns whether the self-param is in an error state.
   bool is_error () const
@@ -472,11 +468,11 @@ public:
   // Type-based self parameter (not ref, no lifetime)
   SelfParam (std::unique_ptr<Type> type, bool is_mut, location_t locus)
     : Param ({}, locus), has_ref (false), is_mut (is_mut),
-      lifetime (Lifetime::error ()), type (std::move (type))
+      lifetime (tl::nullopt), type (std::move (type))
   {}
 
   // Lifetime-based self parameter (is ref, no type)
-  SelfParam (Lifetime lifetime, bool is_mut, location_t locus)
+  SelfParam (tl::optional<Lifetime> lifetime, bool is_mut, location_t locus)
     : Param ({}, locus), has_ref (true), is_mut (is_mut),
       lifetime (std::move (lifetime))
   {}
@@ -522,8 +518,8 @@ public:
   bool get_has_ref () const { return has_ref; };
   bool get_is_mut () const { return is_mut; }
 
-  Lifetime get_lifetime () const { return lifetime; }
-  Lifetime &get_lifetime () { return lifetime; }
+  Lifetime get_lifetime () const { return lifetime.value (); }
+  Lifetime &get_lifetime () { return lifetime.value (); }
 
   NodeId get_node_id () const { return node_id; }
 
@@ -1330,7 +1326,7 @@ class Function : public VisItem, public AssociatedItem, public ExternalItem
   WhereClause where_clause;
   tl::optional<std::unique_ptr<BlockExpr>> function_body;
   location_t locus;
-  bool is_default;
+  bool has_default;
   bool is_external_function;
 
 public:
@@ -1355,6 +1351,8 @@ public:
 
   bool has_body () const { return function_body.has_value (); }
 
+  bool is_default () const { return has_default; }
+
   // Mega-constructor with all possible fields
   Function (Identifier function_name, FunctionQualifiers qualifiers,
 	    std::vector<std::unique_ptr<GenericParam>> generic_params,
@@ -1362,7 +1360,7 @@ public:
 	    std::unique_ptr<Type> return_type, WhereClause where_clause,
 	    tl::optional<std::unique_ptr<BlockExpr>> function_body,
 	    Visibility vis, std::vector<Attribute> outer_attrs,
-	    location_t locus, bool is_default = false,
+	    location_t locus, bool has_default = false,
 	    bool is_external_function = false)
     : VisItem (std::move (vis), std::move (outer_attrs)),
       ExternalItem (Stmt::node_id), qualifiers (std::move (qualifiers)),
@@ -1372,7 +1370,7 @@ public:
       return_type (std::move (return_type)),
       where_clause (std::move (where_clause)),
       function_body (std::move (function_body)), locus (locus),
-      is_default (is_default), is_external_function (is_external_function)
+      has_default (has_default), is_external_function (is_external_function)
   {}
 
   // TODO: add constructor with less fields
@@ -2452,7 +2450,7 @@ class ConstantItem : public VisItem, public AssociatedItem
   // either has an identifier or "_" - maybe handle in identifier?
   // bool identifier_is_underscore;
   // if no identifier declared, identifier will be "_"
-  std::string identifier;
+  Identifier identifier;
 
   std::unique_ptr<Type> type;
   std::unique_ptr<Expr> const_expr;
@@ -2462,7 +2460,7 @@ class ConstantItem : public VisItem, public AssociatedItem
 public:
   std::string as_string () const override;
 
-  ConstantItem (std::string ident, Visibility vis, std::unique_ptr<Type> type,
+  ConstantItem (Identifier ident, Visibility vis, std::unique_ptr<Type> type,
 		std::unique_ptr<Expr> const_expr,
 		std::vector<Attribute> outer_attrs, location_t locus)
     : VisItem (std::move (vis), std::move (outer_attrs)),
@@ -2470,7 +2468,7 @@ public:
       const_expr (std::move (const_expr)), locus (locus)
   {}
 
-  ConstantItem (std::string ident, Visibility vis, std::unique_ptr<Type> type,
+  ConstantItem (Identifier ident, Visibility vis, std::unique_ptr<Type> type,
 		std::vector<Attribute> outer_attrs, location_t locus)
     : VisItem (std::move (vis), std::move (outer_attrs)),
       identifier (std::move (ident)), type (std::move (type)),
@@ -2513,7 +2511,7 @@ public:
 
   /* Returns whether constant item is an "unnamed" (wildcard underscore used
    * as identifier) constant. */
-  bool is_unnamed () const { return identifier == "_"; }
+  bool is_unnamed () const { return identifier.as_string () == "_"; }
 
   location_t get_locus () const override final { return locus; }
 
@@ -2558,7 +2556,7 @@ public:
     return type;
   }
 
-  std::string get_identifier () const { return identifier; }
+  const Identifier &get_identifier () const { return identifier; }
 
   Item::Kind get_item_kind () const override
   {

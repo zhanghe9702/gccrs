@@ -1,4 +1,4 @@
-// Copyright (C) 2020-2024 Free Software Foundation, Inc.
+// Copyright (C) 2020-2025 Free Software Foundation, Inc.
 
 // This file is part of GCC.
 
@@ -277,6 +277,8 @@ public:
   void visit (ClosureParam &param);
   void visit (ClosureExprInner &expr);
   void visit (BlockExpr &expr);
+  void visit (AnonConst &expr);
+  void visit (ConstBlock &expr);
   void visit (ClosureExprInnerTyped &expr);
   void visit (ContinueExpr &expr);
   void visit (BreakExpr &expr);
@@ -287,6 +289,7 @@ public:
   void visit (RangeFromToInclExpr &expr);
   void visit (RangeToInclExpr &expr);
   void visit (ReturnExpr &expr);
+  void visit (TryExpr &expr);
   void visit (BoxExpr &expr);
   void visit (UnsafeBlockExpr &expr);
   void visit (LoopExpr &expr);
@@ -303,6 +306,7 @@ public:
   void visit (AwaitExpr &expr);
   void visit (AsyncBlockExpr &expr);
   void visit (InlineAsm &expr);
+  void visit (LlvmInlineAsm &expr);
   // rust-item.h
   void visit (TypeParam &param);
   void visit (LifetimeWhereClauseItem &item);

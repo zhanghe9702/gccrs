@@ -1,4 +1,4 @@
-// Copyright (C) 2020-2024 Free Software Foundation, Inc.
+// Copyright (C) 2020-2025 Free Software Foundation, Inc.
 
 // This file is part of GCC.
 
@@ -20,6 +20,7 @@
 #include "rust-ast.h"
 #include "rust-diagnostics.h"
 #include "rust-forever-stack.h"
+#include "rust-edition.h"
 #include "rust-rib.h"
 #include "rust-unwrap-segment.h"
 #include "optional.h"
@@ -32,6 +33,13 @@ bool
 ForeverStack<N>::Node::is_root () const
 {
   return !parent.has_value ();
+}
+
+template <Namespace N>
+bool
+ForeverStack<N>::Node::is_prelude () const
+{
+  return rib.kind == Rib::Kind::Prelude;
 }
 
 template <Namespace N>
@@ -63,6 +71,16 @@ template <Namespace N>
 void
 ForeverStack<N>::push_inner (Rib rib, Link link)
 {
+  if (rib.kind == Rib::Kind::Prelude)
+    {
+      // If you push_inner into the prelude from outside the root, you will pop
+      // back into the root, which could screw up a traversal.
+      rust_assert (&cursor_reference.get () == &root);
+      // Prelude doesn't have an access path
+      rust_assert (!link.path);
+      update_cursor (this->lang_prelude);
+      return;
+    }
   // If the link does not exist, we create it and emplace a new `Node` with the
   // current node as its parent. `unordered_map::emplace` returns a pair with
   // the iterator and a boolean. If the value already exists, the iterator
@@ -173,6 +191,14 @@ ForeverStack<Namespace::Labels>::insert (Identifier name, NodeId node)
 		       Rib::Definition::Shadowable (node));
 }
 
+template <>
+inline tl::expected<NodeId, DuplicateNameError>
+ForeverStack<Namespace::Types>::insert_variant (Identifier name, NodeId node)
+{
+  return insert_inner (peek (), name.as_string (),
+		       Rib::Definition::NonShadowable (node, true));
+}
+
 template <Namespace N>
 Rib &
 ForeverStack<N>::peek ()
@@ -265,20 +291,26 @@ ForeverStack<N>::update_cursor (Node &new_cursor)
 
 template <Namespace N>
 tl::optional<Rib::Definition>
-ForeverStack<N>::get (const Identifier &name)
+ForeverStack<N>::get (Node &start, const Identifier &name)
 {
   tl::optional<Rib::Definition> resolved_definition = tl::nullopt;
 
   // TODO: Can we improve the API? have `reverse_iter` return an optional?
-  reverse_iter ([&resolved_definition, &name] (Node &current) {
+  reverse_iter (start, [&resolved_definition, &name] (Node &current) {
+    // we can't reference associated types/functions like this
+    if (current.rib.kind == Rib::Kind::TraitOrImpl)
+      return KeepGoing::Yes;
+
     auto candidate = current.rib.get (name.as_string ());
 
     return candidate.map_or (
       [&resolved_definition] (Rib::Definition found) {
-	// for most namespaces, we do not need to care about various ribs - they
-	// are available from all contexts if defined in the current scope, or
-	// an outermore one. so if we do have a candidate, we can return it
-	// directly and stop iterating
+	if (found.is_variant ())
+	  return KeepGoing::Yes;
+	// for most namespaces, we do not need to care about various ribs -
+	// they are available from all contexts if defined in the current
+	// scope, or an outermore one. so if we do have a candidate, we can
+	// return it directly and stop iterating
 	resolved_definition = found;
 
 	return KeepGoing::No;
@@ -288,6 +320,27 @@ ForeverStack<N>::get (const Identifier &name)
   });
 
   return resolved_definition;
+}
+
+template <Namespace N>
+tl::optional<Rib::Definition>
+ForeverStack<N>::get (const Identifier &name)
+{
+  return get (cursor (), name);
+}
+
+template <Namespace N>
+tl::optional<Rib::Definition>
+ForeverStack<N>::get_lang_prelude (const Identifier &name)
+{
+  return lang_prelude.rib.get (name.as_string ());
+}
+
+template <Namespace N>
+tl::optional<Rib::Definition>
+ForeverStack<N>::get_lang_prelude (const std::string &name)
+{
+  return lang_prelude.rib.get (name);
 }
 
 template <>
@@ -356,12 +409,13 @@ ForeverStack<N>::find_closest_module (Node &starting_point)
  * segments */
 template <typename S>
 static inline bool
-check_leading_kw_at_start (const S &segment, bool condition)
+check_leading_kw_at_start (std::vector<Error> &collect_errors, const S &segment,
+			   bool condition)
 {
   if (condition)
-    rust_error_at (
+    collect_errors.emplace_back (
       segment.get_locus (), ErrorCode::E0433,
-      "leading path segment %qs can only be used at the beginning of a path",
+      "%qs in paths can only be used in start position",
       segment.as_string ().c_str ());
 
   return condition;
@@ -377,7 +431,8 @@ template <typename S>
 tl::optional<typename std::vector<S>::const_iterator>
 ForeverStack<N>::find_starting_point (
   const std::vector<S> &segments, std::reference_wrapper<Node> &starting_point,
-  std::function<void (const S &, NodeId)> insert_segment_resolution)
+  std::function<void (const S &, NodeId)> insert_segment_resolution,
+  std::vector<Error> &collect_errors)
 {
   auto iterator = segments.begin ();
 
@@ -389,24 +444,20 @@ ForeverStack<N>::find_starting_point (
 	break;
 
       auto &seg = unwrap_type_segment (outer_seg);
-      auto is_self_or_crate
+      bool is_self_or_crate
 	= seg.is_crate_path_seg () || seg.is_lower_self_seg ();
 
       // if we're after the first path segment and meet `self` or `crate`, it's
       // an error - we should only be seeing `super` keywords at this point
-      if (check_leading_kw_at_start (seg, !is_start (iterator, segments)
-					    && is_self_or_crate))
+      if (check_leading_kw_at_start (collect_errors, seg,
+				     !is_start (iterator, segments)
+				       && is_self_or_crate))
 	return tl::nullopt;
 
       if (seg.is_crate_path_seg ())
 	{
 	  starting_point = root;
-	  // TODO: is this how we should be getting the crate node id?
-	  auto &mappings = Analysis::Mappings::get ();
-	  NodeId current_crate
-	    = *mappings.crate_num_to_nodeid (mappings.get_current_crate ());
-
-	  insert_segment_resolution (outer_seg, current_crate);
+	  insert_segment_resolution (outer_seg, starting_point.get ().id);
 	  iterator++;
 	  break;
 	}
@@ -423,8 +474,9 @@ ForeverStack<N>::find_starting_point (
 	  starting_point = find_closest_module (starting_point);
 	  if (starting_point.get ().is_root ())
 	    {
-	      rust_error_at (seg.get_locus (), ErrorCode::E0433,
-			     "too many leading %<super%> keywords");
+	      collect_errors.emplace_back (
+		seg.get_locus (), ErrorCode::E0433,
+		"too many leading %<super%> keywords");
 	      return tl::nullopt;
 	    }
 
@@ -450,9 +502,10 @@ tl::optional<typename ForeverStack<N>::Node &>
 ForeverStack<N>::resolve_segments (
   Node &starting_point, const std::vector<S> &segments,
   typename std::vector<S>::const_iterator iterator,
-  std::function<void (const S &, NodeId)> insert_segment_resolution)
+  std::function<void (const S &, NodeId)> insert_segment_resolution,
+  std::vector<Error> &collect_errors)
 {
-  auto *current_node = &starting_point;
+  Node *current_node = &starting_point;
   for (; !is_last (iterator, segments); iterator++)
     {
       auto &outer_seg = *iterator;
@@ -468,13 +521,14 @@ ForeverStack<N>::resolve_segments (
 	}
 
       auto &seg = unwrap_type_segment (outer_seg);
-      auto str = seg.as_string ();
+      std::string str = seg.as_string ();
       rust_debug ("[ARTHUR]: resolving segment part: %s", str.c_str ());
 
       // check that we don't encounter *any* leading keywords afterwards
-      if (check_leading_kw_at_start (seg, seg.is_crate_path_seg ()
-					    || seg.is_super_path_seg ()
-					    || seg.is_lower_self_seg ()))
+      if (check_leading_kw_at_start (collect_errors, seg,
+				     seg.is_crate_path_seg ()
+				       || seg.is_super_path_seg ()
+				       || seg.is_lower_self_seg ()))
 	return tl::nullopt;
 
       tl::optional<typename ForeverStack<N>::Node &> child = tl::nullopt;
@@ -483,12 +537,30 @@ ForeverStack<N>::resolve_segments (
        * On every iteration this loop either
        *
        * 1. terminates
-       * 2. decreases the depth of the node pointed to by current_node
        *
-       * This ensures termination
+       * 2. decreases the depth of the node pointed to by current_node until
+       *    current_node reaches the root
+       *
+       * 3. If the root node is reached, and we were not able to resolve the
+       *    segment, we search the prelude rib for the segment, by setting
+       *    current_node to point to the prelude, and toggling the
+       *    searched_prelude boolean to true. If current_node is the prelude
+       *    rib, and searched_prelude is true, we will exit.
+       *
+       * This ensures termination.
+       *
        */
+      bool searched_prelude = false;
       while (true)
 	{
+	  if (is_start (iterator, segments)
+	      && current_node->rib.kind == Rib::Kind::TraitOrImpl)
+	    {
+	      // we can't reference associated types/functions like this
+	      current_node = &current_node->parent.value ();
+	      continue;
+	    }
+
 	  // may set the value of child
 	  for (auto &kv : current_node->children)
 	    {
@@ -522,9 +594,16 @@ ForeverStack<N>::resolve_segments (
 		}
 	    }
 
+	  if (current_node->is_root () && !searched_prelude)
+	    {
+	      searched_prelude = true;
+	      current_node = &lang_prelude;
+	      continue;
+	    }
+
 	  if (!is_start (iterator, segments)
 	      || current_node->rib.kind == Rib::Kind::Module
-	      || current_node->is_root ())
+	      || current_node->is_prelude ())
 	    {
 	      return tl::nullopt;
 	    }
@@ -541,54 +620,180 @@ ForeverStack<N>::resolve_segments (
   return *current_node;
 }
 
+template <>
+inline tl::optional<Rib::Definition>
+ForeverStack<Namespace::Types>::resolve_final_segment (Node &final_node,
+						       std::string &seg_name,
+						       bool is_lower_self)
+{
+  if (is_lower_self)
+    return Rib::Definition::NonShadowable (final_node.id);
+  else
+    return final_node.rib.get (seg_name);
+}
+
+template <Namespace N>
+tl::optional<Rib::Definition>
+ForeverStack<N>::resolve_final_segment (Node &final_node, std::string &seg_name,
+					bool is_lower_self)
+{
+  return final_node.rib.get (seg_name);
+}
+
 template <Namespace N>
 template <typename S>
 tl::optional<Rib::Definition>
 ForeverStack<N>::resolve_path (
-  const std::vector<S> &segments,
-  std::function<void (const S &, NodeId)> insert_segment_resolution)
+  const std::vector<S> &segments, ResolutionMode mode,
+  std::function<void (const S &, NodeId)> insert_segment_resolution,
+  std::vector<Error> &collect_errors)
 {
-  // TODO: What to do if segments.empty() ?
+  rust_assert (!segments.empty ());
+
+  std::reference_wrapper<Node> starting_point = cursor ();
+  switch (mode)
+    {
+    case ResolutionMode::Normal:
+      break; // default
+    case ResolutionMode::FromRoot:
+      starting_point = root;
+      break;
+    case ResolutionMode::FromExtern:
+      starting_point = extern_prelude;
+      break;
+    default:
+      rust_unreachable ();
+    }
 
   // if there's only one segment, we just use `get`
   if (segments.size () == 1)
     {
-      auto &seg = segments.front ();
-      if (auto lang_item = unwrap_segment_get_lang_item (seg))
+      auto &outer_seg = segments.front ();
+      if (auto lang_item = unwrap_segment_get_lang_item (outer_seg))
 	{
 	  NodeId seg_id = Analysis::Mappings::get ().get_lang_item_node (
 	    lang_item.value ());
 
-	  insert_segment_resolution (seg, seg_id);
+	  insert_segment_resolution (outer_seg, seg_id);
 	  // TODO: does NonShadowable matter?
 	  return Rib::Definition::NonShadowable (seg_id);
 	}
 
-      auto res = get (unwrap_type_segment (segments.back ()).as_string ());
+      auto &seg = unwrap_type_segment (outer_seg);
+
+      tl::optional<Rib::Definition> res
+	= get (starting_point.get (), seg.as_string ());
+
+      if (!res)
+	res = get_lang_prelude (seg.as_string ());
+
+      if (N == Namespace::Types && !res)
+	{
+	  if (seg.is_crate_path_seg ())
+	    {
+	      insert_segment_resolution (outer_seg, root.id);
+	      // TODO: does NonShadowable matter?
+	      return Rib::Definition::NonShadowable (root.id);
+	    }
+	  else if (seg.is_lower_self_seg ())
+	    {
+	      NodeId id = find_closest_module (starting_point.get ()).id;
+	      insert_segment_resolution (outer_seg, id);
+	      // TODO: does NonShadowable matter?
+	      return Rib::Definition::NonShadowable (id);
+	    }
+	  else if (seg.is_super_path_seg ())
+	    {
+	      Node &closest_module
+		= find_closest_module (starting_point.get ());
+	      if (closest_module.is_root ())
+		{
+		  rust_error_at (seg.get_locus (), ErrorCode::E0433,
+				 "too many leading %<super%> keywords");
+		  return tl::nullopt;
+		}
+
+	      NodeId id
+		= find_closest_module (closest_module.parent.value ()).id;
+	      insert_segment_resolution (outer_seg, id);
+	      // TODO: does NonShadowable matter?
+	      return Rib::Definition::NonShadowable (id);
+	    }
+	  else
+	    {
+	      // HACK: check for a module after we check the language prelude
+	      for (auto &kv :
+		   find_closest_module (starting_point.get ()).children)
+		{
+		  auto &link = kv.first;
+
+		  if (link.path.map_or (
+			[&seg] (Identifier path) {
+			  auto &path_str = path.as_string ();
+			  return path_str == seg.as_string ();
+			},
+			false))
+		    {
+		      insert_segment_resolution (outer_seg, kv.second.id);
+		      return Rib::Definition::NonShadowable (kv.second.id);
+		    }
+		}
+	    }
+	}
+
       if (res && !res->is_ambiguous ())
-	insert_segment_resolution (segments.back (), res->get_node_id ());
+	insert_segment_resolution (outer_seg, res->get_node_id ());
       return res;
     }
 
-  std::reference_wrapper<Node> starting_point = cursor ();
-
   return find_starting_point (segments, starting_point,
-			      insert_segment_resolution)
-    .and_then ([this, &segments, &starting_point, &insert_segment_resolution] (
-		 typename std::vector<S>::const_iterator iterator) {
-      return resolve_segments (starting_point.get (), segments, iterator,
-			       insert_segment_resolution);
-    })
-    .and_then ([&segments, &insert_segment_resolution] (
-		 Node final_node) -> tl::optional<Rib::Definition> {
+			      insert_segment_resolution, collect_errors)
+    .and_then (
+      [this, &segments, &starting_point, &insert_segment_resolution,
+       &collect_errors] (typename std::vector<S>::const_iterator iterator) {
+	return resolve_segments (starting_point.get (), segments, iterator,
+				 insert_segment_resolution, collect_errors);
+      })
+    .and_then ([this, &segments, &insert_segment_resolution] (
+		 Node &final_node) -> tl::optional<Rib::Definition> {
       // leave resolution within impl blocks to type checker
       if (final_node.rib.kind == Rib::Kind::TraitOrImpl)
 	return tl::nullopt;
+
+      auto &seg = unwrap_type_segment (segments.back ());
+      std::string seg_name = seg.as_string ();
+
       // assuming this can't be a lang item segment
-      auto res = final_node.rib.get (
-	unwrap_type_segment (segments.back ()).as_string ());
+      tl::optional<Rib::Definition> res
+	= resolve_final_segment (final_node, seg_name,
+				 seg.is_lower_self_seg ());
+      // Ok we didn't find it in the rib, Lets try the prelude...
+      if (!res)
+	res = get_lang_prelude (seg_name);
+
+      if (N == Namespace::Types && !res)
+	{
+	  // HACK: check for a module after we check the language prelude
+	  for (auto &kv : final_node.children)
+	    {
+	      auto &link = kv.first;
+
+	      if (link.path.map_or (
+		    [&seg_name] (Identifier path) {
+		      auto &path_str = path.as_string ();
+		      return path_str == seg_name;
+		    },
+		    false))
+		{
+		  insert_segment_resolution (segments.back (), kv.second.id);
+		  return Rib::Definition::NonShadowable (kv.second.id);
+		}
+	    }
+	}
+
       if (res && !res->is_ambiguous ())
 	insert_segment_resolution (segments.back (), res->get_node_id ());
+
       return res;
     });
 }
@@ -652,62 +857,6 @@ ForeverStack<N>::dfs (const ForeverStack<N>::Node &starting_point,
     }
 
   return tl::nullopt;
-}
-
-template <Namespace N>
-tl::optional<Resolver::CanonicalPath>
-ForeverStack<N>::to_canonical_path (NodeId id) const
-{
-  // find the id in the current forever stack, starting from the root,
-  // performing either a BFS or DFS once the Node containing the ID is found, go
-  // back up to the root (parent().parent().parent()...) accumulate link
-  // segments reverse them that's your canonical path
-
-  return dfs (root, id).map ([this, id] (ConstDfsResult tuple) {
-    auto containing_node = tuple.first;
-    auto name = tuple.second;
-
-    auto segments = std::vector<Resolver::CanonicalPath> ();
-
-    reverse_iter (containing_node, [&segments] (const Node &current) {
-      if (current.is_root ())
-	return KeepGoing::No;
-
-      auto children = current.parent.value ().children;
-      const Link *outer_link = nullptr;
-
-      for (auto &kv : children)
-	{
-	  auto &link = kv.first;
-	  auto &child = kv.second;
-
-	  if (link.id == child.id)
-	    {
-	      outer_link = &link;
-	      break;
-	    }
-	}
-
-      rust_assert (outer_link);
-
-      outer_link->path.map ([&segments, outer_link] (Identifier path) {
-	segments.emplace (segments.begin (),
-			  Resolver::CanonicalPath::new_seg (outer_link->id,
-							    path.as_string ()));
-      });
-
-      return KeepGoing::Yes;
-    });
-
-    auto path = Resolver::CanonicalPath::create_empty ();
-    for (const auto &segment : segments)
-      path = path.append (segment);
-
-    // Finally, append the name
-    path = path.append (Resolver::CanonicalPath::new_seg (id, name));
-
-    return path;
-  });
 }
 
 template <Namespace N>
@@ -786,13 +935,17 @@ ForeverStack<N>::stream_rib (std::stringstream &stream, const Rib &rib,
 			     const std::string &next,
 			     const std::string &next_next) const
 {
+  std::string rib_kind = Rib::kind_to_string (rib.kind);
+  stream << next << "rib [" << rib_kind << "]: {";
   if (rib.get_values ().empty ())
     {
-      stream << next << "rib: {},\n";
+      stream << "}\n";
       return;
     }
-
-  stream << next << "rib: {\n";
+  else
+    {
+      stream << "\n";
+    }
 
   for (const auto &kv : rib.get_values ())
     stream << next_next << kv.first << ": " << kv.second.to_string () << "\n";

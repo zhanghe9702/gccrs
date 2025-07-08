@@ -1,4 +1,4 @@
-// Copyright (C) 2020-2024 Free Software Foundation, Inc.
+// Copyright (C) 2020-2025 Free Software Foundation, Inc.
 
 // This file is part of GCC.
 
@@ -72,7 +72,10 @@ public:
       return it->second;
 
     compiled_type_map.insert ({h, type});
-    push_type (type);
+
+    if (TYPE_NAME (type) != NULL)
+      push_type (type);
+
     return type;
   }
 
@@ -87,7 +90,6 @@ public:
     return type;
   }
 
-  Resolver::Resolver *get_resolver () { return resolver; }
   Resolver::TypeCheckContext *get_tyctx () { return tyctx; }
   Analysis::Mappings &get_mappings () { return mappings; }
 
@@ -388,7 +390,6 @@ public:
   }
 
 private:
-  Resolver::Resolver *resolver;
   Resolver::TypeCheckContext *tyctx;
   Analysis::Mappings &mappings;
   Mangler mangler;

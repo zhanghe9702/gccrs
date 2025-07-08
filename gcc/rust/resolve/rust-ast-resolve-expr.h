@@ -1,4 +1,4 @@
-// Copyright (C) 2020-2024 Free Software Foundation, Inc.
+// Copyright (C) 2020-2025 Free Software Foundation, Inc.
 
 // This file is part of GCC.
 
@@ -56,7 +56,10 @@ public:
   void visit (AST::IfLetExpr &expr) override;
   void visit (AST::IfLetExprConseqElse &expr) override;
   void visit (AST::BlockExpr &expr) override;
+  void visit (AST::AnonConst &expr) override;
+  void visit (AST::ConstBlock &expr) override;
   void visit (AST::InlineAsm &expr) override;
+  void visit (AST::LlvmInlineAsm &expr) override;
   void visit (AST::UnsafeBlockExpr &expr) override;
   void visit (AST::ArrayElemsValues &elems) override;
   void visit (AST::ArrayExpr &expr) override;

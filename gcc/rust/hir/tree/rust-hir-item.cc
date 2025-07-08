@@ -26,16 +26,18 @@ TypeParam::TypeParam (
   Analysis::NodeMapping mappings, Identifier type_representation,
   location_t locus,
   std::vector<std::unique_ptr<TypeParamBound>> type_param_bounds,
-  tl::optional<std::unique_ptr<Type>> type, AST::AttrVec outer_attrs)
+  tl::optional<std::unique_ptr<Type>> type, AST::AttrVec outer_attrs,
+  bool was_impl_trait)
   : GenericParam (mappings), outer_attrs (std::move (outer_attrs)),
     type_representation (std::move (type_representation)),
     type_param_bounds (std::move (type_param_bounds)), type (std::move (type)),
-    locus (locus)
+    locus (locus), was_impl_trait (was_impl_trait)
 {}
 
 TypeParam::TypeParam (TypeParam const &other)
   : GenericParam (other.mappings), outer_attrs (other.outer_attrs),
-    type_representation (other.type_representation), locus (other.locus)
+    type_representation (other.type_representation), locus (other.locus),
+    was_impl_trait (other.was_impl_trait)
 {
   // guard to prevent null pointer dereference
   if (other.has_type ())
@@ -55,6 +57,7 @@ TypeParam::operator= (TypeParam const &other)
   outer_attrs = other.outer_attrs;
   locus = other.locus;
   mappings = other.mappings;
+  was_impl_trait = other.was_impl_trait;
 
   // guard to prevent null pointer dereference
   if (other.has_type ())
@@ -123,7 +126,8 @@ TypeBoundWhereClauseItem::get_type_param_bounds ()
 }
 
 SelfParam::SelfParam (Analysis::NodeMapping mappings,
-		      ImplicitSelfKind self_kind, Lifetime lifetime, Type *type)
+		      ImplicitSelfKind self_kind,
+		      tl::optional<Lifetime> lifetime, Type *type)
   : self_kind (self_kind), lifetime (std::move (lifetime)), type (type),
     mappings (mappings)
 {}
@@ -131,13 +135,13 @@ SelfParam::SelfParam (Analysis::NodeMapping mappings,
 SelfParam::SelfParam (Analysis::NodeMapping mappings,
 		      std::unique_ptr<Type> type, bool is_mut, location_t locus)
   : self_kind (is_mut ? ImplicitSelfKind::MUT : ImplicitSelfKind::IMM),
-    lifetime (
-      Lifetime (mappings, AST::Lifetime::LifetimeType::NAMED, "", locus)),
-    type (std::move (type)), locus (locus), mappings (mappings)
+    lifetime (tl::nullopt), type (std::move (type)), locus (locus),
+    mappings (mappings)
 {}
 
-SelfParam::SelfParam (Analysis::NodeMapping mappings, Lifetime lifetime,
-		      bool is_mut, location_t locus)
+SelfParam::SelfParam (Analysis::NodeMapping mappings,
+		      tl::optional<Lifetime> lifetime, bool is_mut,
+		      location_t locus)
   : self_kind (is_mut ? ImplicitSelfKind::MUT_REF : ImplicitSelfKind::IMM_REF),
     lifetime (std::move (lifetime)), locus (locus), mappings (mappings)
 {}
@@ -263,7 +267,8 @@ Function::Function (Analysis::NodeMapping mappings, Identifier function_name,
 		    std::vector<FunctionParam> function_params,
 		    std::unique_ptr<Type> return_type, WhereClause where_clause,
 		    std::unique_ptr<BlockExpr> function_body, Visibility vis,
-		    AST::AttrVec outer_attrs, SelfParam self, location_t locus)
+		    AST::AttrVec outer_attrs, tl::optional<SelfParam> self,
+		    Defaultness defaultness, location_t locus)
   : VisItem (std::move (mappings), std::move (vis), std::move (outer_attrs)),
     qualifiers (std::move (qualifiers)),
     function_name (std::move (function_name)),
@@ -272,7 +277,7 @@ Function::Function (Analysis::NodeMapping mappings, Identifier function_name,
     return_type (std::move (return_type)),
     where_clause (std::move (where_clause)),
     function_body (std::move (function_body)), self (std::move (self)),
-    locus (locus)
+    locus (locus), defaultness (defaultness)
 {}
 
 Function::Function (Function const &other)
@@ -280,7 +285,7 @@ Function::Function (Function const &other)
     function_name (other.function_name),
     function_params (other.function_params), where_clause (other.where_clause),
     function_body (other.function_body->clone_block_expr ()), self (other.self),
-    locus (other.locus)
+    locus (other.locus), defaultness (other.defaultness)
 {
   // guard to prevent null dereference (always required)
   if (other.return_type != nullptr)
@@ -311,6 +316,8 @@ Function::operator= (Function const &other)
   function_body = other.function_body->clone_block_expr ();
   locus = other.locus;
   self = other.self;
+
+  defaultness = other.defaultness;
 
   generic_params.reserve (other.generic_params.size ());
   for (const auto &e : other.generic_params)
@@ -609,9 +616,9 @@ StaticItem::operator= (StaticItem const &other)
 
 TraitFunctionDecl::TraitFunctionDecl (
   Identifier function_name, FunctionQualifiers qualifiers,
-  std::vector<std::unique_ptr<GenericParam>> generic_params, SelfParam self,
-  std::vector<FunctionParam> function_params, std::unique_ptr<Type> return_type,
-  WhereClause where_clause)
+  std::vector<std::unique_ptr<GenericParam>> generic_params,
+  tl::optional<SelfParam> self, std::vector<FunctionParam> function_params,
+  std::unique_ptr<Type> return_type, WhereClause where_clause)
   : qualifiers (std::move (qualifiers)),
     function_name (std::move (function_name)),
     generic_params (std::move (generic_params)),

@@ -1,4 +1,4 @@
-// Copyright (C) 2020-2024 Free Software Foundation, Inc.
+// Copyright (C) 2020-2025 Free Software Foundation, Inc.
 
 // This file is part of GCC.
 
@@ -57,6 +57,7 @@ static const BuiltinAttrDefinition __definitions[]
      {Attrs::NO_MANGLE, CODE_GENERATION},
      {Attrs::REPR, CODE_GENERATION},
      {Attrs::RUSTC_BUILTIN_MACRO, EXPANSION},
+     {Attrs::RUSTC_MACRO_TRANSPARENCY, EXPANSION},
      {Attrs::PATH, EXPANSION},
      {Attrs::MACRO_USE, NAME_RESOLUTION},
      {Attrs::MACRO_EXPORT, NAME_RESOLUTION},
@@ -72,10 +73,29 @@ static const BuiltinAttrDefinition __definitions[]
      {Attrs::RUSTC_INHERIT_OVERFLOW_CHECKS, CODE_GENERATION},
      {Attrs::STABLE, STATIC_ANALYSIS},
      {Attrs::UNSTABLE, STATIC_ANALYSIS},
+
      // assuming we keep these for static analysis
+     {Attrs::RUSTC_PROMOTABLE, CODE_GENERATION},
      {Attrs::RUSTC_CONST_STABLE, STATIC_ANALYSIS},
      {Attrs::RUSTC_CONST_UNSTABLE, STATIC_ANALYSIS},
-     {Attrs::PRELUDE_IMPORT, NAME_RESOLUTION}};
+     {Attrs::PRELUDE_IMPORT, NAME_RESOLUTION},
+     {Attrs::TRACK_CALLER, CODE_GENERATION},
+     {Attrs::RUSTC_SPECIALIZATION_TRAIT, TYPE_CHECK},
+     {Attrs::RUSTC_UNSAFE_SPECIALIZATION_MARKER, TYPE_CHECK},
+     {Attrs::RUSTC_RESERVATION_IMPL, TYPE_CHECK},
+     {Attrs::RUSTC_PAREN_SUGAR, TYPE_CHECK},
+     {Attrs::RUSTC_NONNULL_OPTIMIZATION_GUARANTEED, TYPE_CHECK},
+
+     {Attrs::RUSTC_LAYOUT_SCALAR_VALID_RANGE_START, CODE_GENERATION},
+
+     {Attrs::PRELUDE_IMPORT, NAME_RESOLUTION},
+
+     {Attrs::RUSTC_DIAGNOSTIC_ITEM, STATIC_ANALYSIS},
+     {Attrs::RUSTC_ON_UNIMPLEMENTED, STATIC_ANALYSIS},
+
+     {Attrs::FUNDAMENTAL, TYPE_CHECK},
+     {Attrs::NON_EXHAUSTIVE, TYPE_CHECK},
+     {Attrs::RUSTFMT, EXTERNAL}};
 
 BuiltinAttributeMappings *
 BuiltinAttributeMappings::get ()
@@ -201,7 +221,8 @@ check_doc_attribute (const AST::Attribute &attribute)
       break;
       // FIXME: Handle them as well
 
-      case AST::AttrInput::TOKEN_TREE: {
+    case AST::AttrInput::TOKEN_TREE:
+      {
 	// FIXME: This doesn't check for #[doc(alias(...))]
 	const auto &option = static_cast<const AST::DelimTokenTree &> (
 	  attribute.get_attr_input ());
@@ -667,7 +688,7 @@ AttributeChecker::visit (AST::Function &fun)
 	  if (!attribute.has_attr_input ())
 	    {
 	      rust_error_at (attribute.get_locus (),
-			     "malformed %<%s%> attribute input", name);
+			     "malformed %qs attribute input", name);
 	      rust_inform (
 		attribute.get_locus (),
 		"must be of the form: %<#[proc_macro_derive(TraitName, "

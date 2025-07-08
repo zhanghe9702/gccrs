@@ -1,5 +1,5 @@
 /* General AST-related method implementations for Rust frontend.
-   Copyright (C) 2009-2024 Free Software Foundation, Inc.
+   Copyright (C) 2009-2025 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -65,8 +65,8 @@ IdentifierPattern::as_string () const
 
   str += variable_ident.as_string ();
 
-  if (has_pattern_to_bind ())
-    str += " @ " + to_bind->as_string ();
+  if (has_subpattern ())
+    str += " @ " + subpattern->as_string ();
 
   return str;
 }

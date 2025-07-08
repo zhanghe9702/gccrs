@@ -1,4 +1,4 @@
-// Copyright (C) 2020-2024 Free Software Foundation, Inc.
+// Copyright (C) 2020-2025 Free Software Foundation, Inc.
 
 // This file is part of GCC.
 
@@ -514,7 +514,16 @@ TypeCheckContext::lookup_lifetime (const HIR::Lifetime &lifetime) const
 {
   if (lifetime.get_lifetime_type () == AST::Lifetime::NAMED)
     {
-      rust_assert (lifetime.get_name () != "static");
+      if (lifetime.get_name () == "static")
+	{
+	  rich_location r (line_table, lifetime.get_locus ());
+	  r.add_fixit_insert_after (lifetime.get_locus (),
+				    "static is a reserved lifetime name");
+	  rust_error_at (r, ErrorCode::E0262,
+			 "invalid lifetime parameter name: %qs",
+			 lifetime.get_name ().c_str ());
+	  return tl::nullopt;
+	}
       const auto name = lifetime.get_name ();
       auto it = lifetime_name_interner.find (name);
       if (it == lifetime_name_interner.end ())
@@ -566,43 +575,48 @@ TypeCheckContext::regions_from_generic_args (const HIR::GenericArgs &args) const
 }
 
 void
-TypeCheckContext::compute_inference_variables (bool error)
+TypeCheckContext::compute_inference_variables (bool emit_error)
+{
+  // default inference variables if possible
+  iterate ([&] (HirId id, TyTy::BaseType *ty) mutable -> bool {
+    return compute_infer_var (id, ty, emit_error);
+  });
+}
+
+bool
+TypeCheckContext::compute_infer_var (HirId id, TyTy::BaseType *ty,
+				     bool emit_error)
 {
   auto &mappings = Analysis::Mappings::get ();
 
-  // default inference variables if possible
-  iterate ([&] (HirId id, TyTy::BaseType *ty) mutable -> bool {
-    // nothing to do
-    if (ty->get_kind () != TyTy::TypeKind::INFER)
-      return true;
-
-    TyTy::InferType *infer_var = static_cast<TyTy::InferType *> (ty);
-    TyTy::BaseType *default_type;
-
-    rust_debug_loc (mappings.lookup_location (id),
-		    "trying to default infer-var: %s",
-		    infer_var->as_string ().c_str ());
-    bool ok = infer_var->default_type (&default_type);
-    if (!ok)
-      {
-	if (error)
-	  rust_error_at (mappings.lookup_location (id), ErrorCode::E0282,
-			 "type annotations needed");
-	return true;
-      }
-
-    auto result
-      = unify_site (id, TyTy::TyWithLocation (ty),
-		    TyTy::TyWithLocation (default_type), UNDEF_LOCATION);
-    rust_assert (result);
-    rust_assert (result->get_kind () != TyTy::TypeKind::ERROR);
-    result->set_ref (id);
-    insert_type (Analysis::NodeMapping (mappings.get_current_crate (), 0, id,
-					UNKNOWN_LOCAL_DEFID),
-		 result);
-
+  // nothing to do
+  if (ty->get_kind () != TyTy::TypeKind::INFER)
     return true;
-  });
+
+  TyTy::InferType *infer_var = static_cast<TyTy::InferType *> (ty);
+  TyTy::BaseType *default_type;
+
+  rust_debug_loc (mappings.lookup_location (id),
+		  "trying to default infer-var: %s",
+		  infer_var->as_string ().c_str ());
+  bool ok = infer_var->default_type (&default_type);
+  if (!ok)
+    {
+      if (emit_error)
+	rust_error_at (mappings.lookup_location (id), ErrorCode::E0282,
+		       "type annotations needed");
+      return true;
+    }
+
+  auto result
+    = unify_site (id, TyTy::TyWithLocation (ty),
+		  TyTy::TyWithLocation (default_type), UNDEF_LOCATION);
+  rust_assert (result);
+  rust_assert (result->get_kind () != TyTy::TypeKind::ERROR);
+  result->set_ref (id);
+  insert_implicit_type (id, result);
+
+  return true;
 }
 
 TyTy::VarianceAnalysis::CrateCtx &

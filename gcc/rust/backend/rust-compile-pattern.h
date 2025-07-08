@@ -1,4 +1,4 @@
-// Copyright (C) 2020-2024 Free Software Foundation, Inc.
+// Copyright (C) 2020-2025 Free Software Foundation, Inc.
 
 // This file is part of GCC.
 
@@ -17,7 +17,9 @@
 // <http://www.gnu.org/licenses/>.
 
 #include "rust-compile-base.h"
+#include "rust-hir-pattern.h"
 #include "rust-hir-visitor.h"
+#include "rust-tyty.h"
 
 namespace Rust {
 namespace Compile {
@@ -43,12 +45,9 @@ public:
   void visit (HIR::StructPattern &) override;
   void visit (HIR::TupleStructPattern &) override;
   void visit (HIR::TuplePattern &) override;
+  void visit (HIR::IdentifierPattern &) override;
 
   // Always succeeds
-  void visit (HIR::IdentifierPattern &) override
-  {
-    check_expr = boolean_true_node;
-  }
   void visit (HIR::WildcardPattern &) override
   {
     check_expr = boolean_true_node;
@@ -77,6 +76,19 @@ public:
     CompilePatternBindings compiler (ctx, match_scrutinee_expr);
     pattern.accept_vis (compiler);
   }
+
+  tree make_struct_access (TyTy::ADTType *adt, TyTy::VariantDef *variant,
+			   const Identifier &ident, int variant_index);
+
+  void handle_struct_pattern_ident (HIR::StructPatternField &pat,
+				    TyTy::ADTType *adt,
+				    TyTy::VariantDef *variant,
+				    int variant_index);
+  void handle_struct_pattern_ident_pat (HIR::StructPatternField &pat,
+					TyTy::ADTType *adt,
+					TyTy::VariantDef *variant,
+					int variant_index);
+  void handle_struct_pattern_tuple_pat (HIR::StructPatternField &pat);
 
   void visit (HIR::StructPattern &pattern) override;
   void visit (HIR::TupleStructPattern &pattern) override;

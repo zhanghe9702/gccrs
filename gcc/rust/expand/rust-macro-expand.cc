@@ -1,4 +1,4 @@
-// Copyright (C) 2020-2024 Free Software Foundation, Inc.
+// Copyright (C) 2020-2025 Free Software Foundation, Inc.
 
 // This file is part of GCC.
 
@@ -28,6 +28,7 @@
 #include "rust-cfg-strip.h"
 #include "rust-early-name-resolver.h"
 #include "rust-proc-macro.h"
+#include "rust-token-tree-desugar.h"
 
 namespace Rust {
 
@@ -78,7 +79,10 @@ MacroExpander::expand_decl_macro (location_t invoc_locus,
    * trees.
    */
 
-  AST::DelimTokenTree &invoc_token_tree = invoc.get_delim_tok_tree ();
+  AST::DelimTokenTree &invoc_token_tree_sugar = invoc.get_delim_tok_tree ();
+
+  // We must first desugar doc comments into proper attributes
+  auto invoc_token_tree = AST::TokenTreeDesugar ().go (invoc_token_tree_sugar);
 
   // find matching arm
   AST::MacroRule *matched_rule = nullptr;
@@ -426,7 +430,8 @@ MacroExpander::match_fragment (Parser<MacroInvocLexer> &parser,
       parser.parse_visibility ();
       break;
 
-      case AST::MacroFragSpec::STMT: {
+    case AST::MacroFragSpec::STMT:
+      {
 	auto restrictions = ParseRestrictions ();
 	restrictions.consume_semi = false;
 	parser.parse_stmt (restrictions);
@@ -476,19 +481,22 @@ MacroExpander::match_matcher (Parser<MacroInvocLexer> &parser,
   // this is used so we can check that we delimit the stream correctly.
   switch (delimiter->get_id ())
     {
-      case LEFT_PAREN: {
+    case LEFT_PAREN:
+      {
 	if (!check_delim (AST::DelimType::PARENS))
 	  return false;
       }
       break;
 
-      case LEFT_SQUARE: {
+    case LEFT_SQUARE:
+      {
 	if (!check_delim (AST::DelimType::SQUARE))
 	  return false;
       }
       break;
 
-      case LEFT_CURLY: {
+    case LEFT_CURLY:
+      {
 	if (!check_delim (AST::DelimType::CURLY))
 	  return false;
       }
@@ -506,7 +514,8 @@ MacroExpander::match_matcher (Parser<MacroInvocLexer> &parser,
 
       switch (match->get_macro_match_type ())
 	{
-	  case AST::MacroMatch::MacroMatchType::Fragment: {
+	case AST::MacroMatch::MacroMatchType::Fragment:
+	  {
 	    AST::MacroMatchFragment *fragment
 	      = static_cast<AST::MacroMatchFragment *> (match.get ());
 	    if (!match_fragment (parser, *fragment))
@@ -520,14 +529,16 @@ MacroExpander::match_matcher (Parser<MacroInvocLexer> &parser,
 	  }
 	  break;
 
-	  case AST::MacroMatch::MacroMatchType::Tok: {
+	case AST::MacroMatch::MacroMatchType::Tok:
+	  {
 	    AST::Token *tok = static_cast<AST::Token *> (match.get ());
 	    if (!match_token (parser, *tok))
 	      return false;
 	  }
 	  break;
 
-	  case AST::MacroMatch::MacroMatchType::Repetition: {
+	case AST::MacroMatch::MacroMatchType::Repetition:
+	  {
 	    AST::MacroMatchRepetition *rep
 	      = static_cast<AST::MacroMatchRepetition *> (match.get ());
 	    if (!match_repetition (parser, *rep))
@@ -535,7 +546,8 @@ MacroExpander::match_matcher (Parser<MacroInvocLexer> &parser,
 	  }
 	  break;
 
-	  case AST::MacroMatch::MacroMatchType::Matcher: {
+	case AST::MacroMatch::MacroMatchType::Matcher:
+	  {
 	    AST::MacroMatcher *m
 	      = static_cast<AST::MacroMatcher *> (match.get ());
 	    expansion_depth++;
@@ -552,19 +564,22 @@ MacroExpander::match_matcher (Parser<MacroInvocLexer> &parser,
 
   switch (delimiter->get_id ())
     {
-      case LEFT_PAREN: {
+    case LEFT_PAREN:
+      {
 	if (!parser.skip_token (RIGHT_PAREN))
 	  return false;
       }
       break;
 
-      case LEFT_SQUARE: {
+    case LEFT_SQUARE:
+      {
 	if (!parser.skip_token (RIGHT_SQUARE))
 	  return false;
       }
       break;
 
-      case LEFT_CURLY: {
+    case LEFT_CURLY:
+      {
 	if (!parser.skip_token (RIGHT_CURLY))
 	  return false;
       }
@@ -613,7 +628,8 @@ MacroExpander::match_n_matches (Parser<MacroInvocLexer> &parser,
 	  size_t offs_begin = source.get_offs ();
 	  switch (match->get_macro_match_type ())
 	    {
-	      case AST::MacroMatch::MacroMatchType::Fragment: {
+	    case AST::MacroMatch::MacroMatchType::Fragment:
+	      {
 		AST::MacroMatchFragment *fragment
 		  = static_cast<AST::MacroMatchFragment *> (match.get ());
 		valid_current_match = match_fragment (parser, *fragment);
@@ -621,26 +637,30 @@ MacroExpander::match_n_matches (Parser<MacroInvocLexer> &parser,
 		// matched fragment get the offset in the token stream
 		size_t offs_end = source.get_offs ();
 
-		sub_stack.insert_metavar (
-		  MatchedFragment (fragment->get_ident ().as_string (),
-				   offs_begin, offs_end));
+		if (valid_current_match)
+		  sub_stack.insert_metavar (
+		    MatchedFragment (fragment->get_ident ().as_string (),
+				     offs_begin, offs_end));
 	      }
 	      break;
 
-	      case AST::MacroMatch::MacroMatchType::Tok: {
+	    case AST::MacroMatch::MacroMatchType::Tok:
+	      {
 		AST::Token *tok = static_cast<AST::Token *> (match.get ());
 		valid_current_match = match_token (parser, *tok);
 	      }
 	      break;
 
-	      case AST::MacroMatch::MacroMatchType::Repetition: {
+	    case AST::MacroMatch::MacroMatchType::Repetition:
+	      {
 		AST::MacroMatchRepetition *rep
 		  = static_cast<AST::MacroMatchRepetition *> (match.get ());
 		valid_current_match = match_repetition (parser, *rep);
 	      }
 	      break;
 
-	      case AST::MacroMatch::MacroMatchType::Matcher: {
+	    case AST::MacroMatch::MacroMatchType::Matcher:
+	      {
 		AST::MacroMatcher *m
 		  = static_cast<AST::MacroMatcher *> (match.get ());
 		valid_current_match = match_matcher (parser, *m, true);
@@ -650,14 +670,14 @@ MacroExpander::match_n_matches (Parser<MacroInvocLexer> &parser,
 	}
       auto old_stack = sub_stack.pop ();
 
-      // nest metavars into repetitions
-      for (auto &ent : old_stack)
-	sub_stack.append_fragment (ent.first, std::move (ent.second));
-
       // If we've encountered an error once, stop trying to match more
       // repetitions
       if (!valid_current_match)
 	break;
+
+      // nest metavars into repetitions
+      for (auto &ent : old_stack)
+	sub_stack.append_fragment (ent.first, std::move (ent.second));
 
       match_amount++;
 

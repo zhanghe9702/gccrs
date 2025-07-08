@@ -1,4 +1,4 @@
-// Copyright (C) 2020-2024 Free Software Foundation, Inc.
+// Copyright (C) 2020-2025 Free Software Foundation, Inc.
 
 // This file is part of GCC.
 
@@ -70,7 +70,7 @@ ResolveStmt::visit (AST::StaticItem &var)
     [&] (const CanonicalPath &, NodeId, location_t locus) -> void {
       rich_location r (line_table, var.get_locus ());
       r.add_range (locus);
-      rust_error_at (r, "redefined multiple times");
+      redefined_error (r);
     });
 
   ResolveType::go (var.get_type ());

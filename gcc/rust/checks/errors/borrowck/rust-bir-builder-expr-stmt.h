@@ -1,4 +1,4 @@
-// Copyright (C) 2020-2024 Free Software Foundation, Inc.
+// Copyright (C) 2020-2025 Free Software Foundation, Inc.
 
 // This file is part of GCC.
 
@@ -84,6 +84,8 @@ protected: // Expr
   void visit (HIR::MethodCallExpr &expr) override;
   void visit (HIR::FieldAccessExpr &expr) override;
   void visit (HIR::BlockExpr &block) override;
+  void visit (HIR::AnonConst &block) override;
+  void visit (HIR::ConstBlock &block) override;
   void visit (HIR::ContinueExpr &cont) override;
   void visit (HIR::BreakExpr &brk) override;
   void visit (HIR::RangeFromToExpr &range) override;
@@ -100,6 +102,7 @@ protected: // Expr
   void visit (HIR::IfExpr &expr) override;
   void visit (HIR::IfExprConseqElse &expr) override;
   void visit (HIR::InlineAsm &expr) override;
+  void visit (HIR::LlvmInlineAsm &expr) override;
 
   void visit (HIR::MatchExpr &expr) override;
   void visit (HIR::AwaitExpr &expr) override;

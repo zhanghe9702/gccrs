@@ -81,10 +81,10 @@ OperatorExpr::operator= (OperatorExpr const &other)
 
 BorrowExpr::BorrowExpr (Analysis::NodeMapping mappings,
 			std::unique_ptr<Expr> borrow_lvalue, Mutability mut,
-			AST::AttrVec outer_attribs, location_t locus)
+			bool raw, AST::AttrVec outer_attribs, location_t locus)
   : OperatorExpr (std::move (mappings), std::move (borrow_lvalue),
 		  std::move (outer_attribs), locus),
-    mut (mut)
+    mut (mut), raw (raw)
 {}
 
 DereferenceExpr::DereferenceExpr (Analysis::NodeMapping mappings,
@@ -749,7 +749,7 @@ BlockExpr::BlockExpr (Analysis::NodeMapping mappings,
 		      std::vector<std::unique_ptr<Stmt>> block_statements,
 		      std::unique_ptr<Expr> block_expr, bool tail_reachable,
 		      AST::AttrVec inner_attribs, AST::AttrVec outer_attribs,
-		      LoopLabel label, location_t start_locus,
+		      tl::optional<LoopLabel> label, location_t start_locus,
 		      location_t end_locus)
   : ExprWithBlock (std::move (mappings), std::move (outer_attribs)),
     WithInnerAttrs (std::move (inner_attribs)),
@@ -790,14 +790,60 @@ BlockExpr::operator= (BlockExpr const &other)
   return *this;
 }
 
+AnonConst::AnonConst (Analysis::NodeMapping mappings,
+		      std::unique_ptr<Expr> &&expr, location_t locus)
+  : ExprWithBlock (std::move (mappings), {}), locus (locus),
+    expr (std::move (expr))
+{
+  rust_assert (this->expr);
+}
+
+AnonConst::AnonConst (const AnonConst &other)
+  : ExprWithBlock (other), locus (other.locus), expr (other.expr->clone_expr ())
+{}
+
+AnonConst
+AnonConst::operator= (const AnonConst &other)
+{
+  ExprWithBlock::operator= (other);
+
+  locus = other.locus;
+  expr = other.expr->clone_expr ();
+
+  return *this;
+}
+
+ConstBlock::ConstBlock (Analysis::NodeMapping mappings, AnonConst &&expr,
+			location_t locus, AST::AttrVec outer_attrs)
+  : ExprWithBlock (std::move (mappings), std::move (outer_attrs)),
+    expr (std::move (expr)), locus (locus)
+{}
+
+ConstBlock::ConstBlock (const ConstBlock &other)
+  : ExprWithBlock (other), expr (other.expr), locus (other.locus)
+{}
+
+ConstBlock
+ConstBlock::operator= (const ConstBlock &other)
+{
+  ExprWithBlock::operator= (other);
+
+  expr = other.expr;
+  locus = other.locus;
+
+  return *this;
+}
+
 ContinueExpr::ContinueExpr (Analysis::NodeMapping mappings, location_t locus,
-			    Lifetime label, AST::AttrVec outer_attribs)
+			    tl::optional<Lifetime> label,
+			    AST::AttrVec outer_attribs)
   : ExprWithoutBlock (std::move (mappings), std::move (outer_attribs)),
     label (std::move (label)), locus (locus)
 {}
 
 BreakExpr::BreakExpr (Analysis::NodeMapping mappings, location_t locus,
-		      Lifetime break_label, std::unique_ptr<Expr> expr_in_break,
+		      tl::optional<Lifetime> break_label,
+		      std::unique_ptr<Expr> expr_in_break,
 		      AST::AttrVec outer_attribs)
   : ExprWithoutBlock (std::move (mappings), std::move (outer_attribs)),
     label (std::move (break_label)), break_expr (std::move (expr_in_break)),
@@ -985,7 +1031,8 @@ UnsafeBlockExpr::operator= (UnsafeBlockExpr const &other)
 
 BaseLoopExpr::BaseLoopExpr (Analysis::NodeMapping mappings,
 			    std::unique_ptr<BlockExpr> loop_block,
-			    location_t locus, LoopLabel loop_label,
+			    location_t locus,
+			    tl::optional<LoopLabel> loop_label,
 			    AST::AttrVec outer_attribs)
   : ExprWithBlock (std::move (mappings), std::move (outer_attribs)),
     loop_label (std::move (loop_label)), loop_block (std::move (loop_block)),
@@ -1011,7 +1058,8 @@ BaseLoopExpr::operator= (BaseLoopExpr const &other)
 
 LoopExpr::LoopExpr (Analysis::NodeMapping mappings,
 		    std::unique_ptr<BlockExpr> loop_block, location_t locus,
-		    LoopLabel loop_label, AST::AttrVec outer_attribs)
+		    tl::optional<LoopLabel> loop_label,
+		    AST::AttrVec outer_attribs)
   : BaseLoopExpr (std::move (mappings), std::move (loop_block), locus,
 		  std::move (loop_label), std::move (outer_attribs))
 {}
@@ -1019,7 +1067,8 @@ LoopExpr::LoopExpr (Analysis::NodeMapping mappings,
 WhileLoopExpr::WhileLoopExpr (Analysis::NodeMapping mappings,
 			      std::unique_ptr<Expr> loop_condition,
 			      std::unique_ptr<BlockExpr> loop_block,
-			      location_t locus, LoopLabel loop_label,
+			      location_t locus,
+			      tl::optional<LoopLabel> loop_label,
 			      AST::AttrVec outer_attribs)
   : BaseLoopExpr (std::move (mappings), std::move (loop_block), locus,
 		  std::move (loop_label), std::move (outer_attribs)),
@@ -1046,7 +1095,8 @@ WhileLetLoopExpr::WhileLetLoopExpr (
   Analysis::NodeMapping mappings,
   std::vector<std::unique_ptr<Pattern>> match_arm_patterns,
   std::unique_ptr<Expr> condition, std::unique_ptr<BlockExpr> loop_block,
-  location_t locus, LoopLabel loop_label, AST::AttrVec outer_attribs)
+  location_t locus, tl::optional<LoopLabel> loop_label,
+  AST::AttrVec outer_attribs)
   : BaseLoopExpr (std::move (mappings), std::move (loop_block), locus,
 		  std::move (loop_label), std::move (outer_attribs)),
     match_arm_patterns (std::move (match_arm_patterns)),
@@ -1304,26 +1354,6 @@ OperatorExprMeta::OperatorExprMeta (HIR::ComparisonExpr &expr)
     locus (expr.get_locus ())
 {}
 
-AnonConst::AnonConst (NodeId id, std::unique_ptr<Expr> expr)
-  : id (id), expr (std::move (expr))
-{
-  rust_assert (this->expr != nullptr);
-}
-
-AnonConst::AnonConst (const AnonConst &other)
-{
-  id = other.id;
-  expr = other.expr->clone_expr ();
-}
-
-AnonConst
-AnonConst::operator= (const AnonConst &other)
-{
-  id = other.id;
-  expr = other.expr->clone_expr ();
-  return *this;
-}
-
 InlineAsmOperand::In::In (
   const tl::optional<struct AST::InlineAsmRegOrRegClass> &reg,
   std::unique_ptr<Expr> expr)
@@ -1470,7 +1500,7 @@ InlineAsm::InlineAsm (location_t locus, bool is_global_asm,
 		      std::vector<AST::TupleTemplateStr> template_strs,
 		      std::vector<HIR::InlineAsmOperand> operands,
 		      std::vector<AST::TupleClobber> clobber_abi,
-		      std::set<AST::InlineAsmOption> options,
+		      std::set<AST::InlineAsm::Option> options,
 		      Analysis::NodeMapping mappings,
 		      AST::AttrVec outer_attribs)
   : ExprWithoutBlock (std::move (mappings), std::move (outer_attribs)),

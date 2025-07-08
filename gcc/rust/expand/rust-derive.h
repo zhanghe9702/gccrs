@@ -1,4 +1,4 @@
-// Copyright (C) 2020-2024 Free Software Foundation, Inc.
+// Copyright (C) 2020-2025 Free Software Foundation, Inc.
 
 // This file is part of GCC.
 
@@ -147,6 +147,8 @@ private:
   virtual void visit (FieldAccessExpr &expr) override final{};
   virtual void visit (ClosureExprInner &expr) override final{};
   virtual void visit (BlockExpr &expr) override final{};
+  virtual void visit (AnonConst &expr) override final{};
+  virtual void visit (ConstBlock &expr) override final{};
   virtual void visit (ClosureExprInnerTyped &expr) override final{};
   virtual void visit (ContinueExpr &expr) override final{};
   virtual void visit (BreakExpr &expr) override final{};
@@ -157,6 +159,7 @@ private:
   virtual void visit (RangeFromToInclExpr &expr) override final{};
   virtual void visit (RangeToInclExpr &expr) override final{};
   virtual void visit (ReturnExpr &expr) override final{};
+  virtual void visit (TryExpr &expr) override final{};
   virtual void visit (BoxExpr &expr) override final{};
   virtual void visit (UnsafeBlockExpr &expr) override final{};
   virtual void visit (LoopExpr &expr) override final{};
@@ -171,6 +174,7 @@ private:
   virtual void visit (AwaitExpr &expr) override final{};
   virtual void visit (AsyncBlockExpr &expr) override final{};
   virtual void visit (InlineAsm &expr) override final{};
+  virtual void visit (LlvmInlineAsm &expr) override final{};
   virtual void visit (TypeParam &param) override final{};
   virtual void visit (LifetimeWhereClauseItem &item) override final{};
   virtual void visit (TypeBoundWhereClauseItem &item) override final{};

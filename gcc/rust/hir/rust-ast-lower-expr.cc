@@ -1,4 +1,4 @@
-// Copyright (C) 2020-2024 Free Software Foundation, Inc.
+// Copyright (C) 2020-2025 Free Software Foundation, Inc.
 
 // This file is part of GCC.
 
@@ -25,6 +25,7 @@
 #include "rust-ast-lower-type.h"
 #include "rust-ast.h"
 #include "rust-diagnostics.h"
+#include "rust-hir-map.h"
 #include "rust-system.h"
 #include "tree/rust-hir-expr.h"
 
@@ -124,6 +125,43 @@ void
 ASTLoweringExpr::visit (AST::BlockExpr &expr)
 {
   translated = ASTLoweringBlock::translate (expr, &terminated);
+}
+
+void
+ASTLoweringExpr::visit (AST::AnonConst &expr)
+{
+  auto inner_expr = ASTLoweringExpr::translate (expr.get_inner_expr ());
+
+  auto &mappings = Analysis::Mappings::get ();
+  auto crate_num = mappings.get_current_crate ();
+  auto mapping = Analysis::NodeMapping (crate_num, expr.get_node_id (),
+					mappings.get_next_hir_id (crate_num),
+					UNKNOWN_LOCAL_DEFID);
+
+  translated = new HIR::AnonConst (std::move (mapping),
+				   std::unique_ptr<Expr> (inner_expr),
+				   expr.get_locus ());
+}
+
+void
+ASTLoweringExpr::visit (AST::ConstBlock &expr)
+{
+  auto inner_expr = ASTLoweringExpr::translate (expr.get_const_expr ());
+
+  // we know this will always be an `AnonConst`, or we have an issue. Let's
+  // assert just to be sure.
+  rust_assert (inner_expr->get_expression_type () == Expr::ExprType::AnonConst);
+  auto anon_const = static_cast<AnonConst *> (inner_expr);
+
+  auto &mappings = Analysis::Mappings::get ();
+  auto crate_num = mappings.get_current_crate ();
+  auto mapping = Analysis::NodeMapping (crate_num, expr.get_node_id (),
+					mappings.get_next_hir_id (crate_num),
+					UNKNOWN_LOCAL_DEFID);
+
+  translated
+    = new HIR::ConstBlock (std::move (mapping), std::move (*anon_const),
+			   expr.get_locus (), expr.get_outer_attrs ());
 }
 
 void
@@ -597,8 +635,10 @@ ASTLoweringExpr::visit (AST::ForLoopExpr &expr)
 void
 ASTLoweringExpr::visit (AST::BreakExpr &expr)
 {
-  HIR::Lifetime break_label
-    = lower_lifetime (expr.get_label ().get_lifetime ());
+  tl::optional<HIR::Lifetime> break_label = tl::nullopt;
+  if (expr.has_label ())
+    break_label = lower_lifetime (expr.get_label_unchecked ().get_lifetime ());
+
   HIR::Expr *break_expr
     = expr.has_break_expr ()
 	? ASTLoweringExpr::translate (expr.get_break_expr ())
@@ -618,7 +658,9 @@ ASTLoweringExpr::visit (AST::BreakExpr &expr)
 void
 ASTLoweringExpr::visit (AST::ContinueExpr &expr)
 {
-  HIR::Lifetime break_label = lower_lifetime (expr.get_label ());
+  tl::optional<HIR::Lifetime> break_label;
+  if (expr.has_label ())
+    break_label = lower_lifetime (expr.get_label_unchecked ());
 
   auto crate_num = mappings.get_current_crate ();
   Analysis::NodeMapping mapping (crate_num, expr.get_node_id (),
@@ -633,9 +675,6 @@ ASTLoweringExpr::visit (AST::ContinueExpr &expr)
 void
 ASTLoweringExpr::visit (AST::BorrowExpr &expr)
 {
-  if (expr.is_raw_borrow ())
-    rust_unreachable ();
-
   HIR::Expr *borrow_lvalue
     = ASTLoweringExpr::translate (expr.get_borrowed_expr ());
 
@@ -646,8 +685,8 @@ ASTLoweringExpr::visit (AST::BorrowExpr &expr)
 
   auto *borrow_expr
     = new HIR::BorrowExpr (mapping, std::unique_ptr<HIR::Expr> (borrow_lvalue),
-			   expr.get_mutability (), expr.get_outer_attrs (),
-			   expr.get_locus ());
+			   expr.get_mutability (), expr.is_raw_borrow (),
+			   expr.get_outer_attrs (), expr.get_locus ());
 
   if (expr.get_is_double_borrow ())
     {
@@ -659,8 +698,8 @@ ASTLoweringExpr::visit (AST::BorrowExpr &expr)
       borrow_expr
 	= new HIR::BorrowExpr (mapping,
 			       std::unique_ptr<HIR::Expr> (borrow_expr),
-			       expr.get_mutability (), expr.get_outer_attrs (),
-			       expr.get_locus ());
+			       expr.get_mutability (), expr.is_raw_borrow (),
+			       expr.get_outer_attrs (), expr.get_locus ());
     }
 
   translated = borrow_expr;
@@ -797,7 +836,7 @@ ASTLoweringExpr::visit (AST::ClosureExprInnerTyped &expr)
 {
   HIR::Type *closure_return_type = nullptr;
   HIR::Expr *closure_expr
-    = ASTLoweringExpr::translate (expr.get_definition_block ());
+    = ASTLoweringExpr::translate (expr.get_definition_expr ());
 
   std::vector<HIR::ClosureParam> closure_params;
   for (auto &param : expr.get_params ())
@@ -840,6 +879,7 @@ translate_operand_out (const AST::InlineAsmOperand &operand)
 					     *out_value.expr.get ())));
   return out;
 }
+
 HIR::InlineAsmOperand
 translate_operand_inout (const AST::InlineAsmOperand &operand)
 {
@@ -850,6 +890,7 @@ translate_operand_inout (const AST::InlineAsmOperand &operand)
 						 *inout_value.expr.get ())));
   return inout;
 }
+
 HIR::InlineAsmOperand
 translate_operand_split_in_out (const AST::InlineAsmOperand &operand)
 {
@@ -862,19 +903,21 @@ translate_operand_split_in_out (const AST::InlineAsmOperand &operand)
       ASTLoweringExpr::translate (*split_in_out_value.out_expr.get ())));
   return split_in_out;
 }
+
 HIR::InlineAsmOperand
 translate_operand_const (const AST::InlineAsmOperand &operand)
 {
   auto const_value = operand.get_const ();
-  struct HIR::AnonConst anon_const (const_value.anon_const.id,
-				    std::unique_ptr<Expr> (
-				      ASTLoweringExpr::translate (
-					*const_value.anon_const.expr.get ())));
-  struct HIR::InlineAsmOperand::Const cnst
-  {
-    anon_const
-  };
-  return cnst;
+
+  auto inner_expr = ASTLoweringExpr::translate (const_value.anon_const);
+
+  // Like `ConstBlock`, we know this should only be an `AnonConst` - let's
+  // assert to make sure and static cast
+  rust_assert (inner_expr->get_expression_type () == Expr::ExprType::AnonConst);
+
+  auto anon_const = static_cast<AnonConst *> (inner_expr);
+
+  return HIR::InlineAsmOperand::Const{*anon_const};
 }
 
 HIR::InlineAsmOperand
@@ -954,6 +997,50 @@ ASTLoweringExpr::visit (AST::InlineAsm &expr)
 			  hir_operands, expr.get_clobber_abi (),
 			  expr.get_options (), mapping);
 }
+
+void
+ASTLoweringExpr::visit (AST::LlvmInlineAsm &expr)
+{
+  auto crate_num = mappings.get_current_crate ();
+  Analysis::NodeMapping mapping (crate_num, expr.get_node_id (),
+				 mappings.get_next_hir_id (crate_num),
+				 mappings.get_next_localdef_id (crate_num));
+
+  std::vector<LlvmOperand> inputs;
+  std::vector<LlvmOperand> outputs;
+
+  for (auto i : expr.get_inputs ())
+    {
+      std::unique_ptr<Expr> inner_expr
+	= std::unique_ptr<Expr> (translate (*i.expr.get ()));
+      inputs.emplace_back (i.constraint, std::move (inner_expr));
+    }
+
+  for (auto o : expr.get_outputs ())
+    {
+      std::unique_ptr<Expr> inner_expr
+	= std::unique_ptr<Expr> (translate (*o.expr.get ()));
+      outputs.emplace_back (o.constraint, std::move (inner_expr));
+    }
+
+  HIR::LlvmInlineAsm::Options options{expr.is_volatile (),
+				      expr.is_stack_aligned (),
+				      expr.get_dialect ()};
+
+  // We're not really supporting llvm_asm, only the bare minimum
+  // we're quite conservative here as the current code support more usecase.
+  rust_assert (outputs.size () == 0);
+  rust_assert (inputs.size () <= 1);
+  rust_assert (expr.get_clobbers ().size () <= 1);
+  rust_assert (expr.get_templates ().size () == 1);
+  rust_assert (expr.get_templates ()[0].symbol == "");
+
+  translated
+    = new HIR::LlvmInlineAsm (expr.get_locus (), inputs, outputs,
+			      expr.get_templates (), expr.get_clobbers (),
+			      options, expr.get_outer_attrs (), mapping);
+}
+
 void
 ASTLoweringExpr::visit (AST::FormatArgs &fmt)
 {

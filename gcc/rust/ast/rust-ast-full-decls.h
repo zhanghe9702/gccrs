@@ -1,4 +1,4 @@
-// Copyright (C) 2020-2024 Free Software Foundation, Inc.
+// Copyright (C) 2020-2025 Free Software Foundation, Inc.
 
 // This file is part of GCC.
 
@@ -115,6 +115,8 @@ struct ClosureParam;
 class ClosureExpr;
 class ClosureExprInner;
 class BlockExpr;
+class AnonConst;
+class ConstBlock;
 class ClosureExprInnerTyped;
 class ContinueExpr;
 class BreakExpr;
@@ -126,6 +128,7 @@ class RangeFullExpr;
 class RangeFromToInclExpr;
 class RangeToInclExpr;
 class ReturnExpr;
+class TryExpr;
 class UnsafeBlockExpr;
 class LoopLabel;
 class BaseLoopExpr;
@@ -146,7 +149,6 @@ class MatchExpr;
 class AwaitExpr;
 class AsyncBlockExpr;
 enum class InlineAsmOption;
-struct AnonConst;
 struct InlineAsmRegOrRegClass;
 class InlineAsmOperand;
 struct InlineAsmPlaceHolder;

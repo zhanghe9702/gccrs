@@ -1,4 +1,4 @@
-// Copyright (C) 2020-2024 Free Software Foundation, Inc.
+// Copyright (C) 2020-2025 Free Software Foundation, Inc.
 
 // This file is part of GCC.
 
@@ -179,6 +179,10 @@ public:
 						  AST::MacroInvocData &invoc,
 						  AST::InvocKind semicolon,
 						  AST::AsmKind is_global_asm);
+
+  static tl::optional<AST::Fragment>
+  llvm_asm_handler (location_t invoc_locus, AST::MacroInvocData &invoc,
+		    AST::InvocKind semicolon, AST::AsmKind is_global_asm);
 
   static tl::optional<AST::Fragment>
   format_args_handler (location_t invoc_locus, AST::MacroInvocData &invoc,

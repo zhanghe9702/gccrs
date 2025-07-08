@@ -1,4 +1,4 @@
-// Copyright (C) 2020-2024 Free Software Foundation, Inc.
+// Copyright (C) 2020-2025 Free Software Foundation, Inc.
 
 // This file is part of GCC.
 
@@ -263,12 +263,14 @@ public:
   WARN_UNUSED_RESULT std::vector<TyTy::Region>
   regions_from_generic_args (const HIR::GenericArgs &args) const;
 
-  void compute_inference_variables (bool error);
+  void compute_inference_variables (bool emit_error);
 
   TyTy::VarianceAnalysis::CrateCtx &get_variance_analysis_ctx ();
 
 private:
   TypeCheckContext ();
+
+  bool compute_infer_var (HirId id, TyTy::BaseType *ty, bool emit_error);
 
   std::map<NodeId, HirId> node_id_refs;
   std::map<HirId, TyTy::BaseType *> resolved;

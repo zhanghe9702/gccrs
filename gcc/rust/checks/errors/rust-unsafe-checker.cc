@@ -1,4 +1,4 @@
-// Copyright (C) 2020-2024 Free Software Foundation, Inc.
+// Copyright (C) 2020-2025 Free Software Foundation, Inc.
 
 // This file is part of GCC.
 
@@ -481,9 +481,14 @@ UnsafeChecker::visit (MethodCallExpr &expr)
   TyTy::BaseType *method_type;
   context.lookup_type (expr.get_method_name ().get_mappings ().get_hirid (),
 		       &method_type);
+  if (!method_type || !method_type->is<TyTy::FnType> ())
+    return;
 
   auto &fn = static_cast<TyTy::FnType &> (*method_type);
 
+  // FIXME
+  // should probably use the defid lookup instead
+  // tl::optional<HIR::Item *> lookup_defid (DefId id);
   auto method = mappings.lookup_hir_implitem (fn.get_ref ());
   if (!unsafe_context.is_in_context () && method)
     check_unsafe_call (static_cast<Function *> (method->first),
@@ -532,6 +537,18 @@ UnsafeChecker::visit (BlockExpr &expr)
 
   if (expr.has_expr ())
     expr.get_final_expr ().accept_vis (*this);
+}
+
+void
+UnsafeChecker::visit (AnonConst &expr)
+{
+  expr.get_inner_expr ().accept_vis (*this);
+}
+
+void
+UnsafeChecker::visit (ConstBlock &expr)
+{
+  expr.get_const_expr ().accept_vis (*this);
 }
 
 void
@@ -656,6 +673,17 @@ UnsafeChecker::visit (AsyncBlockExpr &)
 
 void
 UnsafeChecker::visit (InlineAsm &expr)
+{
+  if (unsafe_context.is_in_context ())
+    return;
+
+  rust_error_at (
+    expr.get_locus (), ErrorCode::E0133,
+    "use of inline assembly is unsafe and requires unsafe function or block");
+}
+
+void
+UnsafeChecker::visit (LlvmInlineAsm &expr)
 {
   if (unsafe_context.is_in_context ())
     return;

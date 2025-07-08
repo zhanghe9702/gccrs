@@ -1,4 +1,4 @@
-// Copyright (C) 2020-2024 Free Software Foundation, Inc.
+// Copyright (C) 2020-2025 Free Software Foundation, Inc.
 
 // This file is part of GCC.
 
@@ -74,7 +74,7 @@ class IdentifierPattern : public Pattern
   bool is_mut;
 
   // bool has_pattern;
-  std::unique_ptr<Pattern> to_bind;
+  std::unique_ptr<Pattern> subpattern;
   location_t locus;
   NodeId node_id;
 
@@ -82,22 +82,22 @@ public:
   std::string as_string () const override;
 
   // Returns whether the IdentifierPattern has a pattern to bind.
-  bool has_pattern_to_bind () const { return to_bind != nullptr; }
+  bool has_subpattern () const { return subpattern != nullptr; }
 
   // Constructor
   IdentifierPattern (Identifier ident, location_t locus, bool is_ref = false,
 		     bool is_mut = false,
-		     std::unique_ptr<Pattern> to_bind = nullptr)
+		     std::unique_ptr<Pattern> subpattern = nullptr)
     : Pattern (), variable_ident (std::move (ident)), is_ref (is_ref),
-      is_mut (is_mut), to_bind (std::move (to_bind)), locus (locus),
+      is_mut (is_mut), subpattern (std::move (subpattern)), locus (locus),
       node_id (Analysis::Mappings::get ().get_next_node_id ())
   {}
 
   IdentifierPattern (NodeId node_id, Identifier ident, location_t locus,
 		     bool is_ref = false, bool is_mut = false,
-		     std::unique_ptr<Pattern> to_bind = nullptr)
+		     std::unique_ptr<Pattern> subpattern = nullptr)
     : Pattern (), variable_ident (std::move (ident)), is_ref (is_ref),
-      is_mut (is_mut), to_bind (std::move (to_bind)), locus (locus),
+      is_mut (is_mut), subpattern (std::move (subpattern)), locus (locus),
       node_id (node_id)
   {}
 
@@ -107,8 +107,8 @@ public:
       is_mut (other.is_mut), locus (other.locus), node_id (other.node_id)
   {
     // fix to get prevent null pointer dereference
-    if (other.to_bind != nullptr)
-      to_bind = other.to_bind->clone_pattern ();
+    if (other.subpattern != nullptr)
+      subpattern = other.subpattern->clone_pattern ();
   }
 
   // Overload assignment operator to use clone
@@ -121,10 +121,10 @@ public:
     node_id = other.node_id;
 
     // fix to prevent null pointer dereference
-    if (other.to_bind != nullptr)
-      to_bind = other.to_bind->clone_pattern ();
+    if (other.subpattern != nullptr)
+      subpattern = other.subpattern->clone_pattern ();
     else
-      to_bind = nullptr;
+      subpattern = nullptr;
 
     return *this;
   }
@@ -137,11 +137,10 @@ public:
 
   void accept_vis (ASTVisitor &vis) override;
 
-  // TODO: is this better? Or is a "vis_pattern" better?
-  Pattern &get_pattern_to_bind ()
+  Pattern &get_subpattern ()
   {
-    rust_assert (has_pattern_to_bind ());
-    return *to_bind;
+    rust_assert (has_subpattern ());
+    return *subpattern;
   }
 
   Identifier get_ident () const { return variable_ident; }
@@ -375,8 +374,7 @@ enum class RangeKind
   EXCLUDED,
 };
 
-RangeKind
-tokenid_to_rangekind (TokenId id);
+RangeKind tokenid_to_rangekind (TokenId id);
 // AST node for matching within a certain range (range pattern)
 class RangePattern : public Pattern
 {
@@ -950,7 +948,7 @@ public:
    * is empty). */
   bool has_struct_pattern_elems () const { return !elems.is_empty (); }
 
-  location_t get_locus () const override { return path.get_locus (); }
+  location_t get_locus () const override { return locus; }
 
   void accept_vis (ASTVisitor &vis) override;
 

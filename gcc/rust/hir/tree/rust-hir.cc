@@ -1,4 +1,4 @@
-// Copyright (C) 2020-2024 Free Software Foundation, Inc.
+// Copyright (C) 2020-2025 Free Software Foundation, Inc.
 
 // This file is part of GCC.
 
@@ -577,7 +577,8 @@ UseTreeGlob::as_string () const
       return "*";
     case GLOBAL:
       return "::*";
-      case PATH_PREFIXED: {
+    case PATH_PREFIXED:
+      {
 	std::string path_str = path.as_string ();
 	return path_str + "::*";
       }
@@ -600,7 +601,8 @@ UseTreeList::as_string () const
     case GLOBAL:
       path_str = "::{";
       break;
-      case PATH_PREFIXED: {
+    case PATH_PREFIXED:
+      {
 	path_str = path.as_string () + "::{";
 	break;
       }
@@ -1048,6 +1050,33 @@ BlockExpr::as_string () const
 }
 
 std::string
+AnonConst::as_string () const
+{
+  std::string istr = indent_spaces (enter);
+  std::string str = istr + "AnonConst:\n" + istr;
+
+  str += get_inner_expr ().as_string ();
+
+  str += "\n" + indent_spaces (out);
+
+  return str;
+}
+
+std::string
+ConstBlock::as_string () const
+{
+  std::string istr = indent_spaces (enter);
+
+  std::string str = istr + "ConstBlock:\n" + istr;
+
+  str += get_const_expr ().as_string ();
+
+  str += "\n" + indent_spaces (out);
+
+  return str;
+}
+
+std::string
 TypeAlias::as_string () const
 {
   std::string str = VisItem::as_string ();
@@ -1314,7 +1343,7 @@ ContinueExpr::as_string () const
 
   if (has_label ())
     {
-      str += label.as_string ();
+      str += get_label ().as_string ();
     }
 
   return str;
@@ -1704,7 +1733,7 @@ WhileLoopExpr::as_string () const
     }
   else
     {
-      str += loop_label.as_string ();
+      str += get_loop_label ().as_string ();
     }
 
   str += "\n Conditional expr: " + condition->as_string ();
@@ -1726,7 +1755,7 @@ WhileLetLoopExpr::as_string () const
     }
   else
     {
-      str += loop_label.as_string ();
+      str += get_loop_label ().as_string ();
     }
 
   str += "\n Match arm patterns: ";
@@ -1761,7 +1790,7 @@ LoopExpr::as_string () const
     }
   else
     {
-      str += loop_label.as_string ();
+      str += get_loop_label ().as_string ();
     }
 
   str += "\n Loop block: " + loop_block->as_string ();
@@ -1816,7 +1845,7 @@ BreakExpr::as_string () const
 
   if (has_label ())
     {
-      str += label.as_string () + " ";
+      str += get_label ().as_string () + " ";
     }
 
   if (has_break_expr ())
@@ -2101,11 +2130,6 @@ QualifiedPathInType::as_string () const
 std::string
 Lifetime::as_string () const
 {
-  if (is_error ())
-    {
-      return "error lifetime";
-    }
-
   switch (lifetime_type)
     {
     case AST::Lifetime::LifetimeType::NAMED:
@@ -2584,9 +2608,9 @@ IdentifierPattern::as_string () const
 
   str += variable_ident.as_string ();
 
-  if (has_pattern_to_bind ())
+  if (has_subpattern ())
     {
-      str += " @ " + to_bind->as_string ();
+      str += " @ " + subpattern->as_string ();
     }
 
   return str;
@@ -2760,7 +2784,7 @@ ReferenceType::as_string () const
 
   if (has_lifetime ())
     {
-      str += lifetime.as_string () + " ";
+      str += get_lifetime ().as_string () + " ";
     }
 
   if (is_mut ())
@@ -3411,7 +3435,7 @@ TraitFunctionDecl::as_string () const
   str += "\n Function params: ";
   if (is_method ())
     {
-      str += self.as_string () + (has_params () ? ", " : "");
+      str += get_self_unchecked ().as_string () + (has_params () ? ", " : "");
     }
 
   if (has_params ())
@@ -3525,70 +3549,63 @@ TraitItemType::as_string () const
 std::string
 SelfParam::as_string () const
 {
-  if (is_error ())
+  if (has_type ())
     {
-      return "error";
+      // type (i.e. not ref, no lifetime)
+      std::string str;
+
+      if (is_mut ())
+	{
+	  str += "mut ";
+	}
+
+      str += "self : ";
+
+      str += type->as_string ();
+
+      return str;
+    }
+  else if (has_lifetime ())
+    {
+      // ref and lifetime
+      std::string str = "&" + get_lifetime ().as_string () + " ";
+
+      if (is_mut ())
+	{
+	  str += "mut ";
+	}
+
+      str += "self";
+
+      return str;
+    }
+  else if (is_ref ())
+    {
+      // ref with no lifetime
+      std::string str = "&";
+
+      if (is_mut ())
+	{
+	  str += " mut ";
+	}
+
+      str += "self";
+
+      return str;
     }
   else
     {
-      if (has_type ())
+      // no ref, no type
+      std::string str;
+
+      if (is_mut ())
 	{
-	  // type (i.e. not ref, no lifetime)
-	  std::string str;
-
-	  if (is_mut ())
-	    {
-	      str += "mut ";
-	    }
-
-	  str += "self : ";
-
-	  str += type->as_string ();
-
-	  return str;
+	  str += "mut ";
 	}
-      else if (has_lifetime ())
-	{
-	  // ref and lifetime
-	  std::string str = "&" + lifetime.as_string () + " ";
 
-	  if (is_mut ())
-	    {
-	      str += "mut ";
-	    }
+      str += "self";
 
-	  str += "self";
-
-	  return str;
-	}
-      else if (is_ref ())
-	{
-	  // ref with no lifetime
-	  std::string str = "&";
-
-	  if (is_mut ())
-	    {
-	      str += " mut ";
-	    }
-
-	  str += "self";
-
-	  return str;
-	}
-      else
-	{
-	  // no ref, no type
-	  std::string str;
-
-	  if (is_mut ())
-	    {
-	      str += "mut ";
-	    }
-
-	  str += "self";
-
-	  return str;
-	}
+      return str;
     }
 }
 
@@ -3834,6 +3851,17 @@ InlineAsm::accept_vis (HIRFullVisitor &vis)
 }
 
 void
+LlvmInlineAsm::accept_vis (HIRFullVisitor &vis)
+{
+  vis.visit (*this);
+}
+void
+LlvmInlineAsm::accept_vis (HIRExpressionVisitor &vis)
+{
+  vis.visit (*this);
+}
+
+void
 BorrowExpr::accept_vis (HIRExpressionVisitor &vis)
 {
   vis.visit (*this);
@@ -4051,6 +4079,18 @@ ClosureExpr::accept_vis (HIRFullVisitor &vis)
 
 void
 BlockExpr::accept_vis (HIRFullVisitor &vis)
+{
+  vis.visit (*this);
+}
+
+void
+AnonConst::accept_vis (HIRFullVisitor &vis)
+{
+  vis.visit (*this);
+}
+
+void
+ConstBlock::accept_vis (HIRFullVisitor &vis)
 {
   vis.visit (*this);
 }
@@ -5023,6 +5063,18 @@ TypeAlias::accept_vis (HIRImplVisitor &vis)
 
 void
 BlockExpr::accept_vis (HIRExpressionVisitor &vis)
+{
+  vis.visit (*this);
+}
+
+void
+AnonConst::accept_vis (HIRExpressionVisitor &vis)
+{
+  vis.visit (*this);
+}
+
+void
+ConstBlock::accept_vis (HIRExpressionVisitor &vis)
 {
   vis.visit (*this);
 }

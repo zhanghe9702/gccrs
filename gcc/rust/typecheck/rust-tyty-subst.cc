@@ -1,4 +1,4 @@
-// Copyright (C) 2020-2024 Free Software Foundation, Inc.
+// Copyright (C) 2020-2025 Free Software Foundation, Inc.
 
 // This file is part of GCC.
 
@@ -28,8 +28,8 @@
 namespace Rust {
 namespace TyTy {
 
-SubstitutionParamMapping::SubstitutionParamMapping (
-  const HIR::TypeParam &generic, ParamType *param)
+SubstitutionParamMapping::SubstitutionParamMapping (HIR::TypeParam &generic,
+						    ParamType *param)
   : generic (generic), param (param)
 {}
 
@@ -64,6 +64,12 @@ const ParamType *
 SubstitutionParamMapping::get_param_ty () const
 {
   return param;
+}
+
+HIR::TypeParam &
+SubstitutionParamMapping::get_generic_param ()
+{
+  return generic;
 }
 
 const HIR::TypeParam &
@@ -618,7 +624,6 @@ SubstitutionRef::get_mappings_from_generic_args (
 	  if (args.get_binding_args ().size () > get_num_associated_bindings ())
 	    {
 	      rich_location r (line_table, args.get_locus ());
-
 	      rust_error_at (r,
 			     "generic item takes at most %lu type binding "
 			     "arguments but %lu were supplied",
@@ -702,7 +707,19 @@ SubstitutionRef::get_mappings_from_generic_args (
 	  return SubstitutionArgumentMappings::error ();
 	}
 
-      SubstitutionArg subst_arg (&substitutions.at (offs), resolved);
+      const auto &param_mapping = substitutions.at (offs);
+      const auto &type_param = param_mapping.get_generic_param ();
+      if (type_param.from_impl_trait ())
+	{
+	  rich_location r (line_table, arg->get_locus ());
+	  r.add_fixit_remove (arg->get_locus ());
+	  rust_error_at (r, ErrorCode::E0632,
+			 "cannot provide explicit generic arguments when "
+			 "%<impl Trait%> is used in argument position");
+	  return SubstitutionArgumentMappings::error ();
+	}
+
+      SubstitutionArg subst_arg (&param_mapping, resolved);
       offs++;
       mappings.push_back (std::move (subst_arg));
     }
@@ -788,7 +805,7 @@ SubstitutionRef::infer_substitions (location_t locus)
 
 SubstitutionArgumentMappings
 SubstitutionRef::adjust_mappings_for_this (
-  SubstitutionArgumentMappings &mappings)
+  SubstitutionArgumentMappings &mappings, bool trait_mode)
 {
   std::vector<SubstitutionArg> resolved_mappings;
   for (size_t i = 0; i < substitutions.size (); i++)
@@ -816,7 +833,7 @@ SubstitutionRef::adjust_mappings_for_this (
 	}
 
       bool ok = !arg.is_error ();
-      if (ok)
+      if (ok || (trait_mode && i == 0))
 	{
 	  SubstitutionArg adjusted (&subst, arg.get_tyty ());
 	  resolved_mappings.push_back (std::move (adjusted));

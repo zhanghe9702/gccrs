@@ -1,4 +1,4 @@
-// Copyright (C) 2020-2024 Free Software Foundation, Inc.
+// Copyright (C) 2020-2025 Free Software Foundation, Inc.
 
 // This file is part of GCC.
 
@@ -113,6 +113,8 @@ private:
   virtual void visit (FieldAccessExpr &expr) override;
   virtual void visit (ClosureExpr &expr) override;
   virtual void visit (BlockExpr &expr) override;
+  virtual void visit (AnonConst &expr) override;
+  virtual void visit (ConstBlock &expr) override;
   virtual void visit (ContinueExpr &expr) override;
   virtual void visit (BreakExpr &expr) override;
   virtual void visit (RangeFromToExpr &expr) override;
@@ -132,6 +134,7 @@ private:
   virtual void visit (AwaitExpr &expr) override;
   virtual void visit (AsyncBlockExpr &expr) override;
   virtual void visit (InlineAsm &expr) override;
+  virtual void visit (LlvmInlineAsm &expr) override;
 
   virtual void visit (TypeParam &param) override;
   virtual void visit (ConstGenericParam &param) override;

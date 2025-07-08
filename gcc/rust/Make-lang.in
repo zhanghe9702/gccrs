@@ -1,6 +1,6 @@
 # Make-lang.in -- Top level -*- makefile -*- fragment for GCC Rust frontend.
 
-# Copyright (C) 2009-2024 Free Software Foundation, Inc.
+# Copyright (C) 2009-2025 Free Software Foundation, Inc.
 
 # This file is part of GCC.
 
@@ -81,6 +81,7 @@ GRS_OBJS = \
     rust/rust-ast-dump.o \
     rust/rust-ast-collector.o \
     rust/rust-ast-visitor.o \
+    rust/rust-hir-visitor.o \
     rust/rust-hir-dump.o \
     rust/rust-session-manager.o \
     rust/rust-compile.o \
@@ -92,14 +93,15 @@ GRS_OBJS = \
     rust/rust-cfg-strip.o \
     rust/rust-expand-visitor.o \
     rust/rust-ast-builder.o \
-    rust/rust-ast-builder-type.o \
     rust/rust-derive.o \
+    rust/rust-derive-cmp-common.o \
     rust/rust-derive-clone.o \
     rust/rust-derive-copy.o \
     rust/rust-derive-debug.o \
     rust/rust-derive-default.o \
     rust/rust-derive-partial-eq.o \
     rust/rust-derive-eq.o \
+    rust/rust-derive-ord.o \
     rust/rust-derive-hash.o \
     rust/rust-proc-macro.o \
     rust/rust-macro-invoc-lexer.o \
@@ -115,6 +117,7 @@ GRS_OBJS = \
     rust/rust-macro-builtins-format-args.o \
     rust/rust-macro-builtins-location.o \
     rust/rust-macro-builtins-include.o \
+    rust/rust-token-tree-desugar.o \
 	rust/rust-fmt.o \
     rust/rust-hir.o \
     rust/rust-hir-map.o \
@@ -122,7 +125,6 @@ GRS_OBJS = \
     rust/rust-keyword-values.o \
     rust/rust-abi.o \
     rust/rust-token-converter.o \
-    rust/rust-macro.o \
     rust/rust-ast-lower.o \
     rust/rust-ast-lower-base.o \
     rust/rust-ast-lower-pattern.o \
@@ -236,11 +238,13 @@ GRS_OBJS = \
     rust/rust-punycode.o \
     rust/rust-unwrap-segment.o \
     rust/rust-edition.o \
+    rust/rust-ggc.o \
 	rust/rust-expand-format-args.o \
 	rust/rust-lang-item.o \
 	rust/rust-collect-lang-items.o \
 	rust/rust-desugar-for-loops.o \
 	rust/rust-desugar-question-mark.o \
+	rust/rust-desugar-apit.o \
     $(END)
 # removed object files from here
 
@@ -368,25 +372,27 @@ RUST_SELFTEST_DEPS = crab1$(exeext) $(SELFTEST_DEPS)
 
 # Run the rust selftests
 s-selftest-rust: $(RUST_SELFTEST_DEPS)
-	$(GCC_FOR_TARGET) $(RUST_SELFTEST_FLAGS)
+	$(GCC_FOR_SELFTESTS) $(RUST_SELFTEST_FLAGS)
 	$(STAMP) $@
 
 # Convenience methods for running rust selftests under gdb:
 .PHONY: selftest-rust-gdb
 selftest-rust-gdb: $(RUST_SELFTEST_DEPS)
-	$(GCC_FOR_TARGET) $(RUST_SELFTEST_FLAGS) \
+	$(GCC_FOR_SELFTESTS) $(RUST_SELFTEST_FLAGS) \
 	  -wrapper gdb,--args
 
 # Convenience methods for running rust selftests under valgrind:
 .PHONY: selftest-rust-valgrind
 selftest-rust-valgrind: $(RUST_SELFTEST_DEPS)
-	$(GCC_FOR_TARGET) $(RUST_SELFTEST_FLAGS) \
+	$(GCC_FOR_SELFTESTS) $(RUST_SELFTEST_FLAGS) \
 	  -wrapper valgrind,--leak-check=full
 
 # Install info documentation for the front end, if it is present in the source directory. This target
 # should have dependencies on info files that should be installed.
 rust.install-info:
 
+rust.install-dvi:
+rust.install-html:
 rust.install-pdf:
 
 # Install man pages for the front end. This target should ignore errors.
@@ -525,5 +531,5 @@ rust/%.o: rust/metadata/%.cc
 rust/libffi_polonius.a: \
 	rust/checks/errors/borrowck/ffi-polonius/Cargo.toml \
 	$(wildcard $(srcdir)/rust/checks/errors/borrowck/ffi-polonius/src/*)
-	cargo build --manifest-path $(srcdir)/rust/checks/errors/borrowck/ffi-polonius/Cargo.toml --release --target-dir rust/ffi-polonius
+	cd $(srcdir)/rust/checks/errors/borrowck/ffi-polonius/ && cargo build --offline --release --target-dir $(objdir)/rust/ffi-polonius
 	cp rust/ffi-polonius/release/libffi_polonius.a rust/libffi_polonius.a

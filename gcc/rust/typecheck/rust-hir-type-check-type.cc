@@ -1,4 +1,4 @@
-// Copyright (C) 2020-2024 Free Software Foundation, Inc.
+// Copyright (C) 2020-2025 Free Software Foundation, Inc.
 
 // This file is part of GCC.
 
@@ -360,6 +360,13 @@ TypeCheckType::resolve_root_path (HIR::TypePath &path, size_t *offset,
 			     seg->as_string ().c_str ());
 	      return new TyTy::ErrorType (path.get_mappings ().get_hirid ());
 	    }
+	  else if (root_tyty == nullptr)
+	    {
+	      rust_error_at (seg->get_locus (),
+			     "unknown reference for resolved name: %qs",
+			     seg->as_string ().c_str ());
+	      return new TyTy::ErrorType (path.get_mappings ().get_hirid ());
+	    }
 	  return root_tyty;
 	}
 
@@ -410,8 +417,13 @@ TypeCheckType::resolve_root_path (HIR::TypePath &path, size_t *offset,
       TyTy::BaseType *lookup = nullptr;
       if (!query_type (ref, &lookup))
 	{
-	  if (is_root)
-	    return new TyTy::ErrorType (path.get_mappings ().get_hirid ());
+	  if (is_root || root_tyty == nullptr)
+	    {
+	      rust_error_at (seg->get_locus (),
+			     "failed to resolve type path segment: %qs",
+			     seg->as_string ().c_str ());
+	      return new TyTy::ErrorType (path.get_mappings ().get_hirid ());
+	    }
 
 	  return root_tyty;
 	}
@@ -537,8 +549,7 @@ TypeCheckType::resolve_segments (
       bool selfResolveOk = false;
 
       if (first_segment && tySegIsBigSelf
-	  && context->block_context ().is_in_context ()
-	  && context->block_context ().peek ().is_impl_block ())
+	  && context->block_context ().is_in_context ())
 	{
 	  TypeCheckBlockContextItem ctx = context->block_context ().peek ();
 	  TyTy::BaseType *lookup = nullptr;
@@ -566,6 +577,7 @@ TypeCheckType::resolve_segments (
 					ignore_mandatory_trait_items);
 	      if (candidates.size () == 0)
 		{
+		  prev_segment->debug ();
 		  rust_error_at (
 		    seg->get_locus (),
 		    "failed to resolve path segment using an impl Probe");
@@ -790,9 +802,10 @@ TypeCheckType::visit (HIR::ImplTraitType &type)
 }
 
 TyTy::ParamType *
-TypeResolveGenericParam::Resolve (HIR::GenericParam &param, bool apply_sized)
+TypeResolveGenericParam::Resolve (HIR::GenericParam &param,
+				  bool resolve_trait_bounds, bool apply_sized)
 {
-  TypeResolveGenericParam resolver (apply_sized);
+  TypeResolveGenericParam resolver (apply_sized, resolve_trait_bounds);
   switch (param.get_kind ())
     {
     case HIR::GenericParam::GenericKind::TYPE:
@@ -808,6 +821,14 @@ TypeResolveGenericParam::Resolve (HIR::GenericParam &param, bool apply_sized)
       break;
     }
   return resolver.resolved;
+}
+
+void
+TypeResolveGenericParam::ApplyAnyTraitBounds (HIR::TypeParam &param,
+					      TyTy::ParamType *pty)
+{
+  TypeResolveGenericParam resolver (true, true);
+  resolver.apply_trait_bounds (param, pty);
 }
 
 void
@@ -828,6 +849,19 @@ TypeResolveGenericParam::visit (HIR::TypeParam &param)
   if (param.has_type ())
     TypeCheckType::Resolve (param.get_type ());
 
+  resolved
+    = new TyTy::ParamType (param.get_type_representation ().as_string (),
+			   param.get_locus (),
+			   param.get_mappings ().get_hirid (), param, {});
+
+  if (resolve_trait_bounds)
+    apply_trait_bounds (param, resolved);
+}
+
+void
+TypeResolveGenericParam::apply_trait_bounds (HIR::TypeParam &param,
+					     TyTy::ParamType *pty)
+{
   std::unique_ptr<HIR::Type> implicit_self_bound = nullptr;
   if (param.has_type_param_bounds ())
     {
@@ -858,8 +892,6 @@ TypeResolveGenericParam::visit (HIR::TypeParam &param)
   //
   // We can only do this when we are not resolving the implicit Self for Sized
   // itself
-  rust_debug_loc (param.get_locus (), "apply_sized: %s",
-		  apply_sized ? "true" : "false");
   if (apply_sized)
     {
       TyTy::TypeBoundPredicate sized_predicate
@@ -875,7 +907,8 @@ TypeResolveGenericParam::visit (HIR::TypeParam &param)
 	{
 	  switch (bound->get_bound_type ())
 	    {
-	      case HIR::TypeParamBound::BoundType::TRAITBOUND: {
+	    case HIR::TypeParamBound::BoundType::TRAITBOUND:
+	      {
 		HIR::TraitBound &b = static_cast<HIR::TraitBound &> (*bound);
 
 		TyTy::TypeBoundPredicate predicate = get_predicate_from_bound (
@@ -887,7 +920,8 @@ TypeResolveGenericParam::visit (HIR::TypeParam &param)
 		  {
 		    switch (predicate.get_polarity ())
 		      {
-			case BoundPolarity::AntiBound: {
+		      case BoundPolarity::AntiBound:
+			{
 			  bool found = predicates.find (predicate.get_id ())
 				       != predicates.end ();
 			  if (found)
@@ -904,7 +938,8 @@ TypeResolveGenericParam::visit (HIR::TypeParam &param)
 			}
 			break;
 
-			default: {
+		      default:
+			{
 			  if (predicates.find (predicate.get_id ())
 			      == predicates.end ())
 			    {
@@ -934,10 +969,8 @@ TypeResolveGenericParam::visit (HIR::TypeParam &param)
 	}
     }
 
-  resolved = new TyTy::ParamType (param.get_type_representation ().as_string (),
-				  param.get_locus (),
-				  param.get_mappings ().get_hirid (), param,
-				  specified_bounds);
+  // inherit them
+  pty->inherit_bounds (specified_bounds);
 }
 
 void
@@ -1002,7 +1035,8 @@ ResolveWhereClauseItem::visit (HIR::TypeBoundWhereClauseItem &item)
     {
       switch (bound->get_bound_type ())
 	{
-	  case HIR::TypeParamBound::BoundType::TRAITBOUND: {
+	case HIR::TypeParamBound::BoundType::TRAITBOUND:
+	  {
 	    auto *b = static_cast<HIR::TraitBound *> (bound.get ());
 
 	    TyTy::TypeBoundPredicate predicate
@@ -1011,7 +1045,8 @@ ResolveWhereClauseItem::visit (HIR::TypeBoundWhereClauseItem &item)
 	      specified_bounds.push_back (std::move (predicate));
 	  }
 	  break;
-	  case HIR::TypeParamBound::BoundType::LIFETIME: {
+	case HIR::TypeParamBound::BoundType::LIFETIME:
+	  {
 	    if (auto param = binding->try_as<TyTy::ParamType> ())
 	      {
 		auto *b = static_cast<HIR::Lifetime *> (bound.get ());

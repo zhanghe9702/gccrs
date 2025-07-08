@@ -1,4 +1,4 @@
-// Copyright (C) 2020-2024 Free Software Foundation, Inc.
+// Copyright (C) 2020-2025 Free Software Foundation, Inc.
 
 // This file is part of GCC.
 
@@ -141,8 +141,8 @@ public:
     if (first_pass)
       ResolveType::go (param.get_type ());
     else if (param.has_default_value ())
-      ResolveExpr::go (param.get_default_value ().get_expression (), prefix,
-		       canonical_prefix);
+      ResolveExpr::go (param.get_default_value_unchecked ().get_expression (),
+		       prefix, canonical_prefix);
   }
 
   void visit (AST::TypeParam &param) override
@@ -160,7 +160,7 @@ public:
 	  Rib::ItemType::Type,
 	  [&] (const CanonicalPath &, NodeId, location_t locus) -> void {
 	    rust_error_at (param.get_locus (),
-			   "generic param redefined multiple times");
+			   "generic param defined multiple times");
 	    rust_error_at (locus, "was defined here");
 	  });
 

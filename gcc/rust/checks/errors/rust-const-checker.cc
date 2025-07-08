@@ -1,4 +1,4 @@
-// Copyright (C) 2020-2024 Free Software Foundation, Inc.
+// Copyright (C) 2020-2025 Free Software Foundation, Inc.
 
 // This file is part of GCC.
 
@@ -417,6 +417,26 @@ ConstChecker::visit (BlockExpr &expr)
 }
 
 void
+ConstChecker::visit (AnonConst &expr)
+{
+  const_context.enter (expr.get_mappings ().get_hirid ());
+
+  expr.get_inner_expr ().accept_vis (*this);
+
+  const_context.exit ();
+}
+
+void
+ConstChecker::visit (ConstBlock &expr)
+{
+  const_context.enter (expr.get_mappings ().get_hirid ());
+
+  expr.get_const_expr ().accept_vis (*this);
+
+  const_context.exit ();
+}
+
+void
 ConstChecker::visit (ContinueExpr &)
 {}
 
@@ -537,6 +557,10 @@ ConstChecker::visit (InlineAsm &)
 {}
 
 void
+ConstChecker::visit (LlvmInlineAsm &)
+{}
+
+void
 ConstChecker::visit (TypeParam &)
 {}
 
@@ -646,6 +670,9 @@ ConstChecker::visit (Enum &enum_item)
 {
   check_default_const_generics (enum_item.get_generic_params (),
 				ConstGenericCtx::Enum);
+
+  for (auto &item : enum_item.get_variants ())
+    item->accept_vis (*this);
 }
 
 void

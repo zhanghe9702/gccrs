@@ -1,4 +1,4 @@
-// Copyright (C) 2020-2024 Free Software Foundation, Inc.
+// Copyright (C) 2020-2025 Free Software Foundation, Inc.
 
 // This file is part of GCC.
 
@@ -52,8 +52,17 @@ format_args_parse_arguments (AST::MacroInvocData &invoc)
 
   // TODO: Handle the case where we're not parsing a string literal (macro
   // invocation for e.g.)
-  if (parser.peek_current_token ()->get_id () == STRING_LITERAL)
-    format_expr = parser.parse_literal_expr ();
+  switch (parser.peek_current_token ()->get_id ())
+    {
+    case STRING_LITERAL:
+    case RAW_STRING_LITERAL:
+      format_expr = parser.parse_literal_expr ();
+    default:
+      // do nothing
+      ;
+    }
+
+  rust_assert (format_expr);
 
   // TODO(Arthur): Clean this up - if we haven't parsed a string literal but a
   // macro invocation, what do we do here? return a tl::unexpected?
@@ -80,6 +89,11 @@ format_args_parse_arguments (AST::MacroInvocData &invoc)
   while (parser.peek_current_token ()->get_id () != last_token_id)
     {
       parser.skip_token (COMMA);
+
+      // Check in case of an extraneous comma in the args list, which is
+      // allowed - format_args!("fmt", arg, arg2,)
+      if (parser.peek_current_token ()->get_id () == last_token_id)
+	break;
 
       if (parser.peek_current_token ()->get_id () == IDENTIFIER
 	  && parser.peek (1)->get_id () == EQUAL)

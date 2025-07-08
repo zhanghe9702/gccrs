@@ -61,13 +61,14 @@ jobs:
       run: |
            cd gccrs-build; \
            # Add cargo to our path quickly
-           . "$HOME/.cargo/env";
-           make -Otarget -j $(nproc) 2>&1 | tee log
+           . "$HOME/.cargo/env"; \
+           # Build without network access
+           unshare --net --ipc -r /bin/bash -c "make -Otarget -j $(nproc) 2>&1 | tee log ; exit \${PIPESTATUS[0]}"
 
     - name: Check for new warnings
       run: |
            cd gccrs-build
-           < log grep 'warning: ' | sort > log_warnings
+           < log grep 'warning: ' | grep rust | sort > log_warnings
            if diff -U0 ../.github/log_expected_warnings log_warnings; then
                :
            else
@@ -152,7 +153,7 @@ jobs:
     - name: Check for new warnings
       run: |
            cd gccrs-build
-           < log grep 'warning: ' | sort > log_warnings
+           < log grep 'warning: ' | grep rust | sort > log_warnings
            if diff -U0 ../.github/glibcxx_ubuntu64b_log_expected_warnings log_warnings; then
                :
            else
@@ -236,7 +237,7 @@ jobs:
     - name: Check for new warnings
       run: |
            cd gccrs-build
-           < log grep 'warning: ' | sort > log_warnings
+           < log grep 'warning: ' | grep rust | sort > log_warnings
            if diff -U0 ../.github/log_expected_warnings log_warnings; then
                :
            else
@@ -367,64 +368,66 @@ jobs:
               exit 0; \
             fi
 
-  # build-and-check-clang-macos:
+  build-and-check-clang-macos:
 
-  #   env:
-  #     # Force CC/CXX to be explicitly clang to make it clear which compiler is used
-  #     CC: clang
-  #     CXX: clang++
+    env:
+      # Force CC/CXX to be explicitly clang to make it clear which compiler is used
+      CC: clang
+      CXX: clang++
 
-  #   runs-on: macos-13
+    runs-on: macos-13
 
-  #   steps:
-  #   - uses: actions/checkout@v4
+    steps:
+    - uses: actions/checkout@v4
 
-  #   - name: Install Deps
-  #     run: |
-  #         brew install dejagnu mpfr libmpc gmp;
-  #         # install Rust directly using rustup
-  #         curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain=1.72.0;
+    - name: Install Deps
+      run: |
+          brew install dejagnu mpfr libmpc gmp;
+          # install Rust directly using rustup
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain=1.72.0;
 
-  #   - name: Make Source Read-Only
-  #     run: chmod -R a-w ./*
+    - name: Make Source Read-Only
+      run: chmod -R a-w ./*
 
-  #   - name: Configure
-  #     run: |
-  #          mkdir -p gccrs-build;
-  #          cd gccrs-build;
-  #          ../configure \
-  #              --enable-languages=rust \
-  #              --disable-bootstrap \
-  #              --enable-multilib \
-  #              --with-native-system-header-dir=/usr/include \
-  #              --with-sysroot=$(xcrun --show-sdk-path)
+    - name: Configure
+      run: |
+           mkdir -p gccrs-build;
+           cd gccrs-build;
+           ../configure \
+               --enable-languages=rust \
+               --disable-bootstrap \
+               --enable-multilib \
+               --with-native-system-header-dir=/usr/include \
+               --with-sysroot=$(xcrun --show-sdk-path)
 
-  #   - name: Build
-  #     shell: bash
-  #     run: |
-  #          cd gccrs-build; \
-  #          make -j $(sysctl -n hw.ncpu) 2>&1 | tee log
+    - name: Build
+      shell: bash
+      run: |
+           cd gccrs-build; \
+           make -j $(sysctl -n hw.ncpu) 2>&1 | tee log
 
-  #   - name: Run Tests
-  #     run: |
-  #          cd gccrs-build; \
-  #          make check-rust
-  #   - name: Archive check-rust results
-  #     uses: actions/upload-artifact@v4
-  #     with:
-  #       name: check-rust-logs-macos
-  #       path: |
-  #         gccrs-build/gcc/testsuite/rust/
-  #   - name: Check regressions
-  #     run: |
-  #          cd gccrs-build; \
-  #          if grep -e "unexpected" -e "unresolved" -e "ERROR:" gcc/testsuite/rust/rust.sum;\
-  #          then \
-  #             echo "::error title=Regression test failed::some tests are not correct"; \
-  #             exit 1; \
-  #           else \
-  #             exit 0; \
-  #           fi
+    - name: Run Tests
+      run: |
+           cd gccrs-build; \
+           make check-rust
+
+    - name: Archive check-rust results
+      uses: actions/upload-artifact@v4
+      with:
+        name: check-rust-logs-macos
+        path: |
+          gccrs-build/gcc/testsuite/rust/
+
+    - name: Check regressions
+      run: |
+           cd gccrs-build; \
+           if grep -e "unexpected" -e "unresolved" -e "ERROR:" gcc/testsuite/rust/rust.sum;\
+           then \
+              echo "::error title=Regression test failed::some tests are not correct"; \
+              exit 1; \
+            else \
+              exit 0; \
+            fi
 
   build-and-check-asan:
 

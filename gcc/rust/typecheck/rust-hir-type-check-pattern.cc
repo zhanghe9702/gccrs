@@ -1,4 +1,4 @@
-// Copyright (C) 2020-2024 Free Software Foundation, Inc.
+// Copyright (C) 2020-2025 Free Software Foundation, Inc.
 
 // This file is part of GCC.
 
@@ -109,7 +109,7 @@ TypeCheckPattern::visit (HIR::PathInExpression &pattern)
 	      rich_location rich_locus (
 		line_table, pattern.get_final_segment ().get_locus ());
 	      rich_locus.add_fixit_replace (
-		"not a unit struct, unit variant or constatnt");
+		"not a unit struct, unit variant or constant");
 	      rust_error_at (rich_locus, ErrorCode::E0532,
 			     "expected unit struct, unit variant or constant, "
 			     "found %s %<%s%>",
@@ -213,13 +213,15 @@ TypeCheckPattern::visit (HIR::TupleStructPattern &pattern)
   auto &items = pattern.get_items ();
   switch (items.get_item_type ())
     {
-      case HIR::TupleStructItems::RANGED: {
+    case HIR::TupleStructItems::RANGED:
+      {
 	// TODO
 	rust_unreachable ();
       }
       break;
 
-      case HIR::TupleStructItems::MULTIPLE: {
+    case HIR::TupleStructItems::MULTIPLE:
+      {
 	HIR::TupleStructItemsNoRange &items_no_range
 	  = static_cast<HIR::TupleStructItemsNoRange &> (items);
 
@@ -277,7 +279,15 @@ TypeCheckPattern::visit (HIR::StructPattern &pattern)
 
   infered = pattern_ty;
   TyTy::ADTType *adt = static_cast<TyTy::ADTType *> (infered);
-  rust_assert (adt->number_of_variants () > 0);
+  if (adt->number_of_variants () == 0)
+    {
+      HIR::PathInExpression &path = pattern.get_path ();
+      const AST::SimplePath &sp = path.as_simple_path ();
+      rust_error_at (pattern.get_locus (), ErrorCode::E0574,
+		     "expected struct, variant or union type, found enum %qs",
+		     sp.as_string ().c_str ());
+      return;
+    }
 
   TyTy::VariantDef *variant = adt->get_variants ().at (0);
   if (adt->is_enum ())
@@ -285,7 +295,16 @@ TypeCheckPattern::visit (HIR::StructPattern &pattern)
       HirId variant_id = UNKNOWN_HIRID;
       bool ok = context->lookup_variant_definition (
 	pattern.get_path ().get_mappings ().get_hirid (), &variant_id);
-      rust_assert (ok);
+      if (!ok)
+	{
+	  HIR::PathInExpression &path = pattern.get_path ();
+	  const AST::SimplePath &sp = path.as_simple_path ();
+	  rust_error_at (
+	    pattern.get_locus (), ErrorCode::E0574,
+	    "expected struct, variant or union type, found enum %qs",
+	    sp.as_string ().c_str ());
+	  return;
+	}
 
       ok = adt->lookup_variant_by_id (variant_id, &variant);
       rust_assert (ok);
@@ -316,13 +335,15 @@ TypeCheckPattern::visit (HIR::StructPattern &pattern)
     {
       switch (field->get_item_type ())
 	{
-	  case HIR::StructPatternField::ItemType::TUPLE_PAT: {
+	case HIR::StructPatternField::ItemType::TUPLE_PAT:
+	  {
 	    // TODO
 	    rust_unreachable ();
 	  }
 	  break;
 
-	  case HIR::StructPatternField::ItemType::IDENT_PAT: {
+	case HIR::StructPatternField::ItemType::IDENT_PAT:
+	  {
 	    HIR::StructPatternFieldIdentPat &ident
 	      = static_cast<HIR::StructPatternFieldIdentPat &> (*field);
 
@@ -341,7 +362,8 @@ TypeCheckPattern::visit (HIR::StructPattern &pattern)
 	  }
 	  break;
 
-	  case HIR::StructPatternField::ItemType::IDENT: {
+	case HIR::StructPatternField::ItemType::IDENT:
+	  {
 	    HIR::StructPatternFieldIdent &ident
 	      = static_cast<HIR::StructPatternFieldIdent &> (*field);
 
@@ -380,7 +402,8 @@ TypeCheckPattern::visit (HIR::StructPattern &pattern)
 	    case HIR::StructPatternField::ItemType::IDENT:
 	    case HIR::StructPatternField::ItemType::IDENT_PAT:
 	      break;
-	      default: {
+	    default:
+	      {
 		auto first_elem
 		  = struct_pattern_elems.get_struct_pattern_fields ()
 		      .at (0)
@@ -440,25 +463,27 @@ void
 TypeCheckPattern::visit (HIR::TuplePattern &pattern)
 {
   std::unique_ptr<HIR::TuplePatternItems> items;
+
+  // Check whether parent is tuple
+  auto resolved_parent = parent->destructure ();
+  if (resolved_parent->get_kind () != TyTy::TUPLE)
+    {
+      rust_error_at (pattern.get_locus (), "expected %s, found tuple",
+		     parent->as_string ().c_str ());
+      return;
+    }
+  TyTy::TupleType &par = *static_cast<TyTy::TupleType *> (resolved_parent);
+
   switch (pattern.get_items ().get_item_type ())
     {
-      case HIR::TuplePatternItems::ItemType::MULTIPLE: {
+    case HIR::TuplePatternItems::ItemType::MULTIPLE:
+      {
 	auto &ref = static_cast<HIR::TuplePatternItemsMultiple &> (
 	  pattern.get_items ());
-
-	auto resolved_parent = parent->destructure ();
-	if (resolved_parent->get_kind () != TyTy::TUPLE)
-	  {
-	    rust_error_at (pattern.get_locus (), "expected %s, found tuple",
-			   parent->as_string ().c_str ());
-	    break;
-	  }
 
 	const auto &patterns = ref.get_patterns ();
 	size_t nitems_to_resolve = patterns.size ();
 
-	TyTy::TupleType &par
-	  = *static_cast<TyTy::TupleType *> (resolved_parent);
 	if (patterns.size () != par.get_fields ().size ())
 	  {
 	    emit_pattern_size_error (pattern, par.get_fields ().size (),
@@ -481,12 +506,55 @@ TypeCheckPattern::visit (HIR::TuplePattern &pattern)
       }
       break;
 
-      case HIR::TuplePatternItems::ItemType::RANGED: {
-	// HIR::TuplePatternItemsRanged &ref
-	//   = *static_cast<HIR::TuplePatternItemsRanged *> (
-	//     pattern.get_items ().get ());
-	// TODO
-	rust_unreachable ();
+    case HIR::TuplePatternItems::ItemType::RANGED:
+      {
+	HIR::TuplePatternItemsRanged &ref
+	  = static_cast<HIR::TuplePatternItemsRanged &> (pattern.get_items ());
+
+	const auto &lower = ref.get_lower_patterns ();
+	const auto &upper = ref.get_upper_patterns ();
+	size_t min_size_required = lower.size () + upper.size ();
+
+	// Ensure that size of lower and upper patterns <= parent size
+	if (min_size_required > par.get_fields ().size ())
+	  {
+	    emit_pattern_size_error (pattern, par.get_fields ().size (),
+				     min_size_required);
+	    // TODO attempt to continue to do typechecking even after wrong size
+	    break;
+	  }
+
+	// Resolve lower patterns
+	std::vector<TyTy::TyVar> pattern_elems;
+	for (size_t i = 0; i < lower.size (); i++)
+	  {
+	    auto &p = lower[i];
+	    TyTy::BaseType *par_type = par.get_field (i);
+
+	    TyTy::BaseType *elem = TypeCheckPattern::Resolve (*p, par_type);
+	    pattern_elems.push_back (TyTy::TyVar (elem->get_ref ()));
+	  }
+
+	// Pad pattern_elems until needing to resolve upper patterns
+	size_t rest_end = par.get_fields ().size () - upper.size ();
+	for (size_t i = lower.size (); i < rest_end; i++)
+	  {
+	    TyTy::BaseType *par_type = par.get_field (i);
+	    pattern_elems.push_back (TyTy::TyVar (par_type->get_ref ()));
+	  }
+
+	// Resolve upper patterns
+	for (size_t i = 0; i < upper.size (); i++)
+	  {
+	    auto &p = upper[i];
+	    TyTy::BaseType *par_type = par.get_field (rest_end + i);
+
+	    TyTy::BaseType *elem = TypeCheckPattern::Resolve (*p, par_type);
+	    pattern_elems.push_back (TyTy::TyVar (elem->get_ref ()));
+	  }
+
+	infered = new TyTy::TupleType (pattern.get_mappings ().get_hirid (),
+				       pattern.get_locus (), pattern_elems);
       }
       break;
     }
@@ -521,6 +589,11 @@ TypeCheckPattern::visit (HIR::RangePattern &pattern)
 void
 TypeCheckPattern::visit (HIR::IdentifierPattern &pattern)
 {
+  if (pattern.has_subpattern ())
+    {
+      TypeCheckPattern::Resolve (pattern.get_subpattern (), parent);
+    }
+
   if (!pattern.get_is_ref ())
     {
       infered = parent;
@@ -591,7 +664,8 @@ TypeCheckPattern::typecheck_range_pattern_bound (
   TyTy::BaseType *resolved_bound = nullptr;
   switch (bound.get_bound_type ())
     {
-      case HIR::RangePatternBound::RangePatternBoundType::LITERAL: {
+    case HIR::RangePatternBound::RangePatternBoundType::LITERAL:
+      {
 	auto &ref = static_cast<HIR::RangePatternBoundLiteral &> (bound);
 
 	HIR::Literal lit = ref.get_literal ();
@@ -600,14 +674,16 @@ TypeCheckPattern::typecheck_range_pattern_bound (
       }
       break;
 
-      case HIR::RangePatternBound::RangePatternBoundType::PATH: {
+    case HIR::RangePatternBound::RangePatternBoundType::PATH:
+      {
 	auto &ref = static_cast<HIR::RangePatternBoundPath &> (bound);
 
 	resolved_bound = TypeCheckExpr::Resolve (ref.get_path ());
       }
       break;
 
-      case HIR::RangePatternBound::RangePatternBoundType::QUALPATH: {
+    case HIR::RangePatternBound::RangePatternBoundType::QUALPATH:
+      {
 	auto &ref = static_cast<HIR::RangePatternBoundQualPath &> (bound);
 
 	resolved_bound = TypeCheckExpr::Resolve (ref.get_qualified_path ());

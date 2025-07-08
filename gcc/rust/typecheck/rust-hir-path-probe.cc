@@ -1,4 +1,4 @@
-// Copyright (C) 2020-2024 Free Software Foundation, Inc.
+// Copyright (C) 2020-2025 Free Software Foundation, Inc.
 
 // This file is part of GCC.
 
@@ -346,7 +346,7 @@ PathProbeType::process_associated_trait_for_candidates (
 
   const TyTy::TypeBoundPredicate p (*trait_ref, BoundPolarity::RegularBound,
 				    UNDEF_LOCATION);
-  TyTy::TypeBoundPredicateItem item (&p, trait_item_ref);
+  TyTy::TypeBoundPredicateItem item (p, trait_item_ref);
 
   TyTy::BaseType *trait_item_tyty = item.get_raw_item ()->get_tyty ();
   if (receiver->get_kind () != TyTy::DYNAMIC)

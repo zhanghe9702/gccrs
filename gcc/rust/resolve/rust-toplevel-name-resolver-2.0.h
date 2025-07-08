@@ -1,4 +1,4 @@
-// Copyright (C) 2020-2024 Free Software Foundation, Inc.
+// Copyright (C) 2020-2025 Free Software Foundation, Inc.
 
 // This file is part of GCC.
 
@@ -108,15 +108,19 @@ public:
     {}
   };
 
-  std::unordered_map<NodeId, std::vector<ImportKind>> &&
-  get_imports_to_resolve ()
+  std::unordered_map<NodeId, std::vector<ImportKind>> &get_imports_to_resolve ()
   {
-    return std::move (imports_to_resolve);
+    return imports_to_resolve;
   }
 
+  void check_multiple_insertion_error (
+    tl::expected<NodeId, DuplicateNameError> result,
+    const Identifier &identifier, const location_t &locus,
+    const NodeId node_id);
+
   /**
-   * Insert a new definition or error out if a definition with the same name was
-   * already present in the same namespace in the same scope.
+   * Insert a new definition or error out if a definition with the same name
+   * was already present in the same namespace in the same scope.
    *
    * @param identifier The identifier of the definition to add.
    * @param node A reference to the node, so we can get its `NodeId` and
@@ -129,6 +133,14 @@ public:
   void insert_or_error_out (const Identifier &identifier,
 			    const location_t &locus, const NodeId &id,
 			    Namespace ns);
+
+  template <typename T>
+  void insert_enum_variant_or_error_out (const Identifier &identifier,
+					 const T &node);
+
+  void insert_enum_variant_or_error_out (const Identifier &identifier,
+					 const location_t &locus,
+					 const NodeId node_id);
 
 private:
   // If a new export has been defined whilst visiting the visitor is considered
@@ -148,8 +160,7 @@ private:
 
   void visit (AST::Module &module) override;
   void visit (AST::Trait &trait) override;
-  void visit (AST::InherentImpl &impl) override;
-  void visit (AST::TraitImpl &impl) override;
+  void maybe_insert_big_self (AST::Impl &impl) override;
   void visit (AST::TraitItemType &trait_item) override;
   void visit (AST::MacroRulesDefinition &macro) override;
   void visit (AST::Function &function) override;
@@ -165,7 +176,7 @@ private:
   void visit (AST::Union &union_item) override;
   void visit (AST::ConstantItem &const_item) override;
   void visit (AST::TypeAlias &type_item) override;
-  void visit (AST::ExternCrate &crate) override;
+  void visit_extern_crate (AST::ExternCrate &, AST::Crate &, CrateNum) override;
   void visit (AST::TypeParam &type_param) override;
   void visit (AST::ConstGenericParam &const_param) override;
 

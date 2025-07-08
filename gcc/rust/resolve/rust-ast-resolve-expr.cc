@@ -1,4 +1,4 @@
-// Copyright (C) 2020-2024 Free Software Foundation, Inc.
+// Copyright (C) 2020-2025 Free Software Foundation, Inc.
 
 // This file is part of GCC.
 
@@ -129,7 +129,7 @@ ResolveExpr::visit (AST::IdentifierExpr &expr)
 	 resolve.  Emit a funny ICE.  We set the finalizer to our custom one,
 	 and use the lower-level emit_diagnostic () instead of the more common
 	 internal_error_no_backtrace () in order to pass our locus.  */
-      diagnostic_finalizer (global_dc) = funny_ice_finalizer;
+      diagnostic_text_finalizer (global_dc) = funny_ice_text_finalizer;
       emit_diagnostic (DK_ICE_NOBT, expr.get_locus (), -1,
 		       "are you trying to break %s? how dare you?",
 		       expr.as_string ().c_str ());
@@ -287,7 +287,7 @@ ResolveExpr::visit (AST::BlockExpr &expr)
 	CanonicalPath::new_seg (label.get_node_id (), label_name),
 	label_lifetime_node_id, label.get_locus (), false, Rib::ItemType::Label,
 	[&] (const CanonicalPath &, NodeId, location_t locus) -> void {
-	  rust_error_at (label.get_locus (), "label redefined multiple times");
+	  rust_error_at (label.get_locus (), "label defined multiple times");
 	  rust_error_at (locus, "was defined here");
 	});
     }
@@ -315,6 +315,18 @@ ResolveExpr::visit (AST::BlockExpr &expr)
 }
 
 void
+ResolveExpr::visit (AST::AnonConst &expr)
+{
+  ResolveExpr::go (expr.get_inner_expr (), prefix, canonical_prefix);
+}
+
+void
+ResolveExpr::visit (AST::ConstBlock &expr)
+{
+  ResolveExpr::go (expr.get_const_expr (), prefix, canonical_prefix);
+}
+
+void
 translate_operand (AST::InlineAsm &expr, const CanonicalPath &prefix,
 		   const CanonicalPath &canonical_prefix)
 {
@@ -324,38 +336,46 @@ translate_operand (AST::InlineAsm &expr, const CanonicalPath &prefix,
     {
       switch (operand.get_register_type ())
 	{
-	  case RegisterType::In: {
+	case RegisterType::In:
+	  {
 	    auto in = operand.get_in ();
 	    ResolveExpr::go (*in.expr, prefix, canonical_prefix);
 	    break;
 	  }
-	  case RegisterType::Out: {
+	case RegisterType::Out:
+	  {
 	    auto out = operand.get_out ();
 	    ResolveExpr::go (*out.expr, prefix, canonical_prefix);
 	    break;
 	  }
-	  case RegisterType::InOut: {
+	case RegisterType::InOut:
+	  {
 	    auto in_out = operand.get_in_out ();
 	    ResolveExpr::go (*in_out.expr, prefix, canonical_prefix);
 	    break;
 	  }
-	  case RegisterType::SplitInOut: {
+	case RegisterType::SplitInOut:
+	  {
 	    auto split_in_out = operand.get_split_in_out ();
 	    ResolveExpr::go (*split_in_out.in_expr, prefix, canonical_prefix);
 	    ResolveExpr::go (*split_in_out.out_expr, prefix, canonical_prefix);
 	    break;
 	  }
-	  case RegisterType::Const: {
+	case RegisterType::Const:
+	  {
 	    auto anon_const = operand.get_const ().anon_const;
-	    ResolveExpr::go (*anon_const.expr, prefix, canonical_prefix);
+	    ResolveExpr::go (anon_const.get_inner_expr (), prefix,
+			     canonical_prefix);
 	    break;
 	  }
-	  case RegisterType::Sym: {
+	case RegisterType::Sym:
+	  {
 	    auto sym = operand.get_sym ();
 	    ResolveExpr::go (*sym.expr, prefix, canonical_prefix);
 	    break;
 	  }
-	  case RegisterType::Label: {
+	case RegisterType::Label:
+	  {
 	    auto label = operand.get_label ();
 	    ResolveExpr::go (*label.expr, prefix, canonical_prefix);
 	    break;
@@ -368,6 +388,17 @@ ResolveExpr::visit (AST::InlineAsm &expr)
 {
   translate_operand (expr, prefix, canonical_prefix);
 }
+
+void
+ResolveExpr::visit (AST::LlvmInlineAsm &expr)
+{
+  for (auto &output : expr.get_outputs ())
+    ResolveExpr::go (*output.expr, prefix, canonical_prefix);
+
+  for (auto &input : expr.get_inputs ())
+    ResolveExpr::go (*input.expr, prefix, canonical_prefix);
+}
+
 void
 ResolveExpr::visit (AST::UnsafeBlockExpr &expr)
 {
@@ -459,7 +490,7 @@ ResolveExpr::visit (AST::LoopExpr &expr)
 	CanonicalPath::new_seg (expr.get_node_id (), label_name),
 	label_lifetime_node_id, label.get_locus (), false, Rib::ItemType::Label,
 	[&] (const CanonicalPath &, NodeId, location_t locus) -> void {
-	  rust_error_at (label.get_locus (), "label redefined multiple times");
+	  rust_error_at (label.get_locus (), "label defined multiple times");
 	  rust_error_at (locus, "was defined here");
 	});
     }
@@ -471,7 +502,7 @@ ResolveExpr::visit (AST::BreakExpr &expr)
 {
   if (expr.has_label ())
     {
-      auto label = expr.get_label ().get_lifetime ();
+      auto label = expr.get_label_unchecked ().get_lifetime ();
       if (label.get_lifetime_type () != AST::Lifetime::LifetimeType::NAMED)
 	{
 	  rust_error_at (label.get_locus (),
@@ -486,8 +517,8 @@ ResolveExpr::visit (AST::BreakExpr &expr)
 	    &resolved_node))
 	{
 	  rust_error_at (label.get_locus (), ErrorCode::E0426,
-			 "use of undeclared label %qs in %<break%>",
-			 label.get_lifetime_name ().c_str ());
+			 "use of undeclared label %qs",
+			 label.as_string ().c_str ());
 	  return;
 	}
       resolver->insert_resolved_label (label.get_node_id (), resolved_node);
@@ -535,7 +566,7 @@ ResolveExpr::visit (AST::WhileLoopExpr &expr)
 	CanonicalPath::new_seg (label.get_node_id (), label_name),
 	label_lifetime_node_id, label.get_locus (), false, Rib::ItemType::Label,
 	[&] (const CanonicalPath &, NodeId, location_t locus) -> void {
-	  rust_error_at (label.get_locus (), "label redefined multiple times");
+	  rust_error_at (label.get_locus (), "label defined multiple times");
 	  rust_error_at (locus, "was defined here");
 	});
     }
@@ -564,7 +595,7 @@ ResolveExpr::visit (AST::ForLoopExpr &expr)
 	CanonicalPath::new_seg (label.get_node_id (), label_name),
 	label_lifetime_node_id, label.get_locus (), false, Rib::ItemType::Label,
 	[&] (const CanonicalPath &, NodeId, location_t locus) -> void {
-	  rust_error_at (label.get_locus (), "label redefined multiple times");
+	  rust_error_at (label.get_locus (), "label defined multiple times");
 	  rust_error_at (locus, "was defined here");
 	});
     }
@@ -594,7 +625,7 @@ ResolveExpr::visit (AST::ContinueExpr &expr)
 {
   if (expr.has_label ())
     {
-      auto label = expr.get_label ();
+      auto label = expr.get_label_unchecked ();
       if (label.get_lifetime_type () != AST::Lifetime::LifetimeType::NAMED)
 	{
 	  rust_error_at (label.get_locus (),
@@ -608,9 +639,9 @@ ResolveExpr::visit (AST::ContinueExpr &expr)
 				    label.get_lifetime_name ()),
 	    &resolved_node))
 	{
-	  rust_error_at (expr.get_label ().get_locus (), ErrorCode::E0426,
-			 "use of undeclared label %qs in %<continue%>",
-			 label.get_lifetime_name ().c_str ());
+	  rust_error_at (expr.get_label_unchecked ().get_locus (),
+			 ErrorCode::E0426, "use of undeclared label %qs",
+			 label.as_string ().c_str ());
 	  return;
 	}
       resolver->insert_resolved_label (label.get_node_id (), resolved_node);
@@ -755,7 +786,7 @@ ResolveExpr::visit (AST::ClosureExprInnerTyped &expr)
 
   resolver->push_closure_context (expr.get_node_id ());
 
-  ResolveExpr::go (expr.get_definition_block (), prefix, canonical_prefix);
+  ResolveExpr::go (expr.get_definition_expr (), prefix, canonical_prefix);
 
   resolver->pop_closure_context ();
 

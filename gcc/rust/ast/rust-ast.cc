@@ -1,5 +1,5 @@
 /* General AST-related method implementations for Rust frontend.
-   Copyright (C) 2009-2024 Free Software Foundation, Inc.
+   Copyright (C) 2009-2025 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -249,27 +249,31 @@ Attribute::get_traits_to_derive ()
   auto &input = get_attr_input ();
   switch (input.get_attr_input_type ())
     {
-      case AST::AttrInput::META_ITEM: {
+    case AST::AttrInput::META_ITEM:
+      {
 	auto &meta = static_cast<AST::AttrInputMetaItemContainer &> (input);
 	for (auto &current : meta.get_items ())
 	  {
 	    // HACK: Find a better way to achieve the downcast.
 	    switch (current->get_kind ())
 	      {
-		case AST::MetaItemInner::Kind::MetaItem: {
+	      case AST::MetaItemInner::Kind::MetaItem:
+		{
 		  // Let raw pointer go out of scope without freeing, it doesn't
 		  // own the data anyway
 		  auto meta_item
 		    = static_cast<AST::MetaItem *> (current.get ());
 		  switch (meta_item->get_item_kind ())
 		    {
-		      case AST::MetaItem::ItemKind::Path: {
+		    case AST::MetaItem::ItemKind::Path:
+		      {
 			auto path
 			  = static_cast<AST::MetaItemPath *> (meta_item);
 			result.push_back (path->get_path ());
 		      }
 		      break;
-		      case AST::MetaItem::ItemKind::Word: {
+		    case AST::MetaItem::ItemKind::Word:
+		      {
 			auto word = static_cast<AST::MetaWord *> (meta_item);
 			// Convert current word to path
 			current = std::make_unique<AST::MetaItemPath> (
@@ -620,7 +624,7 @@ ConstantItem::as_string () const
 {
   std::string str = VisItem::as_string ();
 
-  str += "const " + identifier;
+  str += "const " + identifier.as_string ();
 
   // DEBUG: null pointer check
   if (type == nullptr)
@@ -782,7 +786,8 @@ UseTreeGlob::as_string () const
       return "*";
     case GLOBAL:
       return "::*";
-      case PATH_PREFIXED: {
+    case PATH_PREFIXED:
+      {
 	std::string path_str = path.as_string ();
 	return path_str + "::*";
       }
@@ -805,7 +810,8 @@ UseTreeList::as_string () const
     case GLOBAL:
       path_str = "::{";
       break;
-      case PATH_PREFIXED: {
+    case PATH_PREFIXED:
+      {
 	path_str = path.as_string () + "::{";
 	break;
       }
@@ -1068,7 +1074,7 @@ Function::Function (Function const &other)
   : VisItem (other), ExternalItem (other.get_node_id ()),
     qualifiers (other.qualifiers), function_name (other.function_name),
     where_clause (other.where_clause), locus (other.locus),
-    is_default (other.is_default),
+    has_default (other.has_default),
     is_external_function (other.is_external_function)
 {
   // guard to prevent null dereference (always required)
@@ -1100,7 +1106,7 @@ Function::operator= (Function const &other)
   // visibility = other.visibility->clone_visibility();
   // outer_attrs = other.outer_attrs;
   locus = other.locus;
-  is_default = other.is_default;
+  has_default = other.has_default;
   is_external_function = other.is_external_function;
 
   // guard to prevent null dereference (always required)
@@ -1269,6 +1275,18 @@ BlockExpr::as_string () const
 
   str += "\n" + indent_spaces (out);
   return str;
+}
+
+std::string
+AnonConst::as_string () const
+{
+  return "AnonConst: " + expr->as_string ();
+}
+
+std::string
+ConstBlock::as_string () const
+{
+  return "ConstBlock: " + expr.as_string ();
 }
 
 std::string
@@ -1619,6 +1637,19 @@ ReturnExpr::as_string () const
 }
 
 std::string
+TryExpr::as_string () const
+{
+  /* TODO: find way to incorporate outer attrs - may have to represent in
+   * different style (i.e. something more like BorrowExpr: \n outer attrs) */
+
+  std::string str ("try ");
+
+  str += block_expr->as_string ();
+
+  return str;
+}
+
+std::string
 RangeToExpr::as_string () const
 {
   return ".." + to->as_string ();
@@ -1631,7 +1662,7 @@ ContinueExpr::as_string () const
   std::string str ("continue ");
 
   if (has_label ())
-    str += label.as_string ();
+    str += get_label_unchecked ().as_string ();
 
   return str;
 }
@@ -2095,7 +2126,7 @@ WhileLoopExpr::as_string () const
   if (!has_loop_label ())
     str += "none";
   else
-    str += loop_label.as_string ();
+    str += get_loop_label ().as_string ();
 
   str += "\n Conditional expr: " + condition->as_string ();
 
@@ -2115,7 +2146,7 @@ WhileLetLoopExpr::as_string () const
   if (!has_loop_label ())
     str += "none";
   else
-    str += loop_label.as_string ();
+    str += get_loop_label ().as_string ();
 
   str += "\n Match arm patterns: ";
   if (match_arm_patterns.empty ())
@@ -2146,7 +2177,7 @@ LoopExpr::as_string () const
   if (!has_loop_label ())
     str += "none";
   else
-    str += loop_label.as_string ();
+    str += get_loop_label ().as_string ();
 
   str += "\n Loop block: " + loop_block->as_string ();
 
@@ -2183,7 +2214,7 @@ BreakExpr::as_string () const
   std::string str ("break ");
 
   if (has_label ())
-    str += label.as_string () + " ";
+    str += get_label_unchecked ().as_string () + " ";
 
   if (has_break_expr ())
     str += break_expr->as_string ();
@@ -2485,9 +2516,6 @@ MacroMatchRepetition::as_string () const
 std::string
 Lifetime::as_string () const
 {
-  if (is_error ())
-    return "error lifetime";
-
   switch (lifetime_type)
     {
     case NAMED:
@@ -2545,7 +2573,7 @@ ForLoopExpr::as_string () const
   if (!has_loop_label ())
     str += "none";
   else
-    str += loop_label.as_string ();
+    str += get_loop_label ().as_string ();
 
   str += "\n Pattern: " + pattern->as_string ();
 
@@ -2612,7 +2640,7 @@ ReferenceType::as_string () const
   std::string str ("&");
 
   if (has_lifetime ())
-    str += lifetime.as_string () + " ";
+    str += get_lifetime ().as_string () + " ";
 
   if (has_mut)
     str += "mut ";
@@ -2717,7 +2745,7 @@ ImplTraitTypeOneBound::as_string () const
 {
   std::string str ("ImplTraitTypeOneBound: \n TraitBound: ");
 
-  return str + trait_bound.as_string ();
+  return str + trait_bound->as_string ();
 }
 
 std::string
@@ -3070,7 +3098,7 @@ SelfParam::as_string () const
       else if (has_lifetime ())
 	{
 	  // ref and lifetime
-	  std::string str = "&" + lifetime.as_string () + " ";
+	  std::string str = "&" + get_lifetime ().as_string () + " ";
 
 	  if (is_mut)
 	    str += "mut ";
@@ -3656,14 +3684,16 @@ AttributeParser::parse_path_meta_item ()
 
   switch (peek_token ()->get_id ())
     {
-      case LEFT_PAREN: {
+    case LEFT_PAREN:
+      {
 	std::vector<std::unique_ptr<MetaItemInner>> meta_items
 	  = parse_meta_item_seq ();
 
 	return std::unique_ptr<MetaItemSeq> (
 	  new MetaItemSeq (std::move (path), std::move (meta_items)));
       }
-      case EQUAL: {
+    case EQUAL:
+      {
 	skip_token ();
 
 	location_t locus = peek_token ()->get_locus ();
@@ -4516,6 +4546,18 @@ BlockExpr::accept_vis (ASTVisitor &vis)
 }
 
 void
+AnonConst::accept_vis (ASTVisitor &vis)
+{
+  vis.visit (*this);
+}
+
+void
+ConstBlock::accept_vis (ASTVisitor &vis)
+{
+  vis.visit (*this);
+}
+
+void
 ClosureExprInnerTyped::accept_vis (ASTVisitor &vis)
 {
   vis.visit (*this);
@@ -4571,6 +4613,12 @@ RangeToInclExpr::accept_vis (ASTVisitor &vis)
 
 void
 ReturnExpr::accept_vis (ASTVisitor &vis)
+{
+  vis.visit (*this);
+}
+
+void
+TryExpr::accept_vis (ASTVisitor &vis)
 {
   vis.visit (*this);
 }
@@ -4649,6 +4697,12 @@ AsyncBlockExpr::accept_vis (ASTVisitor &vis)
 
 void
 InlineAsm::accept_vis (ASTVisitor &vis)
+{
+  vis.visit (*this);
+}
+
+void
+LlvmInlineAsm::accept_vis (ASTVisitor &vis)
 {
   vis.visit (*this);
 }
@@ -5044,7 +5098,8 @@ FormatArgs::get_outer_attrs ()
   rust_unreachable ();
 }
 
-void FormatArgs::set_outer_attrs (std::vector<Attribute>)
+void
+FormatArgs::set_outer_attrs (std::vector<Attribute>)
 {
   rust_unreachable ();
 }

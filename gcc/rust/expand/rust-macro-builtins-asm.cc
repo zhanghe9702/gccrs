@@ -1,4 +1,4 @@
-// Copyright (C) 2020-2024 Free Software Foundation, Inc.
+// Copyright (C) 2020-2025 Free Software Foundation, Inc.
 
 // This file is part of GCC.
 
@@ -22,20 +22,9 @@
 #include "rust-ast.h"
 #include "rust-fmt.h"
 #include "rust-stmt.h"
+#include "rust-parse.h"
 
 namespace Rust {
-std::map<AST::InlineAsmOption, std::string> InlineAsmOptionMap{
-  {AST::InlineAsmOption::PURE, "pure"},
-  {AST::InlineAsmOption::NOMEM, "nomem"},
-  {AST::InlineAsmOption::READONLY, "readonly"},
-  {AST::InlineAsmOption::PRESERVES_FLAGS, "preserves_flags"},
-  {AST::InlineAsmOption::NORETURN, "noreturn"},
-  {AST::InlineAsmOption::NOSTACK, "nostack"},
-  {AST::InlineAsmOption::MAY_UNWIND, "may_unwind"},
-  {AST::InlineAsmOption::ATT_SYNTAX, "att_syntax"},
-  {AST::InlineAsmOption::RAW, "raw"},
-};
-
 std::set<std::string> potentially_nonpromoted_keywords
   = {"in", "out", "lateout", "inout", "inlateout", "const", "sym", "label"};
 
@@ -499,7 +488,7 @@ parse_reg_operand_unexpected (InlineAsmContext inline_asm_ctx)
 }
 
 void
-check_and_set (InlineAsmContext &inline_asm_ctx, AST::InlineAsmOption option)
+check_and_set (InlineAsmContext &inline_asm_ctx, AST::InlineAsm::Option option)
 {
   auto &parser = inline_asm_ctx.parser;
   auto &inline_asm = inline_asm_ctx.inline_asm;
@@ -508,7 +497,7 @@ check_and_set (InlineAsmContext &inline_asm_ctx, AST::InlineAsmOption option)
       // TODO: report an error of duplication
       rust_error_at (parser.peek_current_token ()->get_locus (),
 		     "the %qs option was already provided",
-		     InlineAsmOptionMap[option].c_str ());
+		     AST::InlineAsm::option_to_string (option).c_str ());
       return;
     }
   else
@@ -535,39 +524,40 @@ parse_options (InlineAsmContext &inline_asm_ctx)
     {
       if (!is_global_asm && check_identifier (parser, "pure"))
 	{
-	  check_and_set (inline_asm_ctx, AST::InlineAsmOption::PURE);
+	  check_and_set (inline_asm_ctx, AST::InlineAsm::Option::PURE);
 	}
       else if (!is_global_asm && check_identifier (parser, "nomem"))
 	{
-	  check_and_set (inline_asm_ctx, AST::InlineAsmOption::NOMEM);
+	  check_and_set (inline_asm_ctx, AST::InlineAsm::Option::NOMEM);
 	}
       else if (!is_global_asm && check_identifier (parser, "readonly"))
 	{
-	  check_and_set (inline_asm_ctx, AST::InlineAsmOption::READONLY);
+	  check_and_set (inline_asm_ctx, AST::InlineAsm::Option::READONLY);
 	}
       else if (!is_global_asm && check_identifier (parser, "preserves_flags"))
 	{
-	  check_and_set (inline_asm_ctx, AST::InlineAsmOption::PRESERVES_FLAGS);
+	  check_and_set (inline_asm_ctx,
+			 AST::InlineAsm::Option::PRESERVES_FLAGS);
 	}
       else if (!is_global_asm && check_identifier (parser, "noreturn"))
 	{
-	  check_and_set (inline_asm_ctx, AST::InlineAsmOption::NORETURN);
+	  check_and_set (inline_asm_ctx, AST::InlineAsm::Option::NORETURN);
 	}
       else if (!is_global_asm && check_identifier (parser, "nostack"))
 	{
-	  check_and_set (inline_asm_ctx, AST::InlineAsmOption::NOSTACK);
+	  check_and_set (inline_asm_ctx, AST::InlineAsm::Option::NOSTACK);
 	}
       else if (!is_global_asm && check_identifier (parser, "may_unwind"))
 	{
-	  check_and_set (inline_asm_ctx, AST::InlineAsmOption::MAY_UNWIND);
+	  check_and_set (inline_asm_ctx, AST::InlineAsm::Option::MAY_UNWIND);
 	}
       else if (check_identifier (parser, "att_syntax"))
 	{
-	  check_and_set (inline_asm_ctx, AST::InlineAsmOption::ATT_SYNTAX);
+	  check_and_set (inline_asm_ctx, AST::InlineAsm::Option::ATT_SYNTAX);
 	}
       else if (check_identifier (parser, "raw"))
 	{
-	  check_and_set (inline_asm_ctx, AST::InlineAsmOption::RAW);
+	  check_and_set (inline_asm_ctx, AST::InlineAsm::Option::RAW);
 	}
       else
 	{
@@ -660,6 +650,15 @@ MacroBuiltin::asm_handler (location_t invoc_locus, AST::MacroInvocData &invoc,
   return parse_asm (invoc_locus, invoc, semicolon, is_global_asm);
 }
 
+tl::optional<AST::Fragment>
+MacroBuiltin::llvm_asm_handler (location_t invoc_locus,
+				AST::MacroInvocData &invoc,
+				AST::InvocKind semicolon,
+				AST::AsmKind is_global_asm)
+{
+  return parse_llvm_asm (invoc_locus, invoc, semicolon, is_global_asm);
+}
+
 tl::expected<InlineAsmContext, InlineAsmParseError>
 parse_asm_arg (InlineAsmContext inline_asm_ctx)
 {
@@ -670,6 +669,14 @@ parse_asm_arg (InlineAsmContext inline_asm_ctx)
   while (token->get_id () != last_token_id)
     {
       token = parser.peek_current_token ();
+
+      if (token->get_id () == COLON || token->get_id () == SCOPE_RESOLUTION)
+	{
+	  rust_error_at (
+	    token->get_locus (),
+	    "the legacy LLVM-style %<asm!%> syntax is no longer supported");
+	  return tl::unexpected<InlineAsmParseError> (COMMITTED);
+	}
 
       // We accept a comma token here.
       if (token->get_id () != COMMA
@@ -789,7 +796,8 @@ expand_inline_asm_strings (InlineAsmContext inline_asm_ctx)
 	      auto next_argument = piece.next_argument._0;
 	      switch (piece.next_argument._0.position.tag)
 		{
-		  case Fmt::ffi::Position::Tag::ArgumentImplicitlyIs: {
+		case Fmt::ffi::Position::Tag::ArgumentImplicitlyIs:
+		  {
 		    auto idx = next_argument.position.argument_implicitly_is._0;
 		    /*auto trait = next_argument.format;*/
 		    /*auto arg = arguments.at (idx);*/
@@ -962,4 +970,223 @@ validate (InlineAsmContext inline_asm_ctx)
 {
   return tl::expected<InlineAsmContext, InlineAsmParseError> (inline_asm_ctx);
 }
+
+tl::optional<LlvmAsmContext>
+parse_llvm_templates (LlvmAsmContext ctx)
+{
+  auto &parser = ctx.parser;
+
+  auto token = parser.peek_current_token ();
+
+  if (token->get_id () == ctx.last_token_id
+      || token->get_id () != STRING_LITERAL)
+    {
+      return tl::nullopt;
+    }
+
+  ctx.llvm_asm.get_templates ().emplace_back (token->get_locus (),
+					      strip_double_quotes (
+						token->as_string ()));
+  ctx.parser.skip_token ();
+
+  token = parser.peek_current_token ();
+  if (token->get_id () != ctx.last_token_id && token->get_id () != COLON
+      && token->get_id () != SCOPE_RESOLUTION)
+    {
+      // We do not handle multiple template string, we provide minimal support
+      // for the black_box intrinsics.
+      rust_unreachable ();
+    }
+
+  return ctx;
+}
+
+tl::optional<LlvmAsmContext>
+parse_llvm_arguments (LlvmAsmContext ctx)
+{
+  auto &parser = ctx.parser;
+  enum State
+  {
+    Templates = 0,
+    Output,
+    Input,
+    Clobbers,
+    Options
+  } current_state
+    = State::Templates;
+
+  while (parser.peek_current_token ()->get_id () != ctx.last_token_id
+	 && parser.peek_current_token ()->get_id () != END_OF_FILE)
+    {
+      if (parser.peek_current_token ()->get_id () == SCOPE_RESOLUTION)
+	{
+	  parser.skip_token (SCOPE_RESOLUTION);
+	  current_state = static_cast<State> (current_state + 2);
+	}
+      else
+	{
+	  parser.skip_token (COLON);
+	  current_state = static_cast<State> (current_state + 1);
+	}
+
+      switch (current_state)
+	{
+	case State::Output:
+	  parse_llvm_outputs (ctx);
+	  break;
+	case State::Input:
+	  parse_llvm_inputs (ctx);
+	  break;
+	case State::Clobbers:
+	  parse_llvm_clobbers (ctx);
+	  break;
+	case State::Options:
+	  parse_llvm_options (ctx);
+	  break;
+	case State::Templates:
+	default:
+	  rust_unreachable ();
+	}
+    }
+
+  return ctx;
+}
+
+void
+parse_llvm_operands (LlvmAsmContext &ctx, std::vector<AST::LlvmOperand> &result)
+{
+  auto &parser = ctx.parser;
+  auto token = parser.peek_current_token ();
+  while (token->get_id () != COLON && token->get_id () != SCOPE_RESOLUTION
+	 && token->get_id () != ctx.last_token_id)
+    {
+      std::string constraint;
+      if (token->get_id () == STRING_LITERAL)
+	{
+	  constraint = strip_double_quotes (token->as_string ());
+	}
+      parser.skip_token (STRING_LITERAL);
+      parser.skip_token (LEFT_PAREN);
+
+      token = parser.peek_current_token ();
+
+      ParseRestrictions restrictions;
+      restrictions.expr_can_be_null = true;
+      auto expr = parser.parse_expr ();
+
+      parser.skip_token (RIGHT_PAREN);
+
+      result.emplace_back (constraint, std::move (expr));
+
+      if (parser.peek_current_token ()->get_id () == COMMA)
+	parser.skip_token (COMMA);
+
+      token = parser.peek_current_token ();
+    }
+}
+
+void
+parse_llvm_outputs (LlvmAsmContext &ctx)
+{
+  parse_llvm_operands (ctx, ctx.llvm_asm.get_outputs ());
+}
+
+void
+parse_llvm_inputs (LlvmAsmContext &ctx)
+{
+  parse_llvm_operands (ctx, ctx.llvm_asm.get_inputs ());
+}
+
+void
+parse_llvm_clobbers (LlvmAsmContext &ctx)
+{
+  auto &parser = ctx.parser;
+  auto token = parser.peek_current_token ();
+  while (token->get_id () != COLON && token->get_id () != ctx.last_token_id)
+    {
+      if (token->get_id () == STRING_LITERAL)
+	{
+	  ctx.llvm_asm.get_clobbers ().push_back (
+	    {strip_double_quotes (token->as_string ()), token->get_locus ()});
+	}
+      parser.skip_token (STRING_LITERAL);
+      token = parser.peek_current_token ();
+    }
+}
+
+void
+parse_llvm_options (LlvmAsmContext &ctx)
+{
+  auto &parser = ctx.parser;
+  auto token = parser.peek_current_token ();
+
+  while (token->get_id () != ctx.last_token_id)
+    {
+      if (token->get_id () == STRING_LITERAL)
+	{
+	  auto token_str = strip_double_quotes (token->as_string ());
+
+	  if (token_str == "volatile")
+	    ctx.llvm_asm.set_volatile (true);
+	  else if (token_str == "alignstack")
+	    ctx.llvm_asm.set_align_stack (true);
+	  else if (token_str == "intel")
+	    ctx.llvm_asm.set_dialect (AST::LlvmInlineAsm::Dialect::Intel);
+	  else
+	    rust_error_at (token->get_locus (),
+			   "Unknown llvm assembly option %qs",
+			   token_str.c_str ());
+	}
+      parser.skip_token (STRING_LITERAL);
+
+      token = parser.peek_current_token ();
+
+      if (token->get_id () == ctx.last_token_id)
+	continue;
+      parser.skip_token (COMMA);
+    }
+
+  parser.skip_token ();
+}
+
+tl::optional<AST::Fragment>
+parse_llvm_asm (location_t invoc_locus, AST::MacroInvocData &invoc,
+		AST::InvocKind semicolon, AST::AsmKind is_global_asm)
+{
+  MacroInvocLexer lex (invoc.get_delim_tok_tree ().to_token_stream ());
+  Parser<MacroInvocLexer> parser (lex);
+  auto last_token_id = macro_end_token (invoc.get_delim_tok_tree (), parser);
+
+  AST::LlvmInlineAsm llvm_asm{invoc_locus};
+
+  auto asm_ctx = LlvmAsmContext (llvm_asm, parser, last_token_id);
+
+  auto resulting_context
+    = parse_llvm_templates (asm_ctx).and_then (parse_llvm_arguments);
+
+  if (resulting_context)
+    {
+      auto node = (*resulting_context).llvm_asm.clone_expr_without_block ();
+
+      std::vector<AST::SingleASTNode> single_vec = {};
+
+      // If the macro invocation has a semicolon (`asm!("...");`), then we
+      // need to make it a statement. This way, it will be expanded
+      // properly.
+      if (semicolon == AST::InvocKind::Semicoloned)
+	single_vec.emplace_back (AST::SingleASTNode (
+	  std::make_unique<AST::ExprStmt> (std::move (node), invoc_locus,
+					   semicolon
+					     == AST::InvocKind::Semicoloned)));
+      else
+	single_vec.emplace_back (AST::SingleASTNode (std::move (node)));
+
+      AST::Fragment fragment_ast
+	= AST::Fragment (single_vec,
+			 std::vector<std::unique_ptr<AST::Token>> ());
+      return fragment_ast;
+    }
+  return tl::nullopt;
+}
+
 } // namespace Rust

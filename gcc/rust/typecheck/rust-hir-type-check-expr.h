@@ -1,4 +1,4 @@
-// Copyright (C) 2020-2024 Free Software Foundation, Inc.
+// Copyright (C) 2020-2025 Free Software Foundation, Inc.
 
 // This file is part of GCC.
 
@@ -46,6 +46,8 @@ public:
   void visit (HIR::IfExpr &expr) override;
   void visit (HIR::IfExprConseqElse &expr) override;
   void visit (HIR::BlockExpr &expr) override;
+  void visit (HIR::AnonConst &expr) override;
+  void visit (HIR::ConstBlock &expr) override;
   void visit (HIR::UnsafeBlockExpr &expr) override;
   void visit (HIR::ArrayIndexExpr &expr) override;
   void visit (HIR::ArrayExpr &expr) override;
@@ -70,6 +72,7 @@ public:
   void visit (HIR::WhileLoopExpr &expr) override;
   void visit (HIR::ClosureExpr &expr) override;
   void visit (HIR::InlineAsm &expr) override;
+  void visit (HIR::LlvmInlineAsm &expr) override;
 
   // TODO
   void visit (HIR::ErrorPropagationExpr &) override {}
@@ -106,7 +109,8 @@ protected:
 			      TyTy::BaseType **result);
 
   HIR::PathIdentSegment resolve_possible_fn_trait_call_method_name (
-    TyTy::BaseType &receiver, TyTy::TypeBoundPredicate *associated_predicate);
+    const TyTy::BaseType &receiver,
+    TyTy::TypeBoundPredicate *associated_predicate);
 
 private:
   TypeCheckExpr ();

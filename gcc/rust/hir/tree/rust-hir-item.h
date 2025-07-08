@@ -1,4 +1,4 @@
-// Copyright (C) 2020-2024 Free Software Foundation, Inc.
+// Copyright (C) 2020-2025 Free Software Foundation, Inc.
 
 // This file is part of GCC.
 
@@ -95,17 +95,11 @@ protected:
 class TypeParam : public GenericParam
 {
   AST::AttrVec outer_attrs;
-
   Identifier type_representation;
-
-  // bool has_type_param_bounds;
-  // TypeParamBounds type_param_bounds;
-  std::vector<std::unique_ptr<TypeParamBound>>
-    type_param_bounds; // inlined form
-
+  std::vector<std::unique_ptr<TypeParamBound>> type_param_bounds;
   tl::optional<std::unique_ptr<Type>> type;
-
   location_t locus;
+  bool was_impl_trait;
 
 public:
   // Returns whether the type of the type param has been specified.
@@ -121,9 +115,9 @@ public:
   TypeParam (Analysis::NodeMapping mappings, Identifier type_representation,
 	     location_t locus = UNDEF_LOCATION,
 	     std::vector<std::unique_ptr<TypeParamBound>> type_param_bounds
-	     = std::vector<std::unique_ptr<TypeParamBound>> (),
+	     = {},
 	     tl::optional<std::unique_ptr<Type>> type = tl::nullopt,
-	     AST::AttrVec outer_attrs = std::vector<AST::Attribute> ());
+	     AST::AttrVec outer_attrs = {}, bool was_impl_trait = false);
 
   // Copy constructor uses clone
   TypeParam (TypeParam const &other);
@@ -153,6 +147,8 @@ public:
   Analysis::NodeMapping get_type_mappings () const;
 
   std::vector<std::unique_ptr<TypeParamBound>> &get_type_param_bounds ();
+
+  bool from_impl_trait () const { return was_impl_trait; }
 
 protected:
   // Clone function implementation as (not pure) virtual method
@@ -212,6 +208,8 @@ public:
   {}
 
   std::string as_string () const override;
+
+  location_t get_locus () const { return locus; }
 
   void accept_vis (HIRFullVisitor &vis) override;
 
@@ -371,13 +369,13 @@ public:
 
 private:
   ImplicitSelfKind self_kind;
-  Lifetime lifetime;
+  tl::optional<Lifetime> lifetime;
   std::unique_ptr<Type> type;
   location_t locus;
   Analysis::NodeMapping mappings;
 
   SelfParam (Analysis::NodeMapping mappings, ImplicitSelfKind self_kind,
-	     Lifetime lifetime, Type *type);
+	     tl::optional<Lifetime> lifetime, Type *type);
 
 public:
   // Type-based self parameter (not ref, no lifetime)
@@ -385,8 +383,8 @@ public:
 	     bool is_mut, location_t locus);
 
   // Lifetime-based self parameter (is ref, no type)
-  SelfParam (Analysis::NodeMapping mappings, Lifetime lifetime, bool is_mut,
-	     location_t locus);
+  SelfParam (Analysis::NodeMapping mappings, tl::optional<Lifetime> lifetime,
+	     bool is_mut, location_t locus);
 
   // Copy constructor requires clone
   SelfParam (SelfParam const &other);
@@ -398,22 +396,15 @@ public:
   SelfParam (SelfParam &&other) = default;
   SelfParam &operator= (SelfParam &&other) = default;
 
-  static SelfParam error ()
-  {
-    return SelfParam (Analysis::NodeMapping::get_error (),
-		      ImplicitSelfKind::NONE, Lifetime::error (), nullptr);
-  }
-
   // Returns whether the self-param has a type field.
   bool has_type () const { return type != nullptr; }
 
   // Returns whether the self-param has a valid lifetime.
-  bool has_lifetime () const { return !lifetime.is_error (); }
+  bool has_lifetime () const { return lifetime.has_value (); }
 
-  const Lifetime &get_lifetime () const { return lifetime; }
+  const Lifetime &get_lifetime () const { return lifetime.value (); }
 
-  // Returns whether the self-param is in an error state.
-  bool is_error () const { return self_kind == ImplicitSelfKind::NONE; }
+  Lifetime &get_lifetime () { return lifetime.value (); }
 
   std::string as_string () const;
 
@@ -945,6 +936,12 @@ protected:
 
 class LetStmt;
 
+enum class Defaultness
+{
+  Default,
+  Final,
+};
+
 // Rust function declaration HIR node
 class Function : public VisItem, public ImplItem
 {
@@ -955,8 +952,13 @@ class Function : public VisItem, public ImplItem
   std::unique_ptr<Type> return_type;
   WhereClause where_clause;
   std::unique_ptr<BlockExpr> function_body;
-  SelfParam self;
+  tl::optional<SelfParam> self;
   location_t locus;
+
+  // NOTE: This should be moved to the trait item base class once we start
+  // implementing specialization for real, instead of just stubbing out the
+  // feature
+  Defaultness defaultness;
 
 public:
   std::string as_string () const override;
@@ -973,6 +975,9 @@ public:
   // Returns whether function has a where clause.
   bool has_where_clause () const { return !where_clause.is_empty (); }
 
+  // Returns whether function has a default qualifier
+  bool is_default () const { return defaultness == Defaultness::Default; }
+
   ImplItemType get_impl_item_type () const override final
   {
     return ImplItem::ImplItemType::FUNCTION;
@@ -987,7 +992,8 @@ public:
 	    std::vector<FunctionParam> function_params,
 	    std::unique_ptr<Type> return_type, WhereClause where_clause,
 	    std::unique_ptr<BlockExpr> function_body, Visibility vis,
-	    AST::AttrVec outer_attrs, SelfParam self, location_t locus);
+	    AST::AttrVec outer_attrs, tl::optional<SelfParam> self,
+	    Defaultness defaultness, location_t locus);
 
   // Copy constructor with clone
   Function (Function const &other);
@@ -1041,9 +1047,13 @@ public:
   // TODO: is this better? Or is a "vis_block" better?
   Type &get_return_type () { return *return_type; }
 
-  bool is_method () const { return !self.is_error (); }
+  bool is_method () const { return self.has_value (); }
 
-  SelfParam &get_self_param () { return self; }
+  tl::optional<SelfParam> &get_self_param () { return self; }
+  const tl::optional<SelfParam> &get_self_param () const { return self; }
+
+  SelfParam &get_self_param_unchecked () { return self.value (); }
+  const SelfParam &get_self_param_unchecked () const { return self.value (); }
 
   std::string get_impl_item_name () const override final
   {
@@ -1791,6 +1801,8 @@ public:
     return *type;
   }
 
+  bool has_expr () const { return const_expr != nullptr; }
+
   Expr &get_expr () { return *const_expr; }
 
   Identifier get_identifier () const { return identifier; }
@@ -1898,13 +1910,14 @@ private:
   std::vector<FunctionParam> function_params;
   std::unique_ptr<Type> return_type;
   WhereClause where_clause;
-  SelfParam self;
+  tl::optional<SelfParam> self;
 
 public:
   // Mega-constructor
   TraitFunctionDecl (Identifier function_name, FunctionQualifiers qualifiers,
 		     std::vector<std::unique_ptr<GenericParam>> generic_params,
-		     SelfParam self, std::vector<FunctionParam> function_params,
+		     tl::optional<SelfParam> self,
+		     std::vector<FunctionParam> function_params,
 		     std::unique_ptr<Type> return_type,
 		     WhereClause where_clause);
 
@@ -1936,9 +1949,13 @@ public:
 
   WhereClause &get_where_clause () { return where_clause; }
 
-  bool is_method () const { return !self.is_error (); }
+  bool is_method () const { return self.has_value (); }
 
-  SelfParam &get_self () { return self; }
+  SelfParam &get_self_unchecked () { return self.value (); }
+  const SelfParam &get_self_unchecked () const { return self.value (); }
+
+  tl::optional<SelfParam> &get_self () { return self; }
+  const tl::optional<SelfParam> &get_self () const { return self; }
 
   Identifier get_function_name () const { return function_name; }
 
@@ -2054,6 +2071,8 @@ public:
   void accept_vis (HIRTraitItemVisitor &vis) override;
 
   Identifier get_name () const { return name; }
+
+  bool has_type () const { return expr != nullptr; }
 
   bool has_expr () const { return expr != nullptr; }
 

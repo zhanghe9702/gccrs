@@ -1,4 +1,4 @@
-// Copyright (C) 2020-2024 Free Software Foundation, Inc.
+// Copyright (C) 2020-2025 Free Software Foundation, Inc.
 
 // This file is part of GCC.
 
@@ -30,6 +30,16 @@ TypeCheckBase::TypeCheckBase ()
   : mappings (Analysis::Mappings::get ()), resolver (Resolver::get ()),
     context (TypeCheckContext::get ())
 {}
+
+void
+TypeCheckBase::ResolveGenericParams (
+  const std::vector<std::unique_ptr<HIR::GenericParam>> &generic_params,
+  std::vector<TyTy::SubstitutionParamMapping> &substitutions, bool is_foreign,
+  ABI abi)
+{
+  TypeCheckBase ctx;
+  ctx.resolve_generic_params (generic_params, substitutions, is_foreign, abi);
+}
 
 static void
 walk_types_to_constrain (std::set<HirId> &constrained_symbols,
@@ -114,7 +124,8 @@ TypeCheckBase::resolve_literal (const Analysis::NodeMapping &expr_mappings,
   TyTy::BaseType *infered = nullptr;
   switch (literal.get_lit_type ())
     {
-      case HIR::Literal::LitType::INT: {
+    case HIR::Literal::LitType::INT:
+      {
 	bool ok = false;
 
 	switch (literal.get_type_hint ())
@@ -181,7 +192,8 @@ TypeCheckBase::resolve_literal (const Analysis::NodeMapping &expr_mappings,
       }
       break;
 
-      case HIR::Literal::LitType::FLOAT: {
+    case HIR::Literal::LitType::FLOAT:
+      {
 	bool ok = false;
 
 	switch (literal.get_type_hint ())
@@ -206,25 +218,29 @@ TypeCheckBase::resolve_literal (const Analysis::NodeMapping &expr_mappings,
       }
       break;
 
-      case HIR::Literal::LitType::BOOL: {
+    case HIR::Literal::LitType::BOOL:
+      {
 	auto ok = context->lookup_builtin ("bool", &infered);
 	rust_assert (ok);
       }
       break;
 
-      case HIR::Literal::LitType::CHAR: {
+    case HIR::Literal::LitType::CHAR:
+      {
 	auto ok = context->lookup_builtin ("char", &infered);
 	rust_assert (ok);
       }
       break;
 
-      case HIR::Literal::LitType::BYTE: {
+    case HIR::Literal::LitType::BYTE:
+      {
 	auto ok = context->lookup_builtin ("u8", &infered);
 	rust_assert (ok);
       }
       break;
 
-      case HIR::Literal::LitType::STRING: {
+    case HIR::Literal::LitType::STRING:
+      {
 	TyTy::BaseType *base = nullptr;
 	auto ok = context->lookup_builtin ("str", &base);
 	rust_assert (ok);
@@ -236,7 +252,8 @@ TypeCheckBase::resolve_literal (const Analysis::NodeMapping &expr_mappings,
       }
       break;
 
-      case HIR::Literal::LitType::BYTE_STRING: {
+    case HIR::Literal::LitType::BYTE_STRING:
+      {
 	/* This is an arraytype of u8 reference (&[u8;size]). It isn't in
 	   UTF-8, but really just a byte array. Code to construct the array
 	   reference copied from ArrayElemsValues and ArrayType. */
@@ -298,13 +315,20 @@ TypeCheckBase::parse_repr_options (const AST::AttrVec &attrs, location_t locus)
   repr.pack = 0;
   repr.align = 0;
 
-  // FIXME handle repr types....
+  // Default repr for enums is isize, but we now check for other repr in the
+  // attributes.
   bool ok = context->lookup_builtin ("isize", &repr.repr);
   rust_assert (ok);
 
   for (const auto &attr : attrs)
     {
       bool is_repr = attr.get_path ().as_string () == Values::Attributes::REPR;
+      if (is_repr && !attr.has_attr_input ())
+	{
+	  rust_error_at (attr.get_locus (), "malformed %qs attribute", "repr");
+	  continue;
+	}
+
       if (is_repr)
 	{
 	  const AST::AttrInput &input = attr.get_attr_input ();
@@ -315,21 +339,51 @@ TypeCheckBase::parse_repr_options (const AST::AttrVec &attrs, location_t locus)
 	  AST::AttrInputMetaItemContainer *meta_items
 	    = option.parse_to_meta_item ();
 
-	  const std::string inline_option
-	    = meta_items->get_items ().at (0)->as_string ();
+	  if (meta_items == nullptr)
+	    {
+	      rust_error_at (attr.get_locus (), "malformed %qs attribute",
+			     "repr");
+	      continue;
+	    }
+
+	  auto &items = meta_items->get_items ();
+	  if (items.size () == 0)
+	    {
+	      // nothing to do with this its empty
+	      delete meta_items;
+	      continue;
+	    }
+
+	  const std::string inline_option = items.at (0)->as_string ();
 
 	  // TODO: it would probably be better to make the MetaItems more aware
 	  // of constructs with nesting like #[repr(packed(2))] rather than
 	  // manually parsing the string "packed(2)" here.
 
 	  size_t oparen = inline_option.find ('(', 0);
-	  bool is_pack = false, is_align = false;
+	  bool is_pack = false;
+	  bool is_align = false;
+	  bool is_c = false;
+	  bool is_integer = false;
 	  unsigned char value = 1;
 
 	  if (oparen == std::string::npos)
 	    {
 	      is_pack = inline_option.compare ("packed") == 0;
 	      is_align = inline_option.compare ("align") == 0;
+	      is_c = inline_option.compare ("C") == 0;
+	      is_integer = (inline_option.compare ("isize") == 0
+			    || inline_option.compare ("i8") == 0
+			    || inline_option.compare ("i16") == 0
+			    || inline_option.compare ("i32") == 0
+			    || inline_option.compare ("i64") == 0
+			    || inline_option.compare ("i128") == 0
+			    || inline_option.compare ("usize") == 0
+			    || inline_option.compare ("u8") == 0
+			    || inline_option.compare ("u16") == 0
+			    || inline_option.compare ("u32") == 0
+			    || inline_option.compare ("u64") == 0
+			    || inline_option.compare ("u128") == 0);
 	    }
 
 	  else
@@ -349,9 +403,30 @@ TypeCheckBase::parse_repr_options (const AST::AttrVec &attrs, location_t locus)
 	    }
 
 	  if (is_pack)
-	    repr.pack = value;
+	    {
+	      repr.repr_kind = TyTy::ADTType::ReprKind::PACKED;
+	      repr.pack = value;
+	    }
 	  else if (is_align)
-	    repr.align = value;
+	    {
+	      repr.repr_kind = TyTy::ADTType::ReprKind::ALIGN;
+	      repr.align = value;
+	    }
+	  else if (is_c)
+	    {
+	      repr.repr_kind = TyTy::ADTType::ReprKind::C;
+	    }
+	  else if (is_integer)
+	    {
+	      repr.repr_kind = TyTy::ADTType::ReprKind::INT;
+	      bool ok = context->lookup_builtin (inline_option, &repr.repr);
+	      if (!ok)
+		{
+		  rust_error_at (attr.get_locus (), "Invalid repr type");
+		}
+	    }
+
+	  delete meta_items;
 
 	  // Multiple repr options must be specified with e.g. #[repr(C,
 	  // packed(2))].
@@ -365,25 +440,31 @@ TypeCheckBase::parse_repr_options (const AST::AttrVec &attrs, location_t locus)
 void
 TypeCheckBase::resolve_generic_params (
   const std::vector<std::unique_ptr<HIR::GenericParam>> &generic_params,
-  std::vector<TyTy::SubstitutionParamMapping> &substitutions)
+  std::vector<TyTy::SubstitutionParamMapping> &substitutions, bool is_foreign,
+  ABI abi)
 {
   for (auto &generic_param : generic_params)
     {
       switch (generic_param->get_kind ())
 	{
-	  case HIR::GenericParam::GenericKind::LIFETIME: {
+	case HIR::GenericParam::GenericKind::LIFETIME:
+	  {
 	    auto lifetime_param
 	      = static_cast<HIR::LifetimeParam &> (*generic_param);
 	    auto lifetime = lifetime_param.get_lifetime ();
-	    rust_assert (lifetime.get_lifetime_type ()
-			 == AST::Lifetime::LifetimeType::NAMED);
 	    context->get_lifetime_resolver ().insert_mapping (
 	      context->intern_lifetime (lifetime));
 	  }
-
 	  break;
 
-	  case HIR::GenericParam::GenericKind::CONST: {
+	case HIR::GenericParam::GenericKind::CONST:
+	  {
+	    if (is_foreign && abi != Rust::ABI::INTRINSIC)
+	      {
+		rust_error_at (generic_param->get_locus (), ErrorCode::E0044,
+			       "foreign items may not have const parameters");
+	      }
+
 	    auto &param
 	      = static_cast<HIR::ConstGenericParam &> (*generic_param);
 	    auto specified_type = TypeCheckType::Resolve (param.get_type ());
@@ -406,15 +487,32 @@ TypeCheckBase::resolve_generic_params (
 	  }
 	  break;
 
-	  case HIR::GenericParam::GenericKind::TYPE: {
-	    auto param_type = TypeResolveGenericParam::Resolve (*generic_param);
+	case HIR::GenericParam::GenericKind::TYPE:
+	  {
+	    if (is_foreign && abi != Rust::ABI::INTRINSIC)
+	      {
+		rust_error_at (generic_param->get_locus (), ErrorCode::E0044,
+			       "foreign items may not have type parameters");
+	      }
+
+	    auto param_type = TypeResolveGenericParam::Resolve (
+	      *generic_param, false /*resolve_trait_bounds*/);
 	    context->insert_type (generic_param->get_mappings (), param_type);
 
-	    substitutions.push_back (TyTy::SubstitutionParamMapping (
-	      static_cast<HIR::TypeParam &> (*generic_param), param_type));
+	    auto &param = static_cast<HIR::TypeParam &> (*generic_param);
+	    TyTy::SubstitutionParamMapping p (param, param_type);
+	    substitutions.push_back (p);
 	  }
 	  break;
 	}
+    }
+
+  // now walk them to setup any specified type param bounds
+  for (auto &subst : substitutions)
+    {
+      auto pty = subst.get_param_ty ();
+      TypeResolveGenericParam::ApplyAnyTraitBounds (subst.get_generic_param (),
+						    pty);
     }
 }
 

@@ -1,4 +1,4 @@
-// Copyright (C) 2020-2024 Free Software Foundation, Inc.
+// Copyright (C) 2020-2025 Free Software Foundation, Inc.
 
 // This file is part of GCC.
 
@@ -57,13 +57,19 @@ public:
 
   bool empty () const { return ident.empty (); }
 
+  bool operator== (const Identifier &other) const
+  {
+    return ident == other.ident;
+  }
+
+  operator const std::string & () const { return ident; }
+
 private:
   std::string ident;
   location_t loc;
 };
 
-std::ostream &
-operator<< (std::ostream &os, Identifier const &i);
+std::ostream &operator<< (std::ostream &os, Identifier const &i);
 
 namespace AST {
 // foward decl: ast visitor
@@ -76,6 +82,38 @@ public:
   virtual ~Visitable () = default;
   virtual void accept_vis (ASTVisitor &vis) = 0;
 };
+
+/**
+ * Base function for reconstructing and asserting that the new NodeId is
+ * different from the old NodeId. It then wraps the given pointer into a unique
+ * pointer and returns it.
+ */
+template <typename T>
+std::unique_ptr<T>
+reconstruct_base (const T *instance)
+{
+  auto *reconstructed = instance->reconstruct_impl ();
+
+  rust_assert (reconstructed->get_node_id () != instance->get_node_id ());
+
+  return std::unique_ptr<T> (reconstructed);
+}
+
+/**
+ * Reconstruct multiple items in a vector
+ */
+template <typename T>
+std::vector<std::unique_ptr<T>>
+reconstruct_vec (const std::vector<std::unique_ptr<T>> &to_reconstruct)
+{
+  std::vector<std::unique_ptr<T>> reconstructed;
+  reconstructed.reserve (to_reconstruct.size ());
+
+  for (const auto &elt : to_reconstruct)
+    reconstructed.emplace_back (std::unique_ptr<T> (elt->reconstruct_impl ()));
+
+  return reconstructed;
+}
 
 // Delimiter types - used in macros and whatever.
 enum DelimType
@@ -398,15 +436,15 @@ class SimplePath
 
 public:
   // Constructor
-  SimplePath (std::vector<SimplePathSegment> path_segments,
-	      bool has_opening_scope_resolution = false,
-	      location_t locus = UNDEF_LOCATION)
+  explicit SimplePath (std::vector<SimplePathSegment> path_segments,
+		       bool has_opening_scope_resolution = false,
+		       location_t locus = UNDEF_LOCATION)
     : opening_scope_resolution (has_opening_scope_resolution),
       segments (std::move (path_segments)), locus (locus),
       node_id (Analysis::Mappings::get ().get_next_node_id ())
   {}
 
-  SimplePath (Identifier ident)
+  explicit SimplePath (Identifier ident)
     : opening_scope_resolution (false),
       segments ({SimplePathSegment (ident.as_string (), ident.get_locus ())}),
       locus (ident.get_locus ()),
@@ -656,6 +694,9 @@ public:
 
   // Returns whether the attribute is considered an "empty" attribute.
   bool is_empty () const { return attr_input == nullptr && path.is_empty (); }
+
+  // Returns whether the attribute has no input
+  bool empty_input () const { return !attr_input; }
 
   location_t get_locus () const { return locus; }
 
@@ -1015,6 +1056,7 @@ public:
   }
 
   DelimType get_delim_type () const { return delim_type; }
+  location_t get_locus () const { return locus; }
 };
 
 /* Forward decl - definition moved to rust-expr.h as it requires LiteralExpr
@@ -1247,6 +1289,8 @@ public:
     FieldAccess,
     Closure,
     Block,
+    ConstExpr,
+    ConstBlock,
     Continue,
     Break,
     Range,
@@ -1260,6 +1304,7 @@ public:
     Await,
     AsyncBlock,
     InlineAsm,
+    LlvmInlineAsm,
     Identifier,
     FormatArgs,
     MacroInvocation,
@@ -1467,6 +1512,10 @@ public:
     return std::unique_ptr<Type> (clone_type_impl ());
   }
 
+  // Similar to `clone_type`, but generates a new instance of the node with a
+  // different NodeId
+  std::unique_ptr<Type> reconstruct () const { return reconstruct_base (this); }
+
   // virtual destructor
   virtual ~Type () {}
 
@@ -1485,11 +1534,13 @@ public:
   virtual location_t get_locus () const = 0;
 
   NodeId get_node_id () const { return node_id; }
+  virtual Type *reconstruct_impl () const = 0;
 
 protected:
   Type () : node_id (Analysis::Mappings::get ().get_next_node_id ()) {}
+  Type (NodeId node_id) : node_id (node_id) {}
 
-  // Clone function implementation as pure virtual method
+  // Clone and reconstruct function implementations as pure virtual methods
   virtual Type *clone_type_impl () const = 0;
 
   NodeId node_id;
@@ -1504,6 +1555,13 @@ public:
   {
     return std::unique_ptr<TypeNoBounds> (clone_type_no_bounds_impl ());
   }
+
+  std::unique_ptr<TypeNoBounds> reconstruct () const
+  {
+    return reconstruct_base (this);
+  }
+
+  virtual TypeNoBounds *reconstruct_impl () const override = 0;
 
 protected:
   // Clone function implementation as pure virtual method
@@ -1539,6 +1597,11 @@ public:
     return std::unique_ptr<TypeParamBound> (clone_type_param_bound_impl ());
   }
 
+  std::unique_ptr<TypeParamBound> reconstruct () const
+  {
+    return reconstruct_base (this);
+  }
+
   virtual std::string as_string () const = 0;
 
   NodeId get_node_id () const { return node_id; }
@@ -1547,10 +1610,14 @@ public:
 
   virtual TypeParamBoundType get_bound_type () const = 0;
 
+  virtual TypeParamBound *reconstruct_impl () const = 0;
+
 protected:
   // Clone function implementation as pure virtual method
   virtual TypeParamBound *clone_type_param_bound_impl () const = 0;
 
+  TypeParamBound () : node_id (Analysis::Mappings::get ().get_next_node_id ())
+  {}
   TypeParamBound (NodeId node_id) : node_id (node_id) {}
 
   NodeId node_id;
@@ -1587,17 +1654,9 @@ public:
       lifetime_name (std::move (name)), locus (locus)
   {}
 
-  // Creates an "error" lifetime.
-  static Lifetime error () { return Lifetime (NAMED, ""); }
-
   static Lifetime elided () { return Lifetime (WILDCARD, ""); }
 
   // Returns true if the lifetime is in an error state.
-  bool is_error () const
-  {
-    return lifetime_type == NAMED && lifetime_name.empty ();
-  }
-
   std::string as_string () const override;
 
   void accept_vis (ASTVisitor &vis) override;
@@ -1619,6 +1678,10 @@ protected:
   Lifetime *clone_type_param_bound_impl () const override
   {
     return new Lifetime (node_id, lifetime_type, lifetime_name, locus);
+  }
+  Lifetime *reconstruct_impl () const override
+  {
+    return new Lifetime (lifetime_type, lifetime_name, locus);
   }
 };
 
@@ -1687,15 +1750,6 @@ public:
 
   // Returns whether the lifetime param has an outer attribute.
   bool has_outer_attribute () const { return !outer_attrs.empty (); }
-
-  // Creates an error state lifetime param.
-  static LifetimeParam create_error ()
-  {
-    return LifetimeParam (Lifetime::error (), {}, {}, UNDEF_LOCATION);
-  }
-
-  // Returns whether the lifetime param is in an error state.
-  bool is_error () const { return lifetime.is_error (); }
 
   // Constructor
   LifetimeParam (Lifetime lifetime, std::vector<Lifetime> lifetime_bounds,
@@ -2109,6 +2163,19 @@ template <> struct less<Rust::Identifier>
     return lhs.as_string () < rhs.as_string ();
   }
 };
+
+template <> struct hash<Rust::Identifier>
+{
+  std::size_t operator() (const Rust::Identifier &k) const
+  {
+    using std::hash;
+    using std::size_t;
+    using std::string;
+
+    return hash<string> () (k.as_string ()) ^ (hash<int> () (k.get_locus ()));
+  }
+};
+
 } // namespace std
 
 #endif

@@ -1,4 +1,4 @@
-// Copyright (C) 2020-2024 Free Software Foundation, Inc.
+// Copyright (C) 2020-2025 Free Software Foundation, Inc.
 
 // This file is part of GCC.
 
@@ -489,7 +489,8 @@ ExpandVisitor::visit (AST::PathInExpression &path)
 void
 ExpandVisitor::visit (AST::TypePathSegmentGeneric &segment)
 {
-  expand_generic_args (segment.get_generic_args ());
+  if (segment.has_generic_args ())
+    expand_generic_args (segment.get_generic_args ());
 }
 
 void
@@ -640,7 +641,7 @@ ExpandVisitor::visit (AST::ClosureExprInnerTyped &expr)
 
   maybe_expand_type (expr.get_return_type_ptr ());
 
-  visit (expr.get_definition_block ());
+  visit (expr.get_definition_expr ());
 }
 
 void

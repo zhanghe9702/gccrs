@@ -1,4 +1,4 @@
-// Copyright (C) 2020-2024 Free Software Foundation, Inc.
+// Copyright (C) 2020-2025 Free Software Foundation, Inc.
 
 // This file is part of GCC.
 
@@ -81,6 +81,8 @@ public:
   void set_current_crate (CrateNum crateNum);
   CrateNum get_current_crate () const;
   tl::optional<const std::string &> get_crate_name (CrateNum crate_num) const;
+
+  tl::optional<CrateNum> lookup_crate_num (NodeId node_id) const;
   void set_crate_name (CrateNum crate_num, const std::string &name);
   const std::string &get_current_crate_name () const;
   tl::optional<CrateNum>

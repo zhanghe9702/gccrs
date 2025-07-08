@@ -1,4 +1,4 @@
-// Copyright (C) 2020-2024 Free Software Foundation, Inc.
+// Copyright (C) 2020-2025 Free Software Foundation, Inc.
 
 // This file is part of GCC.
 
@@ -87,7 +87,7 @@ TypeCheckEnumItem::visit (HIR::EnumItem &item)
 	= Resolver2_0::ImmutableNameResolutionContext::get ().resolver ();
 
       canonical_path
-	= nr_ctx.types.to_canonical_path (item.get_mappings ().get_nodeid ());
+	= nr_ctx.to_canonical_path (item.get_mappings ().get_nodeid ());
     }
   else
     {
@@ -131,7 +131,7 @@ TypeCheckEnumItem::visit (HIR::EnumItemDiscriminant &item)
 	= Resolver2_0::ImmutableNameResolutionContext::get ().resolver ();
 
       canonical_path
-	= nr_ctx.types.to_canonical_path (item.get_mappings ().get_nodeid ());
+	= nr_ctx.to_canonical_path (item.get_mappings ().get_nodeid ());
     }
   else
     {
@@ -193,7 +193,7 @@ TypeCheckEnumItem::visit (HIR::EnumItemTuple &item)
 	= Resolver2_0::ImmutableNameResolutionContext::get ().resolver ();
 
       canonical_path
-	= nr_ctx.types.to_canonical_path (item.get_mappings ().get_nodeid ());
+	= nr_ctx.to_canonical_path (item.get_mappings ().get_nodeid ());
     }
   else
     {
@@ -253,7 +253,7 @@ TypeCheckEnumItem::visit (HIR::EnumItemStruct &item)
 	= Resolver2_0::ImmutableNameResolutionContext::get ().resolver ();
 
       canonical_path
-	= nr_ctx.types.to_canonical_path (item.get_mappings ().get_nodeid ());
+	= nr_ctx.to_canonical_path (item.get_mappings ().get_nodeid ());
     }
   else
     {

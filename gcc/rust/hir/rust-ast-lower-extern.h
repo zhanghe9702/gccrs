@@ -1,4 +1,4 @@
-// Copyright (C) 2020-2024 Free Software Foundation, Inc.
+// Copyright (C) 2020-2025 Free Software Foundation, Inc.
 
 // This file is part of GCC.
 
@@ -99,7 +99,7 @@ public:
 	  = static_cast<AST::IdentifierPattern &> (param.get_pattern ());
 	Identifier param_name = param_kind == AST::Pattern::Kind::Identifier
 				  ? param_ident.get_ident ()
-				  : std::string ("_");
+				  : Identifier ("_", param.get_locus ());
 
 	HIR::Type *param_type = ASTLoweringType::translate (param.get_type ());
 

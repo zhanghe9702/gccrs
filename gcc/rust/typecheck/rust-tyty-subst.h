@@ -1,4 +1,4 @@
-// Copyright (C) 2020-2024 Free Software Foundation, Inc.
+// Copyright (C) 2020-2025 Free Software Foundation, Inc.
 
 // This file is part of GCC.
 
@@ -44,7 +44,7 @@ class SubstitutionArgumentMappings;
 class SubstitutionParamMapping
 {
 public:
-  SubstitutionParamMapping (const HIR::TypeParam &generic, ParamType *param);
+  SubstitutionParamMapping (HIR::TypeParam &generic, ParamType *param);
 
   SubstitutionParamMapping (const SubstitutionParamMapping &other);
 
@@ -59,6 +59,7 @@ public:
 
   const ParamType *get_param_ty () const;
 
+  HIR::TypeParam &get_generic_param ();
   const HIR::TypeParam &get_generic_param () const;
 
   // this is used for the backend to override the HirId ref of the param to
@@ -76,7 +77,7 @@ public:
   bool need_substitution () const;
 
 private:
-  const HIR::TypeParam &generic;
+  HIR::TypeParam &generic;
   ParamType *param;
 };
 
@@ -125,7 +126,7 @@ public:
 				     std::vector<Region> subst)
   {
     RegionParamList list (num_regions);
-    for (size_t i = 0; i < subst.size (); i++)
+    for (size_t i = 0; i < MIN (num_regions, subst.size ()); i++)
       list.regions.at (i) = subst.at (i);
     for (size_t i = subst.size (); i < num_regions; i++)
       {
@@ -253,6 +254,7 @@ private:
   bool error_flag;
 };
 
+class TypeBoundPredicateItem;
 class SubstitutionRef
 {
 public:
@@ -319,7 +321,8 @@ public:
   // we have bindings for X Y Z and need to propagate the binding Y,Z into Foo
   // Which binds to A,B
   SubstitutionArgumentMappings
-  adjust_mappings_for_this (SubstitutionArgumentMappings &mappings);
+  adjust_mappings_for_this (SubstitutionArgumentMappings &mappings,
+			    bool trait_mode = false);
 
   // Are the mappings here actually bound to this type. For example imagine the
   // case:

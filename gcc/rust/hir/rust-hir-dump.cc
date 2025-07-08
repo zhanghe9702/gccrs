@@ -1,4 +1,4 @@
-// Copyright (C) 2020-2024 Free Software Foundation, Inc.
+// Copyright (C) 2020-2025 Free Software Foundation, Inc.
 
 // This file is part of GCC.
 
@@ -546,7 +546,8 @@ Dump::do_traitfunctiondecl (TraitFunctionDecl &e)
   else
     put_field ("where_clause", "none");
 
-  put_field ("self", e.get_self ().as_string ());
+  if (e.is_method ())
+    put_field ("self", e.get_self_unchecked ().as_string ());
 
   end ("TraitFunctionDecl");
 }
@@ -1283,7 +1284,9 @@ Dump::visit (BlockExpr &e)
   do_expr (e);
   do_inner_attrs (e);
   put_field ("tail_reachable", std::to_string (e.is_tail_reachable ()));
-  put_field ("label", e.get_label ().as_string ());
+
+  if (e.has_label ())
+    put_field ("label", e.get_label ().as_string ());
 
   visit_collection ("statements", e.get_statements ());
 
@@ -1291,6 +1294,28 @@ Dump::visit (BlockExpr &e)
     visit_field ("expr", e.get_final_expr ());
 
   end ("BlockExpr");
+}
+
+void
+Dump::visit (AnonConst &e)
+{
+  begin ("AnonConst");
+  do_expr (e);
+
+  visit_field ("inner", e.get_inner_expr ());
+
+  end ("AnonConst");
+}
+
+void
+Dump::visit (ConstBlock &e)
+{
+  begin ("ConstBlock");
+  do_expr (e);
+
+  visit_field ("inner", e.get_const_expr ());
+
+  end ("ConstBlock");
 }
 
 void
@@ -1507,6 +1532,10 @@ Dump::visit (InlineAsm &e)
 {}
 
 void
+Dump::visit (LlvmInlineAsm &e)
+{}
+
+void
 Dump::visit (TypeParam &e)
 {
   begin ("TypeParam");
@@ -1595,7 +1624,8 @@ Dump::visit (UseTreeGlob &e)
     case UseTreeGlob::PathType::GLOBAL:
       glob = "::*";
       break;
-      case UseTreeGlob::PathType::PATH_PREFIXED: {
+    case UseTreeGlob::PathType::PATH_PREFIXED:
+      {
 	path = e.get_path ().as_string ();
 	glob = "::*";
 	break;
@@ -1623,7 +1653,8 @@ Dump::visit (UseTreeList &e)
     case UseTreeList::PathType::GLOBAL:
       path_type = "::*";
       break;
-      case UseTreeList::PathType::PATH_PREFIXED: {
+    case UseTreeList::PathType::PATH_PREFIXED:
+      {
 	path = e.get_path ().as_string ();
 	path_type = "::*";
 	break;
@@ -1693,7 +1724,8 @@ Dump::visit (Function &e)
     put_field ("where clause", e.get_where_clause ().as_string ());
 
   visit_field ("function_body", e.get_definition ());
-  put_field ("self", e.get_self_param ().as_string ());
+  if (e.is_method ())
+    put_field ("self", e.get_self_param_unchecked ().as_string ());
 
   end ("Function");
 }
@@ -1894,7 +1926,8 @@ Dump::visit (ConstantItem &e)
   do_vis_item (e);
   put_field ("identifier", e.get_identifier ().as_string ());
   visit_field ("type", e.get_type ());
-  visit_field ("const_expr", e.get_expr ());
+  if (e.has_expr ())
+    visit_field ("const_expr", e.get_expr ());
   end ("ConstantItem");
 }
 
@@ -1932,7 +1965,9 @@ Dump::visit (TraitItemConst &e)
 
   put_field ("name", e.get_name ().as_string ());
   visit_field ("type", e.get_type ());
-  visit_field ("expr", e.get_expr ());
+  if (e.has_expr ())
+    visit_field ("expr", e.get_expr ());
+
   end ("TraitItemConst");
 }
 
@@ -2081,10 +2116,10 @@ Dump::visit (IdentifierPattern &e)
   put_field ("is_ref", std::to_string (e.get_is_ref ()));
   put_field ("mut", std::to_string (e.is_mut ()));
 
-  if (e.has_pattern_to_bind ())
-    put_field ("to_bind", e.get_to_bind ().as_string ());
+  if (e.has_subpattern ())
+    visit_field ("subpattern", e.get_subpattern ());
   else
-    put_field ("to_bind", "none");
+    put_field ("subpattern", "none");
 
   end ("IdentifierPattern");
 }
@@ -2162,7 +2197,7 @@ Dump::visit (StructPatternFieldIdentPat &e)
   auto oa = e.get_outer_attrs ();
   do_outer_attrs (oa);
   put_field ("ident", e.get_identifier ().as_string ());
-  put_field ("ident_pattern", e.get_pattern ().as_string ());
+  visit_field ("ident_pattern", e.get_pattern ());
   end ("StructPatternFieldIdentPat");
 }
 
@@ -2280,7 +2315,7 @@ Dump::visit (LetStmt &e)
   auto oa = e.get_outer_attrs ();
   do_outer_attrs (oa);
 
-  put_field ("variable_pattern", e.get_pattern ().as_string ());
+  visit_field ("variable_pattern", e.get_pattern ());
 
   if (e.has_type ())
     visit_field ("type", e.get_type ());
@@ -2438,7 +2473,9 @@ Dump::visit (BareFunctionType &e)
       end_field ("params");
     }
 
-  visit_field ("return_type", e.get_return_type ());
+  if (e.has_return_type ())
+    visit_field ("return_type", e.get_return_type ());
+
   put_field ("is_variadic", std::to_string (e.get_is_variadic ()));
   end ("BareFunctionType");
 }

@@ -1,4 +1,4 @@
-// Copyright (C) 2020-2024 Free Software Foundation, Inc.
+// Copyright (C) 2020-2025 Free Software Foundation, Inc.
 
 // This file is part of GCC.
 
@@ -217,7 +217,7 @@ ASTLoweringItem::visit (AST::StructStruct &struct_decl)
 					 field.get_outer_attrs ());
 
       if (struct_field_name_exists (fields, translated_field))
-	break;
+	continue;
 
       fields.push_back (std::move (translated_field));
     }
@@ -367,7 +367,9 @@ ASTLoweringItem::visit (AST::ConstantItem &constant)
   HIR::Visibility vis = translate_visibility (constant.get_visibility ());
 
   HIR::Type *type = ASTLoweringType::translate (constant.get_type (), true);
-  HIR::Expr *expr = ASTLoweringExpr::translate (constant.get_expr ());
+  HIR::Expr *expr = nullptr;
+  if (constant.has_expr ())
+    expr = ASTLoweringExpr::translate (constant.get_expr ());
 
   auto crate_num = mappings.get_current_crate ();
   Analysis::NodeMapping mapping (crate_num, constant.get_node_id (),
@@ -411,7 +413,8 @@ ASTLoweringItem::visit (AST::Function &function)
 
   std::unique_ptr<HIR::Type> return_type
     = function.has_return_type () ? std::unique_ptr<HIR::Type> (
-	ASTLoweringType::translate (function.get_return_type ()))
+	ASTLoweringType::translate (function.get_return_type (), false,
+				    true /* impl trait is allowed here*/))
 				  : nullptr;
 
   std::vector<HIR::FunctionParam> function_params;
@@ -451,13 +454,16 @@ ASTLoweringItem::visit (AST::Function &function)
   mappings.insert_location (function_body->get_mappings ().get_hirid (),
 			    function.get_locus ());
 
+  Defaultness defaultness
+    = function.is_default () ? Defaultness::Default : Defaultness::Final;
+
   auto fn
     = new HIR::Function (mapping, std::move (function_name),
 			 std::move (qualifiers), std::move (generic_params),
 			 std::move (function_params), std::move (return_type),
 			 std::move (where_clause), std::move (function_body),
 			 std::move (vis), function.get_outer_attrs (),
-			 HIR::SelfParam::error (), locus);
+			 tl::nullopt, defaultness, locus);
 
   // add the mappings for the function params at the end
   for (auto &param : fn->get_function_params ())
@@ -491,7 +497,8 @@ ASTLoweringItem::visit (AST::InherentImpl &impl_block)
 	{
 	  switch (generic_param->get_kind ())
 	    {
-	      case HIR::GenericParam::GenericKind::TYPE: {
+	    case HIR::GenericParam::GenericKind::TYPE:
+	      {
 		const HIR::TypeParam &t
 		  = static_cast<const HIR::TypeParam &> (*generic_param);
 
@@ -648,7 +655,8 @@ ASTLoweringItem::visit (AST::TraitImpl &impl_block)
 	{
 	  switch (generic_param->get_kind ())
 	    {
-	      case HIR::GenericParam::GenericKind::TYPE: {
+	    case HIR::GenericParam::GenericKind::TYPE:
+	      {
 		const HIR::TypeParam &t
 		  = static_cast<const HIR::TypeParam &> (*generic_param);
 
@@ -724,6 +732,25 @@ void
 ASTLoweringItem::visit (AST::MacroRulesDefinition &def)
 {
   lower_macro_definition (def);
+}
+
+void
+ASTLoweringItem::visit (AST::ExternCrate &extern_crate)
+{
+  if (extern_crate.references_self ())
+    return;
+
+  auto &mappings = Analysis::Mappings::get ();
+  CrateNum num
+    = mappings.lookup_crate_name (extern_crate.get_referenced_crate ())
+	.value ();
+  AST::Crate &crate = mappings.get_ast_crate (num);
+
+  auto saved_crate_num = mappings.get_current_crate ();
+  mappings.set_current_crate (num);
+  auto lowered = ASTLowering::Resolve (crate);
+  mappings.insert_hir_crate (std::move (lowered));
+  mappings.set_current_crate (saved_crate_num);
 }
 
 HIR::SimplePath

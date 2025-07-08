@@ -49,8 +49,7 @@ DeriveEq::assert_receiver_is_total_eq_fn (
     stmts.emplace_back (assert_type_is_eq (std::move (type)));
 
   auto block = std::unique_ptr<BlockExpr> (
-    new BlockExpr (std::move (stmts), nullptr, {}, {}, AST::LoopLabel::error (),
-		   loc, loc));
+    new BlockExpr (std::move (stmts), nullptr, {}, {}, tl::nullopt, loc, loc));
 
   auto self = builder.self_ref_param ();
 
@@ -143,7 +142,7 @@ DeriveEq::visit_tuple (TupleStruct &item)
   auto types = std::vector<std::unique_ptr<Type>> ();
 
   for (auto &field : item.get_fields ())
-    types.emplace_back (field.get_field_type ().clone_type ());
+    types.emplace_back (field.get_field_type ().reconstruct ());
 
   expanded = eq_impls (assert_receiver_is_total_eq_fn (std::move (types)),
 		       item.get_identifier ().as_string (),
@@ -156,7 +155,7 @@ DeriveEq::visit_struct (StructStruct &item)
   auto types = std::vector<std::unique_ptr<Type>> ();
 
   for (auto &field : item.get_fields ())
-    types.emplace_back (field.get_field_type ().clone_type ());
+    types.emplace_back (field.get_field_type ().reconstruct ());
 
   expanded = eq_impls (assert_receiver_is_total_eq_fn (std::move (types)),
 		       item.get_identifier ().as_string (),
@@ -176,19 +175,20 @@ DeriveEq::visit_enum (Enum &item)
 	case EnumItem::Kind::Discriminant:
 	  // nothing to do as they contain no inner types
 	  continue;
-	  case EnumItem::Kind::Tuple: {
+	case EnumItem::Kind::Tuple:
+	  {
 	    auto &tuple = static_cast<EnumItemTuple &> (*variant);
 
 	    for (auto &field : tuple.get_tuple_fields ())
-	      types.emplace_back (field.get_field_type ().clone_type ());
-
+	      types.emplace_back (field.get_field_type ().reconstruct ());
 	    break;
 	  }
-	  case EnumItem::Kind::Struct: {
+	case EnumItem::Kind::Struct:
+	  {
 	    auto &tuple = static_cast<EnumItemStruct &> (*variant);
 
 	    for (auto &field : tuple.get_struct_fields ())
-	      types.emplace_back (field.get_field_type ().clone_type ());
+	      types.emplace_back (field.get_field_type ().reconstruct ());
 
 	    break;
 	  }
@@ -206,7 +206,7 @@ DeriveEq::visit_union (Union &item)
   auto types = std::vector<std::unique_ptr<Type>> ();
 
   for (auto &field : item.get_variants ())
-    types.emplace_back (field.get_field_type ().clone_type ());
+    types.emplace_back (field.get_field_type ().reconstruct ());
 
   expanded = eq_impls (assert_receiver_is_total_eq_fn (std::move (types)),
 		       item.get_identifier ().as_string (),

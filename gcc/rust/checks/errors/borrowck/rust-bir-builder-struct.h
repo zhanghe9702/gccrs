@@ -1,4 +1,4 @@
-// Copyright (C) 2020-2024 Free Software Foundation, Inc.
+// Copyright (C) 2020-2025 Free Software Foundation, Inc.
 
 // This file is part of GCC.
 
@@ -133,6 +133,8 @@ protected:
   void visit (HIR::MethodCallExpr &expr) override { rust_unreachable (); }
   void visit (HIR::FieldAccessExpr &expr) override { rust_unreachable (); }
   void visit (HIR::BlockExpr &expr) override { rust_unreachable (); }
+  void visit (HIR::AnonConst &expr) override { rust_unreachable (); }
+  void visit (HIR::ConstBlock &expr) override { rust_unreachable (); }
   void visit (HIR::ClosureExpr &expr) override { rust_unreachable (); }
   void visit (HIR::ContinueExpr &expr) override { rust_unreachable (); }
   void visit (HIR::BreakExpr &expr) override { rust_unreachable (); }
@@ -153,6 +155,7 @@ protected:
   void visit (HIR::AwaitExpr &expr) override { rust_unreachable (); }
   void visit (HIR::AsyncBlockExpr &expr) override { rust_unreachable (); }
   void visit (HIR::InlineAsm &expr) override { rust_unreachable (); }
+  void visit (HIR::LlvmInlineAsm &expr) override { rust_unreachable (); }
   void visit (HIR::TypeParam &param) override { rust_unreachable (); }
   void visit (HIR::ConstGenericParam &param) override { rust_unreachable (); }
   void visit (HIR::LifetimeWhereClauseItem &item) override

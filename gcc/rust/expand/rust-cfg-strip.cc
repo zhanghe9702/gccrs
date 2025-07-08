@@ -1,4 +1,4 @@
-// Copyright (C) 2020-2024 Free Software Foundation, Inc.
+// Copyright (C) 2020-2025 Free Software Foundation, Inc.
 
 // This file is part of GCC.
 
@@ -289,7 +289,8 @@ CfgStrip::maybe_strip_generic_args (AST::GenericArgs &args)
     {
       switch (arg.get_kind ())
 	{
-	  case AST::GenericArg::Kind::Type: {
+	case AST::GenericArg::Kind::Type:
+	  {
 	    auto &type = arg.get_type ();
 	    type.accept_vis (*this);
 
@@ -298,7 +299,8 @@ CfgStrip::maybe_strip_generic_args (AST::GenericArgs &args)
 			     "cannot strip type in this position");
 	    break;
 	  }
-	  case AST::GenericArg::Kind::Const: {
+	case AST::GenericArg::Kind::Const:
+	  {
 	    auto &expr = arg.get_expression ();
 	    expr.accept_vis (*this);
 
@@ -1190,7 +1192,7 @@ CfgStrip::visit (AST::ClosureExprInnerTyped &expr)
     rust_error_at (type.get_locus (), "cannot strip type in this position");
 
   // can't strip expression itself, but can strip sub-expressions
-  auto &definition_block = expr.get_definition_block ();
+  auto &definition_block = expr.get_definition_expr ();
   definition_block.accept_vis (*this);
   if (definition_block.is_marked_for_strip ())
     rust_error_at (definition_block.get_locus (),
@@ -2260,12 +2262,12 @@ void
 CfgStrip::visit (AST::IdentifierPattern &pattern)
 {
   // can only strip sub-patterns of the inner pattern to bind
-  if (!pattern.has_pattern_to_bind ())
+  if (!pattern.has_subpattern ())
     return;
 
   AST::DefaultASTVisitor::visit (pattern);
 
-  auto &sub_pattern = pattern.get_pattern_to_bind ();
+  auto &sub_pattern = pattern.get_subpattern ();
   if (sub_pattern.is_marked_for_strip ())
     rust_error_at (sub_pattern.get_locus (),
 		   "cannot strip pattern in this position");

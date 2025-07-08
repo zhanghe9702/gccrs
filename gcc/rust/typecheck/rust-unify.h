@@ -1,4 +1,4 @@
-// Copyright (C) 2020-2024 Free Software Foundation, Inc.
+// Copyright (C) 2020-2025 Free Software Foundation, Inc.
 
 // This file is part of GCC.
 
@@ -90,6 +90,9 @@ private:
 	      location_t locus, bool commit_flag, bool emit_error, bool infer,
 	      std::vector<CommitSite> &commits,
 	      std::vector<InferenceSite> &infers);
+
+  TyTy::BaseType *resolve_subtype (TyTy::TyWithLocation lhs,
+				   TyTy::TyWithLocation rhs);
 
   void emit_type_mismatch () const;
   void emit_abi_mismatch (const TyTy::FnType &expected,

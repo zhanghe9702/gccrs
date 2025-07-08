@@ -43,7 +43,7 @@ public:
     WITHOUT_BLOCK,
   };
 
-  enum ExprType
+  enum class ExprType
   {
     Lit,
     Operator,
@@ -58,6 +58,8 @@ public:
     FieldAccess,
     Closure,
     Block,
+    AnonConst,
+    ConstBlock,
     Continue,
     Break,
     Range,
@@ -71,6 +73,7 @@ public:
     AsyncBlock,
     Path,
     InlineAsm,
+    LlvmInlineAsm,
   };
 
   BaseKind get_hir_kind () override final { return Node::BaseKind::EXPR; }

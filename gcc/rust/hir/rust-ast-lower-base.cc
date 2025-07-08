@@ -1,4 +1,4 @@
-// Copyright (C) 2020-2024 Free Software Foundation, Inc.
+// Copyright (C) 2020-2025 Free Software Foundation, Inc.
 
 // This file is part of GCC.
 
@@ -201,6 +201,12 @@ void
 ASTLoweringBase::visit (AST::BlockExpr &)
 {}
 void
+ASTLoweringBase::visit (AST::AnonConst &)
+{}
+void
+ASTLoweringBase::visit (AST::ConstBlock &)
+{}
+void
 ASTLoweringBase::visit (AST::ClosureExprInnerTyped &)
 {}
 void
@@ -236,6 +242,9 @@ void
 ASTLoweringBase::visit (AST::ReturnExpr &)
 {}
 void
+ASTLoweringBase::visit (AST::TryExpr &)
+{}
+void
 ASTLoweringBase::visit (AST::UnsafeBlockExpr &)
 {}
 void
@@ -265,6 +274,10 @@ ASTLoweringBase::visit (AST::IfLetExprConseqElse &)
 
 void
 ASTLoweringBase::visit (AST::InlineAsm &)
+{}
+
+void
+ASTLoweringBase::visit (AST::LlvmInlineAsm &)
 {}
 
 //  void ASTLoweringBase::visit(MatchCasematch_case) {}
@@ -644,12 +657,14 @@ ASTLoweringBase::lower_generic_args (AST::GenericArgs &args)
     {
       switch (arg.get_kind ())
 	{
-	  case AST::GenericArg::Kind::Type: {
+	case AST::GenericArg::Kind::Type:
+	  {
 	    auto type = ASTLoweringType::translate (arg.get_type ());
 	    type_args.emplace_back (std::unique_ptr<HIR::Type> (type));
 	    break;
 	  }
-	  case AST::GenericArg::Kind::Const: {
+	case AST::GenericArg::Kind::Const:
+	  {
 	    auto expr = ASTLoweringExpr::translate (arg.get_expression ());
 	    const_args.emplace_back (
 	      HIR::ConstGenericArg (std::unique_ptr<HIR::Expr> (expr),
@@ -690,8 +705,12 @@ ASTLoweringBase::lower_self (AST::Param &param)
 			     self.get_is_mut (), self.get_locus ());
     }
 
-  AST::Lifetime l = self.get_lifetime ();
-  return HIR::SelfParam (mapping, lower_lifetime (l), self.get_is_mut (),
+  tl::optional<HIR::Lifetime> lifetime = tl::nullopt;
+
+  if (self.has_lifetime ())
+    lifetime = lower_lifetime (self.get_lifetime ());
+
+  return HIR::SelfParam (mapping, lifetime, self.get_is_mut (),
 			 self.get_locus ());
 }
 
@@ -879,7 +898,8 @@ ASTLoweringBase::lower_range_pattern_bound (AST::RangePatternBound &bound)
   std::unique_ptr<HIR::RangePatternBound> hir_bound = nullptr;
   switch (bound.get_bound_type ())
     {
-      case AST::RangePatternBound::RangePatternBoundType::LITERAL: {
+    case AST::RangePatternBound::RangePatternBoundType::LITERAL:
+      {
 	AST::RangePatternBoundLiteral &ref
 	  = static_cast<AST::RangePatternBoundLiteral &> (bound);
 
@@ -890,7 +910,8 @@ ASTLoweringBase::lower_range_pattern_bound (AST::RangePatternBound &bound)
 					     ref.get_has_minus ()));
       }
       break;
-      case AST::RangePatternBound::RangePatternBoundType::PATH: {
+    case AST::RangePatternBound::RangePatternBoundType::PATH:
+      {
 	auto &ref = static_cast<AST::RangePatternBoundPath &> (bound);
 
 	HIR::PathInExpression *path
@@ -900,7 +921,8 @@ ASTLoweringBase::lower_range_pattern_bound (AST::RangePatternBound &bound)
 	  new HIR::RangePatternBoundPath (*path));
       }
       break;
-      case AST::RangePatternBound::RangePatternBoundType::QUALPATH: {
+    case AST::RangePatternBound::RangePatternBoundType::QUALPATH:
+      {
 	auto &ref = static_cast<AST::RangePatternBoundQualPath &> (bound);
 
 	HIR::QualifiedPathInExpression *qualpath
@@ -933,8 +955,8 @@ ASTLoweringBase::lower_literal (const AST::Literal &literal)
     case AST::Literal::LitType::BYTE_STRING:
       type = HIR::Literal::LitType::BYTE_STRING;
       break;
-    case AST::Literal::LitType::RAW_STRING: // TODO: Lower raw string literals.
-      rust_unreachable ();
+    case AST::Literal::LitType::RAW_STRING:
+      type = HIR::Literal::LitType::STRING;
       break;
     case AST::Literal::LitType::INT:
       type = HIR::Literal::LitType::INT;

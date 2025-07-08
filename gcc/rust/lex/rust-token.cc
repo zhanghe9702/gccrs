@@ -1,4 +1,4 @@
-// Copyright (C) 2020-2024 Free Software Foundation, Inc.
+// Copyright (C) 2020-2025 Free Software Foundation, Inc.
 
 // This file is part of GCC.
 
@@ -20,6 +20,7 @@
 #include "rust-token.h"
 #include "rust-diagnostics.h"
 #include "rust-unicode.h"
+#include "rust-ast.h"
 
 namespace Rust {
 // Hackily defined way to get token description for enum value using x-macros
@@ -88,7 +89,8 @@ token_id_keyword_string (TokenId id)
   switch (id)
     {
 #define RS_TOKEN_KEYWORD_2015(id, str_ptr)                                     \
-    case id: {                                                                 \
+  case id:                                                                     \
+    {                                                                          \
       static const std::string str (str_ptr);                                  \
       return str;                                                              \
     }                                                                          \
@@ -191,7 +193,7 @@ Token::get_str () const
   if (str == NULL)
     {
       rust_error_at (get_locus (),
-		     "attempted to get string for %<%s%>, which has no string. "
+		     "attempted to get string for %qs, which has no string. "
 		     "returning empty string instead",
 		     get_token_description ());
       return empty;
@@ -233,6 +235,13 @@ escape_special_chars (const std::string &source, Context ctx)
 }
 
 } // namespace
+
+TokenPtr
+Token::make_identifier (const Identifier &ident)
+{
+  std::string str = ident;
+  return make_identifier (ident.get_locus (), std::move (str));
+}
 
 std::string
 Token::as_string () const

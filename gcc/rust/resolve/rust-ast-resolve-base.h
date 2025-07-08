@@ -1,4 +1,4 @@
-// Copyright (C) 2020-2024 Free Software Foundation, Inc.
+// Copyright (C) 2020-2025 Free Software Foundation, Inc.
 
 // This file is part of GCC.
 
@@ -21,12 +21,18 @@
 
 #include "rust-ast-visitor.h"
 #include "rust-ast.h"
+#include "rust-expr.h"
 #include "rust-name-resolver.h"
 #include "rust-diagnostics.h"
 #include "rust-location.h"
 
 namespace Rust {
 namespace Resolver {
+inline void
+redefined_error (const rich_location &loc)
+{
+  rust_error_at (loc, "redefined multiple times");
+}
 
 class ResolverBase : public AST::ASTVisitor
 {
@@ -80,6 +86,8 @@ public:
   void visit (AST::FieldAccessExpr &);
   void visit (AST::ClosureExprInner &);
   void visit (AST::BlockExpr &);
+  void visit (AST::AnonConst &);
+  void visit (AST::ConstBlock &);
   void visit (AST::ClosureExprInnerTyped &);
   void visit (AST::ContinueExpr &);
   void visit (AST::BreakExpr &);
@@ -91,6 +99,7 @@ public:
   void visit (AST::RangeToInclExpr &);
   void visit (AST::BoxExpr &);
   void visit (AST::ReturnExpr &);
+  void visit (AST::TryExpr &);
   void visit (AST::UnsafeBlockExpr &);
   void visit (AST::LoopExpr &);
   void visit (AST::WhileLoopExpr &);
@@ -105,6 +114,7 @@ public:
   void visit (AST::AwaitExpr &);
   void visit (AST::AsyncBlockExpr &);
   void visit (AST::InlineAsm &);
+  void visit (AST::LlvmInlineAsm &);
 
   void visit (AST::TypeParam &);
 

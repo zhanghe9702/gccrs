@@ -1,4 +1,4 @@
-// Copyright (C) 2020-2024 Free Software Foundation, Inc.
+// Copyright (C) 2020-2025 Free Software Foundation, Inc.
 
 // This file is part of GCC.
 
@@ -34,6 +34,15 @@ SubstMapper::Resolve (TyTy::BaseType *base, location_t locus,
 		      HIR::GenericArgs *generics,
 		      const std::vector<TyTy::Region> &regions)
 {
+  if (!valid_type (base))
+    {
+      rich_location r (line_table, locus);
+      r.add_fixit_remove (generics->get_locus ());
+      rust_error_at (r, ErrorCode::E0109,
+		     "generic arguments are not allowed for this type");
+      return base;
+    }
+
   SubstMapper mapper (base->get_ref (), generics, regions, locus);
   base->accept_vis (mapper);
   rust_assert (mapper.resolved != nullptr);
@@ -44,6 +53,17 @@ TyTy::BaseType *
 SubstMapper::InferSubst (TyTy::BaseType *base, location_t locus)
 {
   return SubstMapper::Resolve (base, locus, nullptr, {});
+}
+
+bool
+SubstMapper::valid_type (TyTy::BaseType *base)
+{
+  bool is_fn = base->is<TyTy::FnType> ();
+  bool is_adt = base->is<TyTy::ADTType> ();
+  bool is_placeholder = base->is<TyTy::PlaceholderType> ();
+  bool is_projection = base->is<TyTy::ProjectionType> ();
+
+  return is_fn || is_adt || is_placeholder || is_projection;
 }
 
 bool
@@ -103,7 +123,12 @@ SubstMapper::visit (TyTy::ADTType &type)
 void
 SubstMapper::visit (TyTy::PlaceholderType &type)
 {
-  rust_assert (type.can_resolve ());
+  if (!type.can_resolve ())
+    {
+      resolved = &type;
+      return;
+    }
+
   resolved = SubstMapper::Resolve (type.resolve (), locus, generics, regions);
 }
 
@@ -349,7 +374,7 @@ SubstMapperInternal::visit (TyTy::DynamicObjectType &type)
 void
 SubstMapperInternal::visit (TyTy::OpaqueType &type)
 {
-  resolved = type.handle_substitions (mappings);
+  resolved = type.clone ();
 }
 
 // SubstMapperFromExisting

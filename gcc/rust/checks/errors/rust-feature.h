@@ -1,4 +1,4 @@
-// Copyright (C) 2020-2024 Free Software Foundation, Inc.
+// Copyright (C) 2020-2025 Free Software Foundation, Inc.
 
 // This file is part of GCC.
 
@@ -51,6 +51,7 @@ public:
     RAW_REF_OP,
     EXCLUSIVE_RANGE_PATTERN,
     PRELUDE_IMPORT,
+    MIN_SPECIALIZATION,
   };
 
   const std::string &as_string () { return m_name_str; }
