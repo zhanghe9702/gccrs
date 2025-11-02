@@ -81,6 +81,7 @@ package Aspects is
       Aspect_Bit_Order,
       Aspect_Component_Size,
       Aspect_Constant_Indexing,
+      Aspect_Constructor,                   -- GNAT
       Aspect_Contract_Cases,                -- GNAT
       Aspect_Convention,
       Aspect_CPU,
@@ -91,6 +92,7 @@ package Aspects is
       Aspect_Default_Value,
       Aspect_Depends,                       -- GNAT
       Aspect_Designated_Storage_Model,      -- GNAT
+      Aspect_Destructor,                    -- GNAT
       Aspect_Dimension,                     -- GNAT
       Aspect_Dimension_System,              -- GNAT
       Aspect_Dispatching_Domain,
@@ -106,6 +108,7 @@ package Aspects is
       Aspect_GNAT_Annotate,                 -- GNAT
       Aspect_Implicit_Dereference,
       Aspect_Initial_Condition,             -- GNAT
+      Aspect_Initialize,                    -- GNAT
       Aspect_Initializes,                   -- GNAT
       Aspect_Input,
       Aspect_Integer_Literal,
@@ -125,11 +128,13 @@ package Aspects is
       Aspect_Part_Of,                       -- GNAT
       Aspect_Post,
       Aspect_Postcondition,
+      Aspect_Potentially_Invalid,           -- GNAT
       Aspect_Pre,
       Aspect_Precondition,
       Aspect_Predicate,                     -- GNAT
       Aspect_Predicate_Failure,
       Aspect_Priority,
+      Aspect_Program_Exit,
       Aspect_Put_Image,
       Aspect_Read,
       Aspect_Real_Literal,
@@ -153,6 +158,7 @@ package Aspects is
       Aspect_Stream_Size,
       Aspect_String_Literal,
       Aspect_Subprogram_Variant,            -- GNAT
+      Aspect_Super,                         -- GNAT
       Aspect_Suppress,
       Aspect_Synchronization,
       Aspect_Test_Case,                     -- GNAT
@@ -235,6 +241,7 @@ package Aspects is
       Aspect_Unmodified,                    -- GNAT
       Aspect_Unreferenced,                  -- GNAT
       Aspect_Unreferenced_Objects,          -- GNAT
+      Aspect_Unsigned_Base_Range,           -- GNAT
       Aspect_Volatile,
       Aspect_Volatile_Components,
       Aspect_Volatile_Full_Access,          -- GNAT
@@ -255,6 +262,7 @@ package Aspects is
                                  | Aspect_Iterator_Element
                                  | Aspect_Max_Entry_Queue_Length
                                  | Aspect_No_Controlled_Parts
+                                 | Aspect_No_Task_Parts
                                  | Aspect_Real_Literal
                                  | Aspect_String_Literal
                                  | Aspect_Variable_Indexing;
@@ -289,6 +297,7 @@ package Aspects is
       Aspect_CUDA_Global                => True,
       Aspect_Depends                    => True,
       Aspect_Designated_Storage_Model   => True,
+      Aspect_Destructor                 => True,
       Aspect_Dimension                  => True,
       Aspect_Dimension_System           => True,
       Aspect_Disable_Controlled         => True,
@@ -324,6 +333,7 @@ package Aspects is
       Aspect_Obsolescent                => True,
       Aspect_Part_Of                    => True,
       Aspect_Persistent_BSS             => True,
+      Aspect_Potentially_Invalid        => True,
       Aspect_Predicate                  => True,
       Aspect_Pure_Function              => True,
       Aspect_Refined_Depends            => True,
@@ -350,6 +360,7 @@ package Aspects is
       Aspect_Unmodified                 => True,
       Aspect_Unreferenced               => True,
       Aspect_Unreferenced_Objects       => True,
+      Aspect_Unsigned_Base_Range        => True,
       Aspect_User_Aspect                => True,
       Aspect_Value_Size                 => True,
       Aspect_Volatile_Full_Access       => True,
@@ -358,9 +369,7 @@ package Aspects is
       others                            => False);
 
    --  The following array indicates aspects that specify operational
-   --  characteristics, and thus are view-specific. Representation
-   --  aspects break privacy, as they are needed during expansion and
-   --  code generation.
+   --  characteristics, and thus can be specified on partial views.
    --  List is currently incomplete ???
 
    Operational_Aspect : constant array (Aspect_Id) of Boolean :=
@@ -404,8 +413,11 @@ package Aspects is
    subtype Boolean_Aspects is
      Aspect_Id range Aspect_Always_Terminates .. Aspect_Id'Last;
 
-   subtype Pre_Post_Aspects is
-     Aspect_Id range Aspect_Post .. Aspect_Precondition;
+   subtype Pre_Post_Aspects is Aspect_Id
+   with Static_Predicate => Pre_Post_Aspects in Aspect_Post
+                                              | Aspect_Postcondition
+                                              | Aspect_Pre
+                                              | Aspect_Precondition;
 
    --  The following type is used for indicating allowed expression forms
 
@@ -428,6 +440,7 @@ package Aspects is
       Aspect_Bit_Order                  => Expression,
       Aspect_Component_Size             => Expression,
       Aspect_Constant_Indexing          => Name,
+      Aspect_Constructor                => Name,
       Aspect_Contract_Cases             => Expression,
       Aspect_Convention                 => Name,
       Aspect_CPU                        => Expression,
@@ -438,6 +451,7 @@ package Aspects is
       Aspect_Default_Value              => Expression,
       Aspect_Depends                    => Expression,
       Aspect_Designated_Storage_Model   => Name,
+      Aspect_Destructor                 => Name,
       Aspect_Dimension                  => Expression,
       Aspect_Dimension_System           => Expression,
       Aspect_Dispatching_Domain         => Expression,
@@ -453,6 +467,7 @@ package Aspects is
       Aspect_GNAT_Annotate              => Expression,
       Aspect_Implicit_Dereference       => Name,
       Aspect_Initial_Condition          => Expression,
+      Aspect_Initialize                 => Expression,
       Aspect_Initializes                => Expression,
       Aspect_Input                      => Name,
       Aspect_Integer_Literal            => Name,
@@ -472,11 +487,13 @@ package Aspects is
       Aspect_Part_Of                    => Expression,
       Aspect_Post                       => Expression,
       Aspect_Postcondition              => Expression,
+      Aspect_Potentially_Invalid        => Optional_Expression,
       Aspect_Pre                        => Expression,
       Aspect_Precondition               => Expression,
       Aspect_Predicate                  => Expression,
       Aspect_Predicate_Failure          => Expression,
       Aspect_Priority                   => Expression,
+      Aspect_Program_Exit               => Optional_Expression,
       Aspect_Put_Image                  => Name,
       Aspect_Read                       => Name,
       Aspect_Real_Literal               => Name,
@@ -500,6 +517,7 @@ package Aspects is
       Aspect_Stream_Size                => Expression,
       Aspect_String_Literal             => Name,
       Aspect_Subprogram_Variant         => Expression,
+      Aspect_Super                      => Expression,
       Aspect_Suppress                   => Name,
       Aspect_Synchronization            => Name,
       Aspect_Test_Case                  => Expression,
@@ -529,6 +547,7 @@ package Aspects is
       Aspect_Component_Size               => True,
       Aspect_Constant_Indexing            => False,
       Aspect_Contract_Cases               => False,
+      Aspect_Constructor                  => False,
       Aspect_Convention                   => True,
       Aspect_CPU                          => False,
       Aspect_Default_Component_Value      => True,
@@ -538,6 +557,7 @@ package Aspects is
       Aspect_Default_Value                => True,
       Aspect_Depends                      => False,
       Aspect_Designated_Storage_Model     => True,
+      Aspect_Destructor                   => False,
       Aspect_Dimension                    => False,
       Aspect_Dimension_System             => False,
       Aspect_Dispatching_Domain           => False,
@@ -556,6 +576,7 @@ package Aspects is
       Aspect_GNAT_Annotate                => False,
       Aspect_Implicit_Dereference         => False,
       Aspect_Initial_Condition            => False,
+      Aspect_Initialize                   => False,
       Aspect_Initializes                  => False,
       Aspect_Input                        => False,
       Aspect_Integer_Literal              => False,
@@ -575,11 +596,13 @@ package Aspects is
       Aspect_Part_Of                      => False,
       Aspect_Post                         => False,
       Aspect_Postcondition                => False,
+      Aspect_Potentially_Invalid          => False,
       Aspect_Pre                          => False,
       Aspect_Precondition                 => False,
       Aspect_Predicate                    => False,
       Aspect_Predicate_Failure            => False,
       Aspect_Priority                     => False,
+      Aspect_Program_Exit                 => False,
       Aspect_Put_Image                    => False,
       Aspect_Read                         => False,
       Aspect_Real_Literal                 => False,
@@ -603,11 +626,13 @@ package Aspects is
       Aspect_Stream_Size                  => True,
       Aspect_String_Literal               => False,
       Aspect_Subprogram_Variant           => False,
+      Aspect_Super                        => False,
       Aspect_Suppress                     => False,
       Aspect_Synchronization              => False,
       Aspect_Test_Case                    => False,
       Aspect_Type_Invariant               => False,
       Aspect_Unimplemented                => False,
+      Aspect_Unsigned_Base_Range          => True,
       Aspect_Unsuppress                   => False,
       Aspect_User_Aspect                  => False,
       Aspect_Value_Size                   => True,
@@ -698,6 +723,7 @@ package Aspects is
       Aspect_Constant_After_Elaboration   => Name_Constant_After_Elaboration,
       Aspect_Constant_Indexing            => Name_Constant_Indexing,
       Aspect_Contract_Cases               => Name_Contract_Cases,
+      Aspect_Constructor                  => Name_Constructor,
       Aspect_Convention                   => Name_Convention,
       Aspect_CPU                          => Name_CPU,
       Aspect_CUDA_Device                  => Name_CUDA_Device,
@@ -709,6 +735,7 @@ package Aspects is
       Aspect_Default_Value                => Name_Default_Value,
       Aspect_Depends                      => Name_Depends,
       Aspect_Designated_Storage_Model     => Name_Designated_Storage_Model,
+      Aspect_Destructor                   => Name_Destructor,
       Aspect_Dimension                    => Name_Dimension,
       Aspect_Dimension_System             => Name_Dimension_System,
       Aspect_Disable_Controlled           => Name_Disable_Controlled,
@@ -742,6 +769,7 @@ package Aspects is
       Aspect_Inline                       => Name_Inline,
       Aspect_Inline_Always                => Name_Inline_Always,
       Aspect_Initial_Condition            => Name_Initial_Condition,
+      Aspect_Initialize                   => Name_Initialize,
       Aspect_Initializes                  => Name_Initializes,
       Aspect_Input                        => Name_Input,
       Aspect_Integer_Literal              => Name_Integer_Literal,
@@ -773,6 +801,7 @@ package Aspects is
       Aspect_Persistent_BSS               => Name_Persistent_BSS,
       Aspect_Post                         => Name_Post,
       Aspect_Postcondition                => Name_Postcondition,
+      Aspect_Potentially_Invalid          => Name_Potentially_Invalid,
       Aspect_Pre                          => Name_Pre,
       Aspect_Precondition                 => Name_Precondition,
       Aspect_Predicate                    => Name_Predicate,
@@ -780,6 +809,7 @@ package Aspects is
       Aspect_Preelaborable_Initialization => Name_Preelaborable_Initialization,
       Aspect_Preelaborate                 => Name_Preelaborate,
       Aspect_Priority                     => Name_Priority,
+      Aspect_Program_Exit                 => Name_Program_Exit,
       Aspect_Pure                         => Name_Pure,
       Aspect_Pure_Function                => Name_Pure_Function,
       Aspect_Put_Image                    => Name_Put_Image,
@@ -813,6 +843,7 @@ package Aspects is
       Aspect_Stream_Size                  => Name_Stream_Size,
       Aspect_String_Literal               => Name_String_Literal,
       Aspect_Subprogram_Variant           => Name_Subprogram_Variant,
+      Aspect_Super                        => Name_Super,
       Aspect_Suppress                     => Name_Suppress,
       Aspect_Suppress_Debug_Info          => Name_Suppress_Debug_Info,
       Aspect_Suppress_Initialization      => Name_Suppress_Initialization,
@@ -826,6 +857,7 @@ package Aspects is
       Aspect_Unmodified                   => Name_Unmodified,
       Aspect_Unreferenced                 => Name_Unreferenced,
       Aspect_Unreferenced_Objects         => Name_Unreferenced_Objects,
+      Aspect_Unsigned_Base_Range          => Name_Unsigned_Base_Range,
       Aspect_Unsuppress                   => Name_Unsuppress,
       Aspect_User_Aspect                  => Name_User_Aspect,
       Aspect_Value_Size                   => Name_Value_Size,
@@ -965,6 +997,7 @@ package Aspects is
       Aspect_Asynchronous                 => Always_Delay,
       Aspect_Attach_Handler               => Always_Delay,
       Aspect_Constant_Indexing            => Always_Delay,
+      Aspect_Constructor                  => Always_Delay,
       Aspect_CPU                          => Always_Delay,
       Aspect_CUDA_Device                  => Always_Delay,
       Aspect_CUDA_Global                  => Always_Delay,
@@ -973,6 +1006,7 @@ package Aspects is
       Aspect_Default_Value                => Always_Delay,
       Aspect_Default_Component_Value      => Always_Delay,
       Aspect_Designated_Storage_Model     => Always_Delay,
+      Aspect_Destructor                   => Always_Delay,
       Aspect_Discard_Names                => Always_Delay,
       Aspect_Dispatching_Domain           => Always_Delay,
       Aspect_Dynamic_Predicate            => Always_Delay,
@@ -1009,6 +1043,7 @@ package Aspects is
       Aspect_Preelaborable_Initialization => Always_Delay,
       Aspect_Preelaborate                 => Always_Delay,
       Aspect_Priority                     => Always_Delay,
+      Aspect_Program_Exit                 => Always_Delay,
       Aspect_Pure                         => Always_Delay,
       Aspect_Pure_Function                => Always_Delay,
       Aspect_Put_Image                    => Always_Delay,
@@ -1070,6 +1105,7 @@ package Aspects is
       Aspect_Import                       => Never_Delay,
       Aspect_Initial_Condition            => Never_Delay,
       Aspect_Local_Restrictions           => Never_Delay,
+      Aspect_Initialize                   => Never_Delay,
       Aspect_Initializes                  => Never_Delay,
       Aspect_Max_Entry_Queue_Length       => Never_Delay,
       Aspect_Max_Queue_Length             => Never_Delay,
@@ -1080,6 +1116,7 @@ package Aspects is
       Aspect_No_Tagged_Streams            => Never_Delay,
       Aspect_Obsolescent                  => Never_Delay,
       Aspect_Part_Of                      => Never_Delay,
+      Aspect_Potentially_Invalid          => Never_Delay,
       Aspect_Refined_Depends              => Never_Delay,
       Aspect_Refined_Global               => Never_Delay,
       Aspect_Refined_Post                 => Never_Delay,
@@ -1089,6 +1126,7 @@ package Aspects is
       Aspect_SPARK_Mode                   => Never_Delay,
       Aspect_Static                       => Never_Delay,
       Aspect_Subprogram_Variant           => Never_Delay,
+      Aspect_Super                        => Never_Delay,
       Aspect_Synchronization              => Never_Delay,
       Aspect_Test_Case                    => Never_Delay,
       Aspect_Unimplemented                => Never_Delay,
@@ -1114,6 +1152,7 @@ package Aspects is
       Aspect_Size                         => Rep_Aspect,
       Aspect_Small                        => Rep_Aspect,
       Aspect_Storage_Size                 => Rep_Aspect,
+      Aspect_Unsigned_Base_Range          => Rep_Aspect,
       Aspect_Value_Size                   => Rep_Aspect,
       Aspect_Volatile                     => Rep_Aspect,
       Aspect_Volatile_Components          => Rep_Aspect,
@@ -1157,10 +1196,12 @@ package Aspects is
    --  Sem_Prag.
 
    Aspect_On_Body_Or_Stub_OK : constant array (Aspect_Id) of Boolean :=
-     (Aspect_Refined_Depends              => True,
+     (Aspect_Initialize                   => True,
+      Aspect_Refined_Depends              => True,
       Aspect_Refined_Global               => True,
       Aspect_Refined_Post                 => True,
       Aspect_SPARK_Mode                   => True,
+      Aspect_Super                        => True,
       Aspect_Warnings                     => True,
       others                              => False);
 

@@ -92,7 +92,7 @@ Dump::go (HIR::Crate &e)
   end ("Crate");
 }
 
-Dump::Dump (std::ostream &stream) : stream (stream) {}
+Dump::Dump (std::ostream &stream) : beg_of_line (false), stream (stream) {}
 
 /**
  * Writes TEXT with a final newline if ENDLINE is true.
@@ -1302,7 +1302,10 @@ Dump::visit (AnonConst &e)
   begin ("AnonConst");
   do_expr (e);
 
-  visit_field ("inner", e.get_inner_expr ());
+  if (e.is_deferred ())
+    put_field ("inner", "_");
+  else
+    visit_field ("inner", e.get_inner_expr ());
 
   end ("AnonConst");
 }
@@ -1529,11 +1532,89 @@ Dump::visit (AsyncBlockExpr &e)
 
 void
 Dump::visit (InlineAsm &e)
-{}
+{
+  begin ("InlineAsm");
+  do_expr (e);
+  for (auto &temp : e.get_template_ ())
+    {
+      put_field ("template", temp.string);
+    }
+
+  for (auto &temp_str : e.get_template_strs ())
+    {
+      put_field ("template_str", temp_str.symbol);
+    }
+
+  for (auto &operand : e.get_operands ())
+    {
+      switch (operand.get_register_type ())
+	{
+	case HIR::InlineAsmOperand::RegisterType::In:
+	  {
+	    const auto &in = operand.get_in ();
+	    visit_field ("in expr", *in.expr);
+	    break;
+	  }
+	case HIR::InlineAsmOperand::RegisterType::Out:
+	  {
+	    const auto &out = operand.get_out ();
+	    visit_field ("out expr", *out.expr);
+	    break;
+	  }
+	case HIR::InlineAsmOperand::RegisterType::InOut:
+	  {
+	    const auto &inout = operand.get_in_out ();
+	    visit_field ("inout expr", *inout.expr);
+	    break;
+	  }
+	case HIR::InlineAsmOperand::RegisterType::SplitInOut:
+	  {
+	    const auto &inout = operand.get_split_in_out ();
+	    begin ("Split in out");
+	    visit_field ("in expr", *inout.in_expr);
+	    visit_field ("out expr", *inout.out_expr);
+	    end ("Split in out");
+
+	    break;
+	  }
+	case HIR::InlineAsmOperand::RegisterType::Const:
+	  {
+	    auto &cnst = operand.get_const ();
+	    visit_field ("const expr", cnst.anon_const.get_inner_expr ());
+	    break;
+	  }
+	case HIR::InlineAsmOperand::RegisterType::Sym:
+	  {
+	    auto &sym = operand.get_sym ();
+	    visit_field ("sym expr", *sym.expr);
+	    break;
+	  }
+	case HIR::InlineAsmOperand::RegisterType::Label:
+	  {
+	    auto &label = operand.get_label ();
+	    put_field ("label name", label.label_name);
+	    do_expr (*label.expr);
+	    break;
+	  }
+	}
+    }
+  end ("InlineAsm");
+}
 
 void
 Dump::visit (LlvmInlineAsm &e)
 {}
+
+void
+Dump::visit (OffsetOf &e)
+{
+  begin ("OffsetOf");
+
+  put_field ("type", e.get_type ().as_string ());
+  put_field ("field", e.get_field ());
+
+  end ("OffsetOf");
+}
 
 void
 Dump::visit (TypeParam &e)
@@ -2226,20 +2307,20 @@ Dump::visit (StructPattern &e)
 }
 
 void
-Dump::visit (TupleStructItemsNoRange &e)
+Dump::visit (TupleStructItemsNoRest &e)
 {
-  begin ("TupleStructItemsNoRange");
+  begin ("TupleStructItemsNoRest");
   visit_collection ("patterns", e.get_patterns ());
-  end ("TupleStructItemsNoRange");
+  end ("TupleStructItemsNoRest");
 }
 
 void
-Dump::visit (TupleStructItemsRange &e)
+Dump::visit (TupleStructItemsHasRest &e)
 {
-  begin ("TupleStructItemsRange");
+  begin ("TupleStructItemsHasRest");
   visit_collection ("lower_patterns", e.get_lower_patterns ());
   visit_collection ("upper_patterns", e.get_upper_patterns ());
-  end ("TupleStructItemsRange");
+  end ("TupleStructItemsHasRest");
 }
 
 void
@@ -2256,20 +2337,20 @@ Dump::visit (TupleStructPattern &e)
 }
 
 void
-Dump::visit (TuplePatternItemsMultiple &e)
+Dump::visit (TuplePatternItemsNoRest &e)
 {
-  begin ("TuplePatternItemsMultiple");
+  begin ("TuplePatternItemsNoRest");
   visit_collection ("patterns", e.get_patterns ());
-  end ("TuplePatternItemsMultiple");
+  end ("TuplePatternItemsNoRest");
 }
 
 void
-Dump::visit (TuplePatternItemsRanged &e)
+Dump::visit (TuplePatternItemsHasRest &e)
 {
-  begin ("TuplePatternItemsRanged");
+  begin ("TuplePatternItemsHasRest");
   visit_collection ("lower_patterns", e.get_lower_patterns ());
   visit_collection ("upper_patterns", e.get_upper_patterns ());
-  end ("TuplePatternItemsRanged");
+  end ("TuplePatternItemsHasRest");
 }
 
 void
@@ -2282,11 +2363,28 @@ Dump::visit (TuplePattern &e)
 }
 
 void
+Dump::visit (SlicePatternItemsNoRest &e)
+{
+  begin ("SlicePatternItemsNoRest");
+  visit_collection ("patterns", e.get_patterns ());
+  end ("SlicePatternItemsNoRest");
+}
+
+void
+Dump::visit (SlicePatternItemsHasRest &e)
+{
+  begin ("SlicePatternItemsHasRest");
+  visit_collection ("lower_patterns", e.get_lower_patterns ());
+  visit_collection ("upper_patterns", e.get_upper_patterns ());
+  end ("SlicePatternItemsHasRest");
+}
+
+void
 Dump::visit (SlicePattern &e)
 {
   begin ("SlicePattern");
   do_mappings (e.get_mappings ());
-  visit_collection ("items", e.get_items ());
+  visit_field ("items", e.get_items ());
   end ("SlicePattern");
 }
 

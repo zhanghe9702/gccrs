@@ -1,4 +1,4 @@
-/* Subclasses of diagnostic_event for analyzer diagnostics.
+/* Subclasses of diagnostics::paths::event for analyzer diagnostics.
    Copyright (C) 2019-2025 Free Software Foundation, Inc.
    Contributed by David Malcolm <dmalcolm@redhat.com>.
 
@@ -24,6 +24,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "tree-logical-location.h"
 #include "analyzer/program-state.h"
 #include "analyzer/event-loc-info.h"
+#include "diagnostics/digraphs.h"
 
 namespace ana {
 
@@ -61,7 +62,7 @@ extern const char *event_kind_to_string (enum event_kind ek);
    The class hierarchy looks like this (using indentation to show
    inheritance, and with event_kinds shown for the concrete subclasses):
 
-   diagnostic_event
+   diagnostics::paths::event
      checker_event
        debug_event (event_kind::debug)
        custom_event (event_kind::custom)
@@ -90,45 +91,54 @@ extern const char *event_kind_to_string (enum event_kind ek);
        unwind_event (event_kind::unwind)
        warning_event (event_kind::warning).  */
 
-/* Abstract subclass of diagnostic_event; the base class for use in
-   checker_path (the analyzer's diagnostic_path subclass).  */
+/* Abstract subclass of diagnostics::paths::event; the base class for use in
+   checker_path (the analyzer's diagnostics::paths::path subclass).  */
 
-class checker_event : public diagnostic_event
+class checker_event : public diagnostics::paths::event
 {
 public:
-  /* Implementation of diagnostic_event.  */
+  /* Implementation of diagnostics::paths::event.  */
 
   location_t get_location () const final override { return m_loc; }
   int get_stack_depth () const final override { return m_effective_depth; }
-  logical_location get_logical_location () const final override
+  diagnostics::logical_locations::key
+  get_logical_location () const final override
   {
     return m_logical_loc;
   }
   meaning get_meaning () const override;
   bool connect_to_next_event_p () const override { return false; }
-  diagnostic_thread_id_t get_thread_id () const final override
+  diagnostics::paths::thread_id_t get_thread_id () const final override
   {
     return 0;
   }
 
   void
-  maybe_add_sarif_properties (sarif_builder &,
-			      sarif_object &thread_flow_loc_obj) const override;
+  maybe_add_sarif_properties (diagnostics::sarif_builder &,
+			      diagnostics::sarif_object &thread_flow_loc_obj)
+    const override;
 
   /* Additional functionality.  */
+  enum event_kind get_kind () const { return m_kind; }
   tree get_fndecl () const { return m_effective_fndecl; }
 
   int get_original_stack_depth () const { return m_original_depth; }
 
   virtual void prepare_for_emission (checker_path *,
 				     pending_diagnostic *pd,
-				     diagnostic_event_id_t emission_id);
+				     diagnostics::paths::event_id_t emission_id);
   virtual bool is_call_p () const { return false; }
   virtual bool is_function_entry_p () const  { return false; }
   virtual bool is_return_p () const  { return false; }
 
+  std::unique_ptr<diagnostics::digraphs::digraph>
+  maybe_make_diagnostic_state_graph (bool debug) const final override;
+
+  virtual const program_state *
+  get_program_state () const { return nullptr; }
+
   /* For use with %@.  */
-  const diagnostic_event_id_t *get_id_ptr () const
+  const diagnostics::paths::event_id_t *get_id_ptr () const
   {
     return &m_emission_id;
   }
@@ -142,7 +152,8 @@ protected:
   checker_event (enum event_kind kind,
 		 const event_loc_info &loc_info);
 
- public:
+ private:
+  const checker_path *m_path;
   const enum event_kind m_kind;
  protected:
   location_t m_loc;
@@ -151,8 +162,8 @@ protected:
   int m_original_depth;
   int m_effective_depth;
   pending_diagnostic *m_pending_diagnostic;
-  diagnostic_event_id_t m_emission_id; // only set once all pruning has occurred
-  logical_location m_logical_loc;
+  diagnostics::paths::event_id_t m_emission_id; // only set once all pruning has occurred
+  diagnostics::logical_locations::key m_logical_loc;
 };
 
 /* A concrete event subclass for a purely textual event, for use in
@@ -223,6 +234,12 @@ public:
 		   const program_state &dst_state);
 
   void print_desc (pretty_printer &) const final override;
+
+  const program_state *
+  get_program_state () const final override
+  {
+    return &m_dst_state;
+  }
 
   const gimple * const m_stmt;
   const program_state m_dst_state;
@@ -334,17 +351,29 @@ private:
 class function_entry_event : public checker_event
 {
 public:
-  function_entry_event (const event_loc_info &loc_info)
-  : checker_event (event_kind::function_entry, loc_info)
+  function_entry_event (const event_loc_info &loc_info,
+			const program_state &state)
+  : checker_event (event_kind::function_entry, loc_info),
+    m_state (state)
   {
   }
 
-  function_entry_event (const program_point &dst_point);
+  function_entry_event (const program_point &dst_point,
+			const program_state &state);
 
   void print_desc (pretty_printer &pp) const override;
   meaning get_meaning () const override;
 
   bool is_function_entry_p () const final override { return true; }
+
+  const program_state *
+  get_program_state () const final override
+  {
+    return &m_state;
+  }
+
+private:
+  const program_state &m_state;
 };
 
 /* Subclass of checker_event describing a state change.  */
@@ -364,6 +393,12 @@ public:
 
   void print_desc (pretty_printer &pp) const final override;
   meaning get_meaning () const override;
+
+  const program_state *
+  get_program_state () const final override
+  {
+    return &m_dst_state;
+  }
 
   const function *get_dest_function () const
   {
@@ -389,8 +424,9 @@ public:
 class superedge_event : public checker_event
 {
 public:
-  void maybe_add_sarif_properties (sarif_builder &,
-				   sarif_object &thread_flow_loc_obj)
+  void
+  maybe_add_sarif_properties (diagnostics::sarif_builder &,
+			      diagnostics::sarif_object &thread_flow_loc_obj)
     const override;
 
   /* Mark this edge event as being either an interprocedural call or
@@ -406,6 +442,9 @@ public:
   const callgraph_superedge& get_callgraph_superedge () const;
 
   bool should_filter_p (int verbosity) const;
+
+  const program_state *
+  get_program_state () const override;
 
  protected:
   superedge_event (enum event_kind kind, const exploded_edge &eedge,
@@ -517,6 +556,9 @@ public:
 
   bool is_call_p () const final override;
 
+  const program_state *
+  get_program_state () const final override;
+
 protected:
   tree get_caller_fndecl () const;
   tree get_callee_fndecl () const;
@@ -626,7 +668,7 @@ public:
 
   void prepare_for_emission (checker_path *path,
 			     pending_diagnostic *pd,
-			     diagnostic_event_id_t emission_id) final override;
+			     diagnostics::paths::event_id_t emission_id) final override;
 
 private:
   const exploded_node *m_enode;
@@ -692,10 +734,10 @@ public:
 
   void prepare_for_emission (checker_path *path,
 			     pending_diagnostic *pd,
-			     diagnostic_event_id_t emission_id) final override;
+			     diagnostics::paths::event_id_t emission_id) final override;
 
 private:
-  diagnostic_event_id_t m_original_setjmp_event_id;
+  diagnostics::paths::event_id_t m_original_setjmp_event_id;
 };
 
 /* An abstract subclass for throwing/rethrowing an exception.  */
@@ -791,15 +833,21 @@ public:
   warning_event (const event_loc_info &loc_info,
 		 const exploded_node *enode,
 		 const state_machine *sm,
-		 tree var, state_machine::state_t state)
+		 tree var, state_machine::state_t state,
+		 const program_state *program_state_ = nullptr)
   : checker_event (event_kind::warning, loc_info),
     m_enode (enode),
     m_sm (sm), m_var (var), m_state (state)
   {
+    if (program_state_)
+      m_program_state = std::make_unique<program_state> (*program_state_);
   }
 
   void print_desc (pretty_printer &pp) const final override;
   meaning get_meaning () const override;
+
+  const program_state *
+  get_program_state () const final override;
 
   const exploded_node *get_exploded_node () const { return m_enode; }
 
@@ -808,6 +856,9 @@ private:
   const state_machine *m_sm;
   tree m_var;
   state_machine::state_t m_state;
+  /* Optional copy of program state, for when this is different from
+     m_enode's state:  */
+  std::unique_ptr<program_state> m_program_state;
 };
 
 } // namespace ana

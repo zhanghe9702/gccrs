@@ -227,9 +227,7 @@ package body Layout is
    procedure Layout_Object (E : Entity_Id) is
       pragma Unreferenced (E);
    begin
-      --  Nothing to do for now, assume backend does the layout
-
-      return;
+      null; -- Nothing to do for now, assume backend does the layout
    end Layout_Object;
 
    -----------------
@@ -250,13 +248,21 @@ package body Layout is
       end if;
 
       --  For access types, set size/alignment. This is system address size,
-      --  except for fat pointers (unconstrained array access types), where the
-      --  size is two times the address size, to accommodate the two pointers
-      --  that are required for a fat pointer (data and template). Note that
-      --  E_Access_Protected_Subprogram_Type is not an access type for this
-      --  purpose since it is not a pointer but is equivalent to a record. For
-      --  access subtypes, copy the size from the base type since Gigi
-      --  represents them the same way.
+      --  except for unconstrained array access types:
+      --
+      --   - fat pointers where the size is two times the address size, to
+      --     accommodate the two pointers that are required for a fat pointer
+      --     (data and template).
+      --
+      --   - extended access where the size is the size of an address (data
+      --     pointer) plus the size of the template. The template size can't be
+      --     computed yet (will be done in the code generator), leave it empty
+      --     for now.
+      --
+      --  Note that E_Access_Protected_Subprogram_Type is not an access type
+      --  for this purpose since it is not a pointer but is equivalent to a
+      --  record. For access subtypes, copy the size from the base type since
+      --  the code generator represents them the same way.
 
       if Is_Access_Type (E) then
          Desig_Type := Underlying_Type (Designated_Type (E));
@@ -303,7 +309,9 @@ package body Layout is
 
            and then not Debug_Flag_6
          then
-            Init_Size (E, 2 * System_Address_Size);
+            if not Is_Extended_Access_Type (E) then
+               Init_Size (E, 2 * System_Address_Size);
+            end if;
 
             --  Check for bad convention set
 
@@ -328,7 +336,9 @@ package body Layout is
                                              N_Unconstrained_Array_Definition
            and then not Debug_Flag_6
          then
-            Init_Size (E, 2 * System_Address_Size);
+            if not Is_Extended_Access_Type (E) then
+               Init_Size (E, 2 * System_Address_Size);
+            end if;
 
          --  If unnesting subprograms, subprogram access types contain the
          --  address of both the subprogram and an activation record. But if we

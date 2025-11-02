@@ -448,6 +448,7 @@ extern machine_mode c_default_pointer_mode;
 #define D_CXX20		0x8000  /* In C++, C++20 only.  */
 #define D_CXX_COROUTINES 0x10000  /* In C++, only with coroutines.  */
 #define D_CXX_MODULES	0x20000  /* In C++, only with modules.  */
+#define D_CXX26         0x40000	/* In C++, C++26 only.  */
 
 #define D_CXX_CONCEPTS_FLAGS D_CXXONLY | D_CXX_CONCEPTS
 #define D_CXX_CHAR8_T_FLAGS D_CXXONLY | D_CXX_CHAR8_T
@@ -747,7 +748,7 @@ enum cxx_dialect {
   cxx26
 };
 
-/* The C++ dialect being used. C++98 is the default.  */
+/* The C++ dialect being used.  C++17 is the default.  */
 extern enum cxx_dialect cxx_dialect;
 
 /* Maximum template instantiation depth.  This limit is rather
@@ -979,7 +980,7 @@ extern tree build_va_arg (location_t, tree, tree);
 
 extern const unsigned int c_family_lang_mask;
 extern unsigned int c_common_option_lang_mask (void);
-extern void c_common_diagnostics_set_defaults (diagnostic_context *);
+extern void c_common_diagnostics_set_defaults (diagnostics::context *);
 extern bool c_common_complain_wrong_lang_p (const struct cl_option *);
 extern void c_common_init_options_struct (struct gcc_options *);
 extern void c_common_init_options (unsigned int, struct cl_decoded_option *);
@@ -1265,7 +1266,7 @@ extern void c_stddef_cpp_builtins (void);
 extern void fe_file_change (const line_map_ordinary *);
 extern void c_parse_error (const char *, enum cpp_ttype, tree, unsigned char,
 			   rich_location *richloc);
-extern diagnostic_option_id get_option_for_builtin_define (const char *macro_name);
+extern diagnostics::option_id get_option_for_builtin_define (const char *macro_name);
 
 /* In c-ppoutput.cc  */
 extern void init_pp_output (FILE *);
@@ -1713,7 +1714,7 @@ extern enum flt_eval_method
 excess_precision_mode_join (enum flt_eval_method, enum flt_eval_method);
 
 extern int c_flt_eval_method (bool ts18661_p);
-extern void add_no_sanitize_value (tree node, unsigned int flags);
+extern void add_no_sanitize_value (tree node, sanitize_code_type flags);
 
 extern void maybe_add_include_fixit (rich_location *, const char *, bool);
 extern void maybe_suggest_missing_token_insertion (rich_location *richloc,
@@ -1729,7 +1730,6 @@ extern tree braced_lists_to_strings (tree, tree);
 namespace selftest {
   /* Declarations for specific families of tests within c-family,
      by source file, in alphabetical order.  */
-  extern void c_diagnostic_cc_tests (void);
   extern void c_format_cc_tests (void);
   extern void c_indentation_cc_tests (void);
   extern void c_opt_problem_cc_tests (void);

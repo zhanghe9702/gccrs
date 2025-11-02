@@ -23,7 +23,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "analyzer/common.h"
 
 #include "tree-pretty-print.h"
-#include "diagnostic-event-id.h"
+#include "diagnostics/event-id.h"
 
 #include "analyzer/analyzer-logging.h"
 #include "analyzer/sm.h"
@@ -122,7 +122,7 @@ pattern_test_state_machine::on_condition (sm_context &sm_ctxt,
 					  enum tree_code op,
 					  const svalue *rhs) const
 {
-  if (stmt == NULL)
+  if (stmt == nullptr)
     return;
 
   tree rhs_cst = rhs->maybe_get_constant ();

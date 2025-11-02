@@ -1055,7 +1055,10 @@ AnonConst::as_string () const
   std::string istr = indent_spaces (enter);
   std::string str = istr + "AnonConst:\n" + istr;
 
-  str += get_inner_expr ().as_string ();
+  if (expr.has_value ())
+    str += get_inner_expr ().as_string ();
+  else
+    str += "_";
 
   str += "\n" + indent_spaces (out);
 
@@ -2236,8 +2239,8 @@ PathPattern::convert_to_simple_path (bool with_opening_scope_resolution) const
 
       // create segment and add to vector
       std::string segment_str = segment.as_string ();
-      simple_segments.push_back (
-	AST::SimplePathSegment (std::move (segment_str), segment.get_locus ()));
+      simple_segments.emplace_back (std::move (segment_str),
+				    segment.get_locus ());
     }
 
   // kind of a HACK to get locus depending on opening scope resolution
@@ -2278,9 +2281,8 @@ TypePath::as_simple_path () const
 
       // create segment and add to vector
       std::string segment_str = segment->as_string ();
-      simple_segments.push_back (
-	AST::SimplePathSegment (std::move (segment_str),
-				segment->get_locus ()));
+      simple_segments.emplace_back (std::move (segment_str),
+				    segment->get_locus ());
     }
 
   return AST::SimplePath (std::move (simple_segments),
@@ -2384,16 +2386,56 @@ RangePatternBoundLiteral::as_string () const
 }
 
 std::string
-SlicePattern::as_string () const
+SlicePatternItemsNoRest::as_string () const
 {
-  std::string str ("SlicePattern: ");
+  std::string str;
 
-  for (const auto &pattern : items)
+  for (const auto &pattern : patterns)
     {
       str += "\n " + pattern->as_string ();
     }
 
   return str;
+}
+
+std::string
+SlicePatternItemsHasRest::as_string () const
+{
+  std::string str;
+
+  str += "\n Lower patterns: ";
+  if (lower_patterns.empty ())
+    {
+      str += "none";
+    }
+  else
+    {
+      for (const auto &lower : lower_patterns)
+	{
+	  str += "\n  " + lower->as_string ();
+	}
+    }
+
+  str += "\n Upper patterns: ";
+  if (upper_patterns.empty ())
+    {
+      str += "none";
+    }
+  else
+    {
+      for (const auto &upper : upper_patterns)
+	{
+	  str += "\n  " + upper->as_string ();
+	}
+    }
+
+  return str;
+}
+
+std::string
+SlicePattern::as_string () const
+{
+  return "SlicePattern: " + items->as_string ();
 }
 
 std::string
@@ -2410,7 +2452,7 @@ AltPattern::as_string () const
 }
 
 std::string
-TuplePatternItemsMultiple::as_string () const
+TuplePatternItemsNoRest::as_string () const
 {
   std::string str;
 
@@ -2423,7 +2465,7 @@ TuplePatternItemsMultiple::as_string () const
 }
 
 std::string
-TuplePatternItemsRanged::as_string () const
+TuplePatternItemsHasRest::as_string () const
 {
   std::string str;
 
@@ -2477,9 +2519,28 @@ StructPatternField::as_string () const
        * just the body */
       for (const auto &attr : outer_attrs)
 	{
-	  str += "\n  " + attr.as_string ();
+	  str += "\n    " + attr.as_string ();
 	}
     }
+
+  str += "\n   item type: ";
+  switch (get_item_type ())
+    {
+    case ItemType::TUPLE_PAT:
+      str += "TUPLE_PAT";
+      break;
+    case ItemType::IDENT_PAT:
+      str += "IDENT_PAT";
+      break;
+    case ItemType::IDENT:
+      str += "IDENT";
+      break;
+    default:
+      str += "UNKNOWN";
+      break;
+    }
+
+  str += "\n   mapping: " + mappings.as_string ();
 
   return str;
 }
@@ -2573,7 +2634,7 @@ StructPattern::as_string () const
 std::string
 LiteralPattern::as_string () const
 {
-  return lit.as_string ();
+  return (has_minus ? "-" : "") + lit.as_string ();
 }
 
 std::string
@@ -2617,7 +2678,7 @@ IdentifierPattern::as_string () const
 }
 
 std::string
-TupleStructItemsNoRange::as_string () const
+TupleStructItemsNoRest::as_string () const
 {
   std::string str;
 
@@ -2630,7 +2691,7 @@ TupleStructItemsNoRange::as_string () const
 }
 
 std::string
-TupleStructItemsRange::as_string () const
+TupleStructItemsHasRest::as_string () const
 {
   std::string str ("\n  Lower patterns: ");
 
@@ -4468,13 +4529,13 @@ StructPattern::accept_vis (HIRFullVisitor &vis)
 }
 
 void
-TupleStructItemsNoRange::accept_vis (HIRFullVisitor &vis)
+TupleStructItemsNoRest::accept_vis (HIRFullVisitor &vis)
 {
   vis.visit (*this);
 }
 
 void
-TupleStructItemsRange::accept_vis (HIRFullVisitor &vis)
+TupleStructItemsHasRest::accept_vis (HIRFullVisitor &vis)
 {
   vis.visit (*this);
 }
@@ -4486,19 +4547,31 @@ TupleStructPattern::accept_vis (HIRFullVisitor &vis)
 }
 
 void
-TuplePatternItemsMultiple::accept_vis (HIRFullVisitor &vis)
+TuplePatternItemsNoRest::accept_vis (HIRFullVisitor &vis)
 {
   vis.visit (*this);
 }
 
 void
-TuplePatternItemsRanged::accept_vis (HIRFullVisitor &vis)
+TuplePatternItemsHasRest::accept_vis (HIRFullVisitor &vis)
 {
   vis.visit (*this);
 }
 
 void
 TuplePattern::accept_vis (HIRFullVisitor &vis)
+{
+  vis.visit (*this);
+}
+
+void
+SlicePatternItemsNoRest::accept_vis (HIRFullVisitor &vis)
+{
+  vis.visit (*this);
+}
+
+void
+SlicePatternItemsHasRest::accept_vis (HIRFullVisitor &vis)
 {
   vis.visit (*this);
 }

@@ -131,7 +131,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "dbgcnt.h"
 #include "symtab-clones.h"
 #include "gimple-range.h"
-
+#include "attr-callback.h"
 
 /* Allocation pools for values and their sources in ipa-cp.  */
 
@@ -554,6 +554,7 @@ cs_interesting_for_ipcp_p (cgraph_edge *e)
   /* If we have zero IPA profile, still consider edge for cloning
      in case we do partial training.  */
   if (e->count.ipa ().initialized_p ()
+      && e->count.ipa ().quality () != AFDO
       && !opt_for_fn (e->callee->decl,flag_profile_partial_training))
     return false;
   return true;
@@ -617,7 +618,9 @@ ipcp_cloning_candidate_p (struct cgraph_node *node)
       return false;
     }
 
-  if (node->optimize_for_size_p ())
+  /* Do not use profile here since cold wrapper wrap
+     hot function.  */
+  if (opt_for_fn (node->decl, optimize_size))
     {
       if (dump_file)
 	fprintf (dump_file, "Not considering %s for cloning; "
@@ -3286,14 +3289,17 @@ ipa_get_indirect_edge_target (struct cgraph_edge *ie,
 }
 
 /* Calculate devirtualization time bonus for NODE, assuming we know information
-   about arguments stored in AVALS.  */
+   about arguments stored in AVALS.
 
-static int
+   FIXME: This function will also consider devirtualization of calls that are
+   known to be dead in the clone.  */
+
+static sreal
 devirtualization_time_bonus (struct cgraph_node *node,
 			     ipa_auto_call_arg_values *avals)
 {
   struct cgraph_edge *ie;
-  int res = 0;
+  sreal res = 0;
 
   for (ie = node->indirect_calls; ie; ie = ie->next_callee)
     {
@@ -3311,7 +3317,7 @@ devirtualization_time_bonus (struct cgraph_node *node,
 	continue;
 
       /* Only bare minimum benefit for clearly un-inlineable targets.  */
-      res += 1;
+      int savings = 1;
       callee = cgraph_node::get (target);
       if (!callee || !callee->definition)
 	continue;
@@ -3328,12 +3334,13 @@ devirtualization_time_bonus (struct cgraph_node *node,
       int max_inline_insns_auto
 	= opt_for_fn (callee->decl, param_max_inline_insns_auto);
       if (size <= max_inline_insns_auto / 4)
-	res += 31 / ((int)speculative + 1);
+	savings += 31 / ((int)speculative + 1);
       else if (size <= max_inline_insns_auto / 2)
-	res += 15 / ((int)speculative + 1);
+	savings += 15 / ((int)speculative + 1);
       else if (size <= max_inline_insns_auto
 	       || DECL_DECLARED_INLINE_P (callee->decl))
-	res += 7 / ((int)speculative + 1);
+	savings += 7 / ((int)speculative + 1);
+      res = res + ie->combined_sreal_frequency () * (sreal) savings;
     }
 
   return res;
@@ -3341,10 +3348,10 @@ devirtualization_time_bonus (struct cgraph_node *node,
 
 /* Return time bonus incurred because of hints stored in ESTIMATES.  */
 
-static int
+static sreal
 hint_time_bonus (cgraph_node *node, const ipa_call_estimates &estimates)
 {
-  int result = 0;
+  sreal result = 0;
   ipa_hints hints = estimates.hints;
   if (hints & (INLINE_HINT_loop_iterations | INLINE_HINT_loop_stride))
     result += opt_for_fn (node->decl, param_ipa_cp_loop_hint_bonus);
@@ -3352,10 +3359,10 @@ hint_time_bonus (cgraph_node *node, const ipa_call_estimates &estimates)
   sreal bonus_for_one = opt_for_fn (node->decl, param_ipa_cp_loop_hint_bonus);
 
   if (hints & INLINE_HINT_loop_iterations)
-    result += (estimates.loops_with_known_iterations * bonus_for_one).to_int ();
+    result += estimates.loops_with_known_iterations * bonus_for_one;
 
   if (hints & INLINE_HINT_loop_stride)
-    result += (estimates.loops_with_known_strides * bonus_for_one).to_int ();
+    result += estimates.loops_with_known_strides * bonus_for_one;
 
   return result;
 }
@@ -3391,9 +3398,10 @@ good_cloning_opportunity_p (struct cgraph_node *node, sreal time_benefit,
 			    int size_cost, bool called_without_ipa_profile)
 {
   gcc_assert (count_sum.ipa () == count_sum);
+  if (count_sum.quality () == AFDO)
+    count_sum = count_sum.force_nonzero ();
   if (time_benefit == 0
       || !opt_for_fn (node->decl, flag_ipa_cp_clone)
-      || node->optimize_for_size_p ()
       /* If there is no call which was executed in profiling or where
 	 profile is missing, we do not want to clone.  */
       || (!called_without_ipa_profile && !count_sum.nonzero_p ()))
@@ -3436,7 +3444,7 @@ good_cloning_opportunity_p (struct cgraph_node *node, sreal time_benefit,
 	 introduced.  This is likely almost always going to be true, since we
 	 already checked that time saved is large enough to be considered
 	 hot.  */
-      else if (evaluation.to_int () >= eval_threshold)
+      else if (evaluation >= (sreal)eval_threshold)
 	return true;
       /* If all call sites have profile known; we know we do not want t clone.
 	 If there are calls with unknown profile; try local heuristics.  */
@@ -3457,7 +3465,7 @@ good_cloning_opportunity_p (struct cgraph_node *node, sreal time_benefit,
 	     info->node_calling_single_call ? ", single_call" : "",
 	     evaluation.to_double (), eval_threshold);
 
-  return evaluation.to_int () >= eval_threshold;
+  return evaluation >= eval_threshold;
 }
 
 /* Grow vectors in AVALS and fill them with information about values of
@@ -3543,8 +3551,8 @@ perform_estimation_of_a_value (cgraph_node *node,
     time_benefit = 0;
   else
     time_benefit = (estimates.nonspecialized_time - estimates.time)
+      + hint_time_bonus (node, estimates)
       + (devirtualization_time_bonus (node, avals)
-	 + hint_time_bonus (node, estimates)
 	 + removable_params_cost + est_move_cost);
 
   int size = estimates.size;
@@ -3620,8 +3628,8 @@ estimate_local_effects (struct cgraph_node *node)
   ipa_auto_call_arg_values avals;
   always_const = gather_context_independent_values (info, &avals, true,
 						    &removable_params_cost);
-  int devirt_bonus = devirtualization_time_bonus (node, &avals);
-  if (always_const || devirt_bonus
+  sreal devirt_bonus = devirtualization_time_bonus (node, &avals);
+  if (always_const || devirt_bonus > 0
       || (removable_params_cost && clone_for_param_removal_p (node)))
     {
       struct caller_statistics stats;
@@ -4528,7 +4536,7 @@ lenient_count_portion_handling (profile_count remainder, cgraph_node *orig_node)
   if (remainder.ipa_p () && !remainder.ipa ().nonzero_p ()
       && orig_node->count.ipa_p () && orig_node->count.ipa ().nonzero_p ()
       && opt_for_fn (orig_node->decl, flag_profile_partial_training))
-    remainder = remainder.guessed_local ();
+    remainder = orig_node->count.guessed_local ();
 
   return remainder;
 }
@@ -4551,7 +4559,8 @@ gather_count_of_non_rec_edges (cgraph_node *node, void *data)
   gather_other_count_struct *desc = (gather_other_count_struct *) data;
   for (cgraph_edge *cs = node->callers; cs; cs = cs->next_caller)
     if (cs->caller != desc->orig && cs->caller->clone_of != desc->orig)
-      desc->other_count += cs->count.ipa ();
+      if (cs->count.ipa ().initialized_p ())
+	desc->other_count += cs->count.ipa ();
   return false;
 }
 
@@ -4666,19 +4675,12 @@ update_counts_for_self_gen_clones (cgraph_node *orig_node,
   unsigned i = 0;
   for (cgraph_node *n : self_gen_clones)
     {
-      profile_count orig_count = n->count;
       profile_count new_count
 	= (redist_sum / self_gen_clones.length () + other_edges_count[i]);
       new_count = lenient_count_portion_handling (new_count, orig_node);
-      n->count = new_count;
-      profile_count::adjust_for_ipa_scaling (&new_count, &orig_count);
+      n->scale_profile_to (new_count);
       for (cgraph_edge *cs = n->callees; cs; cs = cs->next_callee)
-	{
-	  cs->count = cs->count.apply_scale (new_count, orig_count);
-	  processed_edges.add (cs);
-	}
-      for (cgraph_edge *cs = n->indirect_calls; cs; cs = cs->next_callee)
-	cs->count = cs->count.apply_scale (new_count, orig_count);
+	processed_edges.add (cs);
 
       i++;
     }
@@ -4699,7 +4701,14 @@ update_counts_for_self_gen_clones (cgraph_node *orig_node,
 	  if (den > 0)
 	    for (cgraph_edge *e = cs; e; e = get_next_cgraph_edge_clone (e))
 	      if (e->callee->ultimate_alias_target () == orig_node
-		  && processed_edges.contains (e))
+		  && processed_edges.contains (e)
+		  /* If count is not IPA, this adjustment makes verifier
+		     unhappy, since we expect bb->count to match e->count.
+		     We may add a flag to mark edge conts that has been
+		     modified by IPA code, but so far it does not seem
+		     to be worth the effort.  With local counts the profile
+		     will not propagate at IPA level.  */
+		  && e->count.ipa_p ())
 		e->count /= den;
 	}
     }
@@ -4776,16 +4785,14 @@ update_profiling_info (struct cgraph_node *orig_node,
   bool orig_edges_processed = false;
   if (new_sum > orig_node_count)
     {
-      /* TODO: Profile has alreay gone astray, keep what we have but lower it
-	 to global0 category.  */
-      remainder = orig_node->count.global0 ();
-
-      for (cgraph_edge *cs = orig_node->callees; cs; cs = cs->next_callee)
-	cs->count = cs->count.global0 ();
-      for (cgraph_edge *cs = orig_node->indirect_calls;
-	   cs;
-	   cs = cs->next_callee)
-	cs->count = cs->count.global0 ();
+      /* Profile has alreay gone astray, keep what we have but lower it
+	 to global0adjusted or to local if we have partial training.  */
+      if (opt_for_fn (orig_node->decl, flag_profile_partial_training))
+	orig_node->make_profile_local ();
+      if (new_sum.quality () == AFDO)
+	orig_node->make_profile_global0 (GUESSED_GLOBAL0_AFDO);
+      else
+	orig_node->make_profile_global0 (GUESSED_GLOBAL0_ADJUSTED);
       orig_edges_processed = true;
     }
   else if (stats.rec_count_sum.nonzero_p ())
@@ -4811,20 +4818,12 @@ update_profiling_info (struct cgraph_node *orig_node,
 	      /* The NEW_NODE count and counts of all its outgoing edges
 		 are still unmodified copies of ORIG_NODE's.  Just clear
 		 the latter and bail out.  */
-	      profile_count zero;
               if (opt_for_fn (orig_node->decl, flag_profile_partial_training))
-                zero = profile_count::zero ().guessed_local ();
+		orig_node->make_profile_local ();
+	      else if (orig_nonrec_call_count.quality () == AFDO)
+		orig_node->make_profile_global0 (GUESSED_GLOBAL0_AFDO);
 	      else
-		zero = profile_count::adjusted_zero ();
-	      orig_node->count = zero;
-	      for (cgraph_edge *cs = orig_node->callees;
-		   cs;
-		   cs = cs->next_callee)
-		cs->count = zero;
-	      for (cgraph_edge *cs = orig_node->indirect_calls;
-		   cs;
-		   cs = cs->next_callee)
-		cs->count = zero;
+		orig_node->make_profile_global0 (GUESSED_GLOBAL0_ADJUSTED);
 	      return;
 	    }
 	}
@@ -4851,11 +4850,12 @@ update_profiling_info (struct cgraph_node *orig_node,
       profile_count unexp = orig_node_count - new_sum - orig_nonrec_call_count;
 
       int limit_den = 2 * (orig_nonrec_calls + new_nonrec_calls);
-      profile_count new_part
-	= MAX(MIN (unexp.apply_scale (new_sum,
-				      new_sum + orig_nonrec_call_count),
-		   unexp.apply_scale (limit_den - 1, limit_den)),
-	      unexp.apply_scale (new_nonrec_calls, limit_den));
+      profile_count new_part = unexp.apply_scale (limit_den - 1, limit_den);
+      profile_count den = new_sum + orig_nonrec_call_count;
+      if (den.nonzero_p ())
+	new_part = MIN (unexp.apply_scale (new_sum, den), new_part);
+      new_part = MAX (new_part,
+		      unexp.apply_scale (new_nonrec_calls, limit_den));
       if (dump_file)
 	{
 	  fprintf (dump_file, "       Claiming ");
@@ -4873,27 +4873,10 @@ update_profiling_info (struct cgraph_node *orig_node,
     remainder = lenient_count_portion_handling (orig_node_count - new_sum,
 						orig_node);
 
-  new_sum = orig_node_count.combine_with_ipa_count (new_sum);
-  new_node->count = new_sum;
-  orig_node->count = remainder;
-
-  profile_count orig_new_node_count = orig_node_count;
-  profile_count::adjust_for_ipa_scaling (&new_sum, &orig_new_node_count);
-  for (cgraph_edge *cs = new_node->callees; cs; cs = cs->next_callee)
-    cs->count = cs->count.apply_scale (new_sum, orig_new_node_count);
-  for (cgraph_edge *cs = new_node->indirect_calls; cs; cs = cs->next_callee)
-    cs->count = cs->count.apply_scale (new_sum, orig_new_node_count);
+  new_node->scale_profile_to (new_sum);
 
   if (!orig_edges_processed)
-    {
-      profile_count::adjust_for_ipa_scaling (&remainder, &orig_node_count);
-      for (cgraph_edge *cs = orig_node->callees; cs; cs = cs->next_callee)
-	cs->count = cs->count.apply_scale (remainder, orig_node_count);
-      for (cgraph_edge *cs = orig_node->indirect_calls;
-	   cs;
-	   cs = cs->next_callee)
-	cs->count = cs->count.apply_scale (remainder, orig_node_count);
-    }
+    orig_node->scale_profile_to (remainder);
 
   if (dump_file)
     {
@@ -4911,35 +4894,23 @@ update_specialized_profile (struct cgraph_node *new_node,
 			    struct cgraph_node *orig_node,
 			    profile_count redirected_sum)
 {
-  struct cgraph_edge *cs;
-  profile_count new_node_count, orig_node_count = orig_node->count.ipa ();
-
   if (dump_file)
     {
       fprintf (dump_file, "    the sum of counts of redirected  edges is ");
       redirected_sum.dump (dump_file);
       fprintf (dump_file, "\n    old ipa count of the original node is ");
-      orig_node_count.dump (dump_file);
+      orig_node->count.dump (dump_file);
       fprintf (dump_file, "\n");
     }
-  if (!orig_node_count.nonzero_p ())
+  if (!orig_node->count.ipa ().nonzero_p ()
+      || !redirected_sum.nonzero_p ())
     return;
 
-  new_node_count = new_node->count;
-  new_node->count += redirected_sum;
-  orig_node->count
-    = lenient_count_portion_handling (orig_node->count - redirected_sum,
-				      orig_node);
+  orig_node->scale_profile_to
+    (lenient_count_portion_handling (orig_node->count.ipa () - redirected_sum,
+				     orig_node));
 
-  for (cs = new_node->callees; cs; cs = cs->next_callee)
-    cs->count += cs->count.apply_scale (redirected_sum, new_node_count);
-
-  for (cs = orig_node->callees; cs; cs = cs->next_callee)
-    {
-      profile_count dec = cs->count.apply_scale (redirected_sum,
-						 orig_node_count);
-      cs->count -= dec;
-    }
+  new_node->scale_profile_to (new_node->count.ipa () + redirected_sum);
 
   if (dump_file)
     {
@@ -6243,6 +6214,72 @@ identify_dead_nodes (struct cgraph_node *node)
     }
 }
 
+/* Removes all useless callback edges from the callgraph.  Useless callback
+   edges might mess up the callgraph, because they might be impossible to
+   redirect and so on, leading to crashes.  Their usefulness is evaluated
+   through callback_edge_useful_p.  */
+
+static void
+purge_useless_callback_edges ()
+{
+  if (dump_file)
+    fprintf (dump_file, "\nPurging useless callback edges:\n");
+
+  cgraph_edge *e;
+  cgraph_node *node;
+  FOR_EACH_FUNCTION_WITH_GIMPLE_BODY (node)
+    {
+      for (e = node->callees; e; e = e->next_callee)
+	{
+	  if (e->has_callback)
+	    {
+	      if (dump_file)
+		fprintf (dump_file, "\tExamining callbacks of edge %s -> %s:\n",
+			 e->caller->dump_name (), e->callee->dump_name ());
+	      if (!lookup_attribute (CALLBACK_ATTR_IDENT,
+				     DECL_ATTRIBUTES (e->callee->decl))
+		  && !callback_is_special_cased (e->callee->decl, e->call_stmt))
+		{
+		  if (dump_file)
+		    fprintf (
+		      dump_file,
+		      "\t\tPurging callbacks, because the callback-dispatching"
+		      "function no longer has any callback attributes.\n");
+		  e->purge_callback_edges ();
+		  continue;
+		}
+	      cgraph_edge *cbe, *next;
+	      for (cbe = e->first_callback_edge (); cbe; cbe = next)
+		{
+		  next = cbe->next_callback_edge ();
+		  if (!callback_edge_useful_p (cbe))
+		    {
+		      if (dump_file)
+			fprintf (dump_file,
+				 "\t\tCallback edge %s -> %s not deemed "
+				 "useful, removing.\n",
+				 cbe->caller->dump_name (),
+				 cbe->callee->dump_name ());
+		      cgraph_edge::remove (cbe);
+		    }
+		  else
+		    {
+		      if (dump_file)
+			fprintf (dump_file,
+				 "\t\tKept callback edge %s -> %s "
+				 "because it looks useful.\n",
+				 cbe->caller->dump_name (),
+				 cbe->callee->dump_name ());
+		    }
+		}
+	    }
+	}
+    }
+
+  if (dump_file)
+    fprintf (dump_file, "\n");
+}
+
 /* The decision stage.  Iterate over the topological order of call graph nodes
    TOPO and make specialized clones if deemed beneficial.  */
 
@@ -6273,6 +6310,11 @@ ipcp_decision_stage (class ipa_topo_info *topo)
       if (change)
 	identify_dead_nodes (node);
     }
+
+  /* Currently, the primary use of callback edges is constant propagation.
+     Constant propagation is now over, so we have to remove unused callback
+     edges.  */
+  purge_useless_callback_edges ();
 }
 
 /* Look up all VR and bits information that we have discovered and copy it

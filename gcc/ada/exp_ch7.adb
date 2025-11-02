@@ -59,6 +59,7 @@ with Sinfo.Nodes;    use Sinfo.Nodes;
 with Sinfo.Utils;    use Sinfo.Utils;
 with Sem;            use Sem;
 with Sem_Aux;        use Sem_Aux;
+with Sem_Ch6;        use Sem_Ch6;
 with Sem_Ch7;        use Sem_Ch7;
 with Sem_Ch8;        use Sem_Ch8;
 with Sem_Res;        use Sem_Res;
@@ -436,7 +437,7 @@ package body Exp_Ch7 is
 
    procedure Build_Record_Deep_Procs (Typ : Entity_Id);
    --  Build the deep Initialize/Adjust/Finalize for a record Typ with
-   --  Has_Component_Component set and store them using the TSS mechanism.
+   --  Has_Controlled_Component set and store them using the TSS mechanism.
 
    --------------------------------
    -- Transient Scope Management --
@@ -695,6 +696,15 @@ package body Exp_Ch7 is
      renames Einfo.Entities.Set_Finalization_Master_Node;
    --  Set the Finalize_Address primitive for the object that has been
    --  attached to a finalization Master_Node.
+
+   function Shift_Address_For_Descriptor
+     (Addr   : Node_Id;
+      Typ    : Entity_Id;
+      Op_Nam : Name_Id) return Node_Id
+     with Pre => Is_Array_Type (Typ)
+                   and then not Is_Constrained (Typ)
+                   and then Op_Nam in Name_Op_Add | Name_Op_Subtract;
+   --  Add to Addr, or subtract from Addr, the size of the descriptor of Typ
 
    ----------------------------------
    -- Attach_Object_To_Master_Node --
@@ -2322,6 +2332,8 @@ package body Exp_Ch7 is
 
                Ensure_Freeze_Node (Fin_Id);
                Insert_After (Fin_Spec, Freeze_Node (Fin_Id));
+               Mutate_Ekind (Fin_Id, E_Procedure);
+               Freeze_Extra_Formals (Fin_Id);
                Set_Is_Frozen (Fin_Id);
 
                Append_To (Stmts, Fin_Body);
@@ -2417,7 +2429,7 @@ package body Exp_Ch7 is
             --  Do not inspect an ignored Ghost package body because all
             --  code found within will not appear in the final tree.
 
-            if Is_Ignored_Ghost_Entity (Defining_Entity (Decl)) then
+            if Is_Ignored_Ghost_Entity_In_Codegen (Defining_Entity (Decl)) then
                null;
 
             elsif Ekind (Corresponding_Spec (Decl)) /= E_Generic_Package then
@@ -2466,7 +2478,6 @@ package body Exp_Ch7 is
          --  Local variables
 
          Decl    : Node_Id;
-         Expr    : Node_Id;
          Obj_Id  : Entity_Id;
          Obj_Typ : Entity_Id;
          Pack_Id : Entity_Id;
@@ -2496,7 +2507,7 @@ package body Exp_Ch7 is
                --  Ignored Ghost types do not need any cleanup actions because
                --  they will not appear in the final tree.
 
-               if Is_Ignored_Ghost_Entity (Typ) then
+               if Is_Ignored_Ghost_Entity_In_Codegen (Typ) then
                   null;
 
                elsif Is_Tagged_Type (Typ)
@@ -2516,7 +2527,6 @@ package body Exp_Ch7 is
             elsif Nkind (Decl) = N_Object_Declaration then
                Obj_Id  := Defining_Identifier (Decl);
                Obj_Typ := Base_Type (Etype (Obj_Id));
-               Expr    := Expression (Decl);
 
                --  Bypass any form of processing for objects which have their
                --  finalization disabled. This applies only to objects at the
@@ -2543,7 +2553,7 @@ package body Exp_Ch7 is
                --  Ignored Ghost objects do not need any cleanup actions
                --  because they will not appear in the final tree.
 
-               elsif Is_Ignored_Ghost_Entity (Obj_Id) then
+               elsif Is_Ignored_Ghost_Entity_In_Codegen (Obj_Id) then
                   null;
 
                --  Conversely, if one of the above cases created a Master_Node,
@@ -2572,21 +2582,10 @@ package body Exp_Ch7 is
                   Processing_Actions
                     (Decl, Strict => not Has_Relaxed_Finalization (Obj_Typ));
 
-               --  The object is of the form:
-               --    Obj : Access_Typ := Non_BIP_Function_Call'reference;
-
-               --    Obj : Access_Typ :=
-               --            BIP_Function_Call (BIPalloc => 2, ...)'reference;
+               --  The object is an access-to-controlled that must be finalized
 
                elsif Is_Access_Type (Obj_Typ)
-                 and then Needs_Finalization
-                            (Available_View (Designated_Type (Obj_Typ)))
-                 and then Present (Expr)
-                 and then
-                   (Is_Secondary_Stack_BIP_Func_Call (Expr)
-                     or else
-                       (Is_Non_BIP_Func_Call (Expr)
-                         and then not Is_Related_To_Func_Return (Obj_Id)))
+                 and then Is_Finalizable_Access (Decl)
                then
                   Processing_Actions
                     (Decl,
@@ -2656,7 +2655,7 @@ package body Exp_Ch7 is
                --  Freeze nodes for ignored Ghost types do not need cleanup
                --  actions because they will never appear in the final tree.
 
-               if Is_Ignored_Ghost_Entity (Typ) then
+               if Is_Ignored_Ghost_Entity_In_Codegen (Typ) then
                   null;
 
                elsif (Is_Access_Object_Type (Typ)
@@ -2681,7 +2680,7 @@ package body Exp_Ch7 is
                --  Do not inspect an ignored Ghost package because all code
                --  found within will not appear in the final tree.
 
-               if Is_Ignored_Ghost_Entity (Pack_Id) then
+               if Is_Ignored_Ghost_Entity_In_Codegen (Pack_Id) then
                   null;
 
                elsif Ekind (Pack_Id) /= E_Generic_Package then
@@ -2783,16 +2782,31 @@ package body Exp_Ch7 is
             Master_Node_Id :=
               Make_Defining_Identifier (Master_Node_Loc,
                 Chars => New_External_Name (Chars (Obj_Id), Suffix => "MN"));
+
             Master_Node_Decl :=
               Make_Master_Node_Declaration (Master_Node_Loc,
                 Master_Node_Id, Obj_Id);
 
             Push_Scope (Scope (Obj_Id));
+
+            --  Avoid generating duplicate names for master nodes
+
+            if Ekind (Obj_Id) = E_Loop_Parameter
+              and then
+                Present (Current_Entity_In_Scope (Chars (Master_Node_Id)))
+            then
+               Set_Chars (Master_Node_Id,
+                 New_External_Name (Chars (Obj_Id),
+                   Suffix => "MN",
+                   Suffix_Index => -1));
+            end if;
+
             if not Has_Strict_Ctrl_Objs or else Count = 1 then
                Prepend_To (Decls, Master_Node_Decl);
             else
                Insert_Before (Decl, Master_Node_Decl);
             end if;
+
             Analyze (Master_Node_Decl);
             Pop_Scope;
 
@@ -3575,18 +3589,22 @@ package body Exp_Ch7 is
 
    procedure Build_Record_Deep_Procs (Typ : Entity_Id) is
    begin
-      Set_TSS (Typ,
-        Make_Deep_Proc
-          (Prim  => Initialize_Case,
-           Typ   => Typ,
-           Stmts => Make_Deep_Record_Body (Initialize_Case, Typ)));
+      if Has_Controlled_Component (Typ) then
+         Set_TSS
+           (Typ,
+            Make_Deep_Proc
+              (Prim  => Initialize_Case,
+               Typ   => Typ,
+               Stmts => Make_Deep_Record_Body (Initialize_Case, Typ)));
 
-      if not Is_Inherently_Limited_Type (Typ) then
-         Set_TSS (Typ,
-           Make_Deep_Proc
-             (Prim  => Adjust_Case,
-              Typ   => Typ,
-              Stmts => Make_Deep_Record_Body (Adjust_Case, Typ)));
+         if not Is_Inherently_Limited_Type (Typ) then
+            Set_TSS
+              (Typ,
+               Make_Deep_Proc
+                 (Prim  => Adjust_Case,
+                  Typ   => Typ,
+                  Stmts => Make_Deep_Record_Body (Adjust_Case, Typ)));
+         end if;
       end if;
 
       --  Do not generate Deep_Finalize and Finalize_Address if finalization is
@@ -5260,6 +5278,13 @@ package body Exp_Ch7 is
             Obj_Typ          : Entity_Id;
 
          begin
+            --  Ignored Ghost objects do not need any cleanup actions because
+            --  they will not appear in the final tree.
+
+            if Is_Ignored_Ghost_Entity_In_Codegen (Obj_Id) then
+               return;
+            end if;
+
             --  If the object needs to be exported to the outer finalizer,
             --  create the declaration of the Master_Node for the object,
             --  which will later be picked up by Build_Finalizer.
@@ -5442,7 +5467,7 @@ package body Exp_Ch7 is
 
       --  Finalization calls are inserted after the target
 
-      if Present (Act_After) then
+      if Is_Non_Empty_List (Act_After) then
          Last_Obj := Last (Act_After);
          Insert_List_After (Target, Act_After);
       else
@@ -5537,35 +5562,14 @@ package body Exp_Ch7 is
       --  an object with a dope vector (see Make_Finalize_Address_Stmts).
       --  This is achieved by setting Is_Constr_Array_Subt_With_Bounds,
       --  but the address of the object is still that of its elements,
-      --  so we need to shift it.
+      --  so we need to shift it back to skip the dope vector.
 
       if Is_Array_Type (Utyp)
         and then not Is_Constrained (First_Subtype (Utyp))
       then
-         --  Shift the address from the start of the elements to the
-         --  start of the dope vector:
-
-         --    V - (Utyp'Descriptor_Size / Storage_Unit)
-
          Obj_Addr :=
-           Make_Function_Call (Loc,
-             Name                   =>
-               Make_Expanded_Name (Loc,
-                 Chars => Name_Op_Subtract,
-                 Prefix =>
-                   New_Occurrence_Of
-                     (RTU_Entity (System_Storage_Elements), Loc),
-                 Selector_Name =>
-                   Make_Identifier (Loc, Name_Op_Subtract)),
-             Parameter_Associations => New_List (
-               Obj_Addr,
-               Make_Op_Divide (Loc,
-                 Left_Opnd  =>
-                   Make_Attribute_Reference (Loc,
-                     Prefix         => New_Occurrence_Of (Utyp, Loc),
-                     Attribute_Name => Name_Descriptor_Size),
-                 Right_Opnd =>
-                   Make_Integer_Literal (Loc, System_Storage_Unit))));
+           Shift_Address_For_Descriptor
+             (Obj_Addr, First_Subtype (Utyp), Name_Op_Subtract);
       end if;
 
       return Obj_Addr;
@@ -5601,7 +5605,10 @@ package body Exp_Ch7 is
 
       --  Deal with untagged derivation of private views
 
-      if Present (Utyp) and then Is_Untagged_Derivation (Typ) then
+      if Present (Utyp)
+        and then Is_Untagged_Derivation (Typ)
+        and then Is_Implicit_Full_View (Utyp)
+      then
          Utyp := Underlying_Type (Root_Type (Base_Type (Typ)));
          Ref  := Unchecked_Convert_To (Utyp, Ref);
          Set_Assignment_OK (Ref);
@@ -6638,6 +6645,16 @@ package body Exp_Ch7 is
       --       Raised : Boolean := False;
       --
       --    begin
+      --       begin
+      --          <Destructor_Proc> (V);  --  If applicable
+      --       exception
+      --          when others =>
+      --             if not Raised then
+      --                Raised := True;
+      --                Save_Occurrence (E, Get_Current_Excep.all.all);
+      --             end if;
+      --       end;
+      --
       --       if F then
       --          begin
       --             Finalize (V);  --  If applicable
@@ -6693,6 +6710,8 @@ package body Exp_Ch7 is
       --
       --       begin
       --          Deep_Finalize (V._parent, False);  --  If applicable
+      --  or
+      --          Deep_Finalize (Parent_Type (V), False); -- Untagged case
       --       exception
       --          when Id : others =>
       --             if not Raised then
@@ -7097,7 +7116,7 @@ package body Exp_Ch7 is
          --  or the type is not controlled.
 
          if Is_Empty_List (Bod_Stmts) then
-            Append_To (Bod_Stmts, Make_Null_Statement (Loc));
+            Append_New_To (Bod_Stmts, Make_Null_Statement (Loc));
 
             return Bod_Stmts;
 
@@ -7584,9 +7603,13 @@ package body Exp_Ch7 is
 
          --    Deep_Finalize (Obj._parent, False);
 
-         if Is_Tagged_Type (Typ) and then Is_Derived_Type (Typ) then
+         if Is_Derived_Type (Typ) then
             declare
-               Par_Typ  : constant Entity_Id := Parent_Field_Type (Typ);
+               Tagd     : constant Boolean := Is_Tagged_Type (Typ);
+               Par_Typ  : constant Entity_Id :=
+                 (if Tagd
+                  then Parent_Field_Type (Typ)
+                  else Etype (Base_Type (Typ)));
                Call     : Node_Id;
                Fin_Stmt : Node_Id;
 
@@ -7595,16 +7618,37 @@ package body Exp_Ch7 is
                   Call :=
                     Make_Final_Call
                       (Obj_Ref   =>
-                         Make_Selected_Component (Loc,
-                           Prefix        => Make_Identifier (Loc, Name_V),
-                           Selector_Name =>
-                             Make_Identifier (Loc, Name_uParent)),
+                         (if Tagd
+                          then
+                            Make_Selected_Component
+                              (Loc,
+                               Prefix        => Make_Identifier (Loc, Name_V),
+                               Selector_Name =>
+                                 Make_Identifier (Loc, Name_uParent))
+                          else
+                            Convert_To
+                              (Par_Typ, Make_Identifier (Loc, Name_V))),
                        Typ       => Par_Typ,
                        Skip_Self => True);
 
                   --  Generate:
                   --    begin
                   --       Deep_Finalize (V._parent, False);
+
+                  --    exception
+                  --       when Id : others =>
+                  --          if not Raised then
+                  --             Raised := True;
+                  --             Save_Occurrence (E,
+                  --               Get_Current_Excep.all.all);
+                  --          end if;
+                  --    end;
+                  --
+                  --  in the tagged case. In the untagged case, which arises
+                  --  with the Destructor aspect, generate:
+                  --
+                  --    begin
+                  --       Deep_Finalize (Parent_Type (V), False);
 
                   --    exception
                   --       when Id : others =>
@@ -7659,7 +7703,7 @@ package body Exp_Ch7 is
                         --  than before, the extension components. That might
                         --  be more intuitive (as discussed in preceding
                         --  comment), but it is not required.
-                        Prepend_To (Bod_Stmts, Fin_Stmt);
+                        Prepend_New_To (Bod_Stmts, Fin_Stmt);
                      end if;
                   end if;
                end if;
@@ -7710,10 +7754,56 @@ package body Exp_Ch7 is
                                  (Finalizer_Data))));
                   end if;
 
-                  Prepend_To (Bod_Stmts,
+                  Prepend_New_To (Bod_Stmts,
                     Make_If_Statement (Loc,
                       Condition       => Make_Identifier (Loc, Name_F),
                       Then_Statements => New_List (Fin_Stmt)));
+               end if;
+            end;
+
+            declare
+               ASN : constant Opt_N_Aspect_Specification_Id :=
+                 Get_Rep_Item (Typ, Name_Destructor, False);
+
+               Stmt : Node_Id;
+               Proc : Entity_Id;
+            begin
+               if Present (ASN) then
+                  --  Generate:
+                  --    begin
+                  --       <Destructor_Proc> (V);
+
+                  --    exception
+                  --       when others =>
+                  --          if not Raised then
+                  --             Raised := True;
+                  --             Save_Occurrence (E,
+                  --               Get_Current_Excep.all.all);
+                  --          end if;
+                  --    end;
+
+                  Proc := Entity (Expression (ASN));
+                  Stmt :=
+                    Make_Procedure_Call_Statement
+                      (Loc,
+                       Name                   => New_Occurrence_Of (Proc, Loc),
+                       Parameter_Associations =>
+                         New_List (Make_Identifier (Loc, Name_V)));
+                  if Exceptions_OK then
+                     Stmt :=
+                       Make_Block_Statement
+                         (Loc,
+                          Handled_Statement_Sequence =>
+                            Make_Handled_Sequence_Of_Statements
+                              (Loc,
+                               Statements         => New_List (Stmt),
+                               Exception_Handlers =>
+                                 New_List
+                                   (Build_Exception_Handler
+                                      (Finalizer_Data))));
+                  end if;
+
+                  Prepend_New_To (Bod_Stmts, Stmt);
                end if;
             end;
          end if;
@@ -7833,13 +7923,23 @@ package body Exp_Ch7 is
 
          when Initialize_Case =>
             if Is_Controlled (Typ) then
-               return New_List (
-                 Make_Procedure_Call_Statement (Loc,
-                   Name                   =>
-                     New_Occurrence_Of
-                       (Find_Controlled_Prim_Op (Typ, Name_Initialize), Loc),
-                   Parameter_Associations => New_List (
-                     Make_Identifier (Loc, Name_V))));
+               declare
+                  Intlz : constant Entity_Id :=
+                    Find_Controlled_Prim_Op (Typ, Name_Initialize);
+               begin
+                  if Present (Intlz) then
+                     return
+                       New_List
+                         (Make_Procedure_Call_Statement
+                            (Loc,
+                             Name                   =>
+                               New_Occurrence_Of (Intlz, Loc),
+                             Parameter_Associations =>
+                               New_List (Make_Identifier (Loc, Name_V))));
+                  else
+                     return Empty_List;
+                  end if;
+               end;
             else
                return Empty_List;
             end if;
@@ -7899,7 +7999,7 @@ package body Exp_Ch7 is
       if Is_Untagged_Derivation (Typ) then
          if Is_Protected_Type (Typ) then
             Utyp := Corresponding_Record_Type (Root_Type (Base_Type (Typ)));
-         else
+         elsif Is_Implicit_Full_View (Utyp) then
             Utyp := Underlying_Type (Root_Type (Base_Type (Typ)));
 
             if Is_Protected_Type (Utyp) then
@@ -7959,7 +8059,7 @@ package body Exp_Ch7 is
          return Empty;
 
       elsif Skip_Self then
-         if Has_Controlled_Component (Utyp) then
+         if Has_Controlled_Component (Utyp) or else Has_Destructor (Utyp) then
             if Is_Tagged_Type (Utyp) then
                Fin_Id := Find_Optional_Prim_Op (Utyp, TSS_Deep_Finalize);
             else
@@ -7972,6 +8072,7 @@ package body Exp_Ch7 is
       elsif Is_Class_Wide_Type (Typ)
         or else Is_Interface (Typ)
         or else Has_Controlled_Component (Utyp)
+        or else Has_Destructor (Utyp)
       then
          if Is_Tagged_Type (Utyp) then
             Fin_Id := Find_Optional_Prim_Op (Utyp, TSS_Deep_Finalize);
@@ -8174,6 +8275,10 @@ package body Exp_Ch7 is
       Ptr_Typ   : Entity_Id;
 
    begin
+      --  Array types: picking the (unconstrained) base type as designated type
+      --  requires allocating the bounds alongside the data, so we only do this
+      --  when the first subtype itself was declared as unconstrained.
+
       if Is_Array_Type (Typ) then
          if Is_Constrained (First_Subtype (Typ)) then
             Desig_Typ := First_Subtype (Typ);
@@ -8269,63 +8374,18 @@ package body Exp_Ch7 is
       --  lays in front of the elements and then use a thin pointer to perform
       --  the address-to-access conversion.
 
-      if Is_Array_Type (Typ)
-        and then not Is_Constrained (First_Subtype (Typ))
-      then
-         declare
-            Dope_Id : Entity_Id;
+      if Is_Array_Type (Typ) and then not Is_Constrained (Desig_Typ) then
+         Obj_Expr :=
+           Shift_Address_For_Descriptor (Obj_Expr, Desig_Typ, Name_Op_Add);
 
-         begin
-            --  Ensure that Ptr_Typ is a thin pointer; generate:
-            --    for Ptr_Typ'Size use System.Address'Size;
+         --  Ensure that Ptr_Typ is a thin pointer; generate:
+         --    for Ptr_Typ'Size use System.Address'Size;
 
-            Append_To (Decls,
-              Make_Attribute_Definition_Clause (Loc,
-                Name       => New_Occurrence_Of (Ptr_Typ, Loc),
-                Chars      => Name_Size,
-                Expression =>
-                  Make_Integer_Literal (Loc, System_Address_Size)));
-
-            --  Generate:
-            --    Dnn : constant Storage_Offset :=
-            --            Desig_Typ'Descriptor_Size / Storage_Unit;
-
-            Dope_Id := Make_Temporary (Loc, 'D');
-
-            Append_To (Decls,
-              Make_Object_Declaration (Loc,
-                Defining_Identifier => Dope_Id,
-                Constant_Present    => True,
-                Object_Definition   =>
-                  New_Occurrence_Of (RTE (RE_Storage_Offset), Loc),
-                Expression          =>
-                  Make_Op_Divide (Loc,
-                    Left_Opnd  =>
-                      Make_Attribute_Reference (Loc,
-                        Prefix         => New_Occurrence_Of (Desig_Typ, Loc),
-                        Attribute_Name => Name_Descriptor_Size),
-                    Right_Opnd =>
-                      Make_Integer_Literal (Loc, System_Storage_Unit))));
-
-            --  Shift the address from the start of the dope vector to the
-            --  start of the elements:
-            --
-            --    V + Dnn
-
-            Obj_Expr :=
-              Make_Function_Call (Loc,
-                Name                   =>
-                  Make_Expanded_Name (Loc,
-                    Chars => Name_Op_Add,
-                    Prefix =>
-                      New_Occurrence_Of
-                        (RTU_Entity (System_Storage_Elements), Loc),
-                    Selector_Name =>
-                      Make_Identifier (Loc, Name_Op_Add)),
-                Parameter_Associations => New_List (
-                  Obj_Expr,
-                  New_Occurrence_Of (Dope_Id, Loc)));
-         end;
+         Append_To (Decls,
+           Make_Attribute_Definition_Clause (Loc,
+             Name       => New_Occurrence_Of (Ptr_Typ, Loc),
+             Chars      => Name_Size,
+             Expression => Make_Integer_Literal (Loc, System_Address_Size)));
       end if;
 
       Fin_Call :=
@@ -8510,7 +8570,10 @@ package body Exp_Ch7 is
 
       --  Deal with untagged derivation of private views
 
-      if Is_Untagged_Derivation (Typ) and then not Is_Conc then
+      if Is_Untagged_Derivation (Typ)
+        and then not Is_Conc
+        and then Is_Implicit_Full_View (Utyp)
+      then
          Utyp := Underlying_Type (Root_Type (Base_Type (Typ)));
          Ref  := Unchecked_Convert_To (Utyp, Ref);
 
@@ -8902,6 +8965,43 @@ package body Exp_Ch7 is
    begin
       return Scope_Stack.Table (Scope_Stack.Last).Node_To_Be_Wrapped;
    end Node_To_Be_Wrapped;
+
+   ----------------------------------
+   -- Shift_Address_For_Descriptor --
+   ----------------------------------
+
+   function Shift_Address_For_Descriptor
+     (Addr   : Node_Id;
+      Typ    : Entity_Id;
+      Op_Nam : Name_Id) return Node_Id
+   is
+      Loc   : constant Source_Ptr := Sloc (Addr);
+      Dummy : constant Entity_Id  := RTE (RE_Storage_Offset);
+      --  Make sure System_Storage_Elements is loaded for RTU_Entity
+
+   begin
+      --  Generate:
+      --    Addr +/- (Typ'Descriptor_Size / Storage_Unit)
+
+      return
+        Make_Function_Call (Loc,
+          Name                   =>
+            Make_Expanded_Name (Loc,
+              Chars  => Op_Nam,
+              Prefix =>
+                New_Occurrence_Of
+                  (RTU_Entity (System_Storage_Elements), Loc),
+              Selector_Name => Make_Identifier (Loc, Op_Nam)),
+          Parameter_Associations => New_List (
+            Addr,
+            Make_Op_Divide (Loc,
+              Left_Opnd  =>
+                Make_Attribute_Reference (Loc,
+                  Prefix         => New_Occurrence_Of (Typ, Loc),
+                  Attribute_Name => Name_Descriptor_Size),
+              Right_Opnd =>
+                Make_Integer_Literal (Loc, System_Storage_Unit))));
+   end Shift_Address_For_Descriptor;
 
    ----------------------------
    -- Store_Actions_In_Scope --
@@ -9441,8 +9541,15 @@ package body Exp_Ch7 is
    procedure Wrap_Transient_Expression (N : Node_Id) is
       Loc  : constant Source_Ptr := Sloc (N);
       Expr : Node_Id             := Relocate_Node (N);
-      Temp : constant Entity_Id  := Make_Temporary (Loc, 'E', N);
       Typ  : constant Entity_Id  := Etype (N);
+
+      Temp : constant Entity_Id  := Make_Temporary (Loc, 'E',
+                                      Related_Node => Expr);
+      --  We link the temporary with its relocated expression to facilitate
+      --  locating the expression in the expanded code; this simplifies the
+      --  implementation of the function that searchs in the expanded code
+      --  for a function call that has been wrapped in a transient block
+      --  (see Get_Relocated_Function_Call).
 
    begin
       --  Generate:

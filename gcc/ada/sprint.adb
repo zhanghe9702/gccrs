@@ -1772,8 +1772,8 @@ package body Sprint is
             Sprint_Node (Name (Node));
             Write_Char (';');
 
-         when N_Exit_Statement =>
-            Write_Indent_Str_Sloc ("exit");
+         when N_Loop_Flow_Statement =>
+            Write_Indent_Str_Sloc (Loop_Flow_Keyword (Node));
             Sprint_Opt_Node (Name (Node));
 
             if Present (Condition (Node)) then
@@ -2187,6 +2187,13 @@ package body Sprint is
                Write_Indent_Str ("exception");
                Indent_Begin;
                Sprint_Node_List (Exception_Handlers (Node));
+               Indent_End;
+            end if;
+
+            if Present (Finally_Statements (Node)) then
+               Write_Indent_Str ("finally");
+               Indent_Begin;
+               Sprint_Node_List (Finally_Statements (Node));
                Indent_End;
             end if;
 
@@ -4634,7 +4641,7 @@ package body Sprint is
                            Param : Entity_Id;
 
                         begin
-                           Param := First_Entity (Typ);
+                           Param := First_Formal (Typ);
                            loop
                               Write_Id (Param);
                               Write_Str (" : ");
@@ -4646,7 +4653,7 @@ package body Sprint is
                               end if;
 
                               Write_Id (Etype (Param));
-                              Next_Entity (Param);
+                              Next_Formal (Param);
                               exit when No (Param);
                               Write_Str (", ");
                            end loop;

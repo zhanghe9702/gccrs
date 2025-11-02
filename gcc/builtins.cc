@@ -156,7 +156,6 @@ static rtx expand_builtin_stack_address ();
 static tree stabilize_va_list_loc (location_t, tree, int);
 static rtx expand_builtin_expect (tree, rtx);
 static rtx expand_builtin_expect_with_probability (tree, rtx);
-static tree fold_builtin_constant_p (tree);
 static tree fold_builtin_classify_type (tree);
 static tree fold_builtin_strlen (location_t, tree, tree, tree);
 static tree fold_builtin_inf (location_t, tree, int);
@@ -1158,12 +1157,18 @@ validate_arglist (const_tree callexpr, ...)
 	unsigned int idx = TREE_INT_CST_LOW (TREE_VALUE (args)) - 1;
 	unsigned int idx2
 	  = TREE_INT_CST_LOW (TREE_VALUE (TREE_CHAIN (args))) - 1;
+	unsigned int idx3 = idx2;
+	if (tree chain2 = TREE_CHAIN (TREE_CHAIN (args)))
+	  idx3 = TREE_INT_CST_LOW (TREE_VALUE (chain2)) - 1;
 	if (idx < (unsigned) call_expr_nargs (callexpr)
 	    && idx2 < (unsigned) call_expr_nargs (callexpr)
+	    && idx3 < (unsigned) call_expr_nargs (callexpr)
 	    && POINTER_TYPE_P (TREE_TYPE (CALL_EXPR_ARG (callexpr, idx)))
 	    && integer_zerop (CALL_EXPR_ARG (callexpr, idx))
 	    && INTEGRAL_TYPE_P (TREE_TYPE (CALL_EXPR_ARG (callexpr, idx2)))
-	    && integer_nonzerop (CALL_EXPR_ARG (callexpr, idx2)))
+	    && integer_nonzerop (CALL_EXPR_ARG (callexpr, idx2))
+	    && INTEGRAL_TYPE_P (TREE_TYPE (CALL_EXPR_ARG (callexpr, idx3)))
+	    && integer_nonzerop (CALL_EXPR_ARG (callexpr, idx3)))
 	  return false;
       }
 
@@ -2491,14 +2496,20 @@ interclass_mathfn_icode (tree arg, tree fndecl)
   switch (DECL_FUNCTION_CODE (fndecl))
     {
     CASE_FLT_FN (BUILT_IN_ILOGB):
-      errno_set = true; builtin_optab = ilogb_optab; break;
+      errno_set = true;
+      builtin_optab = ilogb_optab;
+      break;
     CASE_FLT_FN (BUILT_IN_ISINF):
-      builtin_optab = isinf_optab; break;
+      builtin_optab = isinf_optab;
+      break;
     case BUILT_IN_ISFINITE:
       builtin_optab = isfinite_optab;
       break;
     case BUILT_IN_ISNORMAL:
       builtin_optab = isnormal_optab;
+      break;
+    CASE_FLT_FN (BUILT_IN_ISNAN):
+      builtin_optab = isnan_optab;
       break;
     CASE_FLT_FN (BUILT_IN_FINITE):
     case BUILT_IN_FINITED32:
@@ -2507,6 +2518,9 @@ interclass_mathfn_icode (tree arg, tree fndecl)
     case BUILT_IN_ISINFD32:
     case BUILT_IN_ISINFD64:
     case BUILT_IN_ISINFD128:
+    case BUILT_IN_ISNAND32:
+    case BUILT_IN_ISNAND64:
+    case BUILT_IN_ISNAND128:
       /* These builtins have no optabs (yet).  */
       break;
     default:
@@ -3529,7 +3543,8 @@ expand_builtin_strnlen (tree exp, rtx target, machine_mode target_mode)
 
   wide_int min, max;
   int_range_max r;
-  get_global_range_query ()->range_of_expr (r, bound);
+  get_range_query (cfun)->range_of_expr (r, bound,
+					 currently_expanding_gimple_stmt);
   if (r.varying_p () || r.undefined_p ())
     return NULL_RTX;
   min = r.lower_bound ();
@@ -3604,7 +3619,8 @@ determine_block_size (tree len, rtx len_rtx,
 	{
 	  int_range_max r;
 	  tree tmin, tmax;
-	  get_global_range_query ()->range_of_expr (r, len);
+	  gimple *cg = currently_expanding_gimple_stmt;
+	  get_range_query (cfun)->range_of_expr (r, len, cg);
 	  range_type = get_legacy_range (r, tmin, tmax);
 	  if (range_type != VR_UNDEFINED)
 	    {
@@ -7791,11 +7807,17 @@ expand_builtin_crc_table_based (internal_fn fn, scalar_mode crc_mode,
 
   rtx op1 = expand_normal (rhs1);
   rtx op2 = expand_normal (rhs2);
-  gcc_assert (TREE_CODE (rhs3) == INTEGER_CST);
-  rtx op3 = gen_int_mode (TREE_INT_CST_LOW (rhs3), crc_mode);
+  rtx op3;
+  if (TREE_CODE (rhs3) != INTEGER_CST)
+    {
+      error ("third argument to %<crc%> builtins must be a constant");
+      op3 = const0_rtx;
+    }
+  else
+    op3 = convert_to_mode (crc_mode, expand_normal (rhs3), 0);
 
   if (CONST_INT_P (op2))
-    op2 = gen_int_mode (INTVAL (op2), crc_mode);
+    op2 = convert_to_mode (crc_mode, op2, 0);
 
   if (fn == IFN_CRC)
     expand_crc_table_based (target, op1, op2, op3, data_mode);
@@ -7945,6 +7967,7 @@ expand_builtin (tree exp, rtx target, rtx subtarget, machine_mode mode,
       gcc_fallthrough ();
     CASE_FLT_FN (BUILT_IN_ISINF):
     CASE_FLT_FN (BUILT_IN_FINITE):
+    CASE_FLT_FN (BUILT_IN_ISNAN):
     case BUILT_IN_ISFINITE:
     case BUILT_IN_ISNORMAL:
       target = expand_builtin_interclass_mathfn (exp, target);
@@ -8402,6 +8425,10 @@ expand_builtin (tree exp, rtx target, rtx subtarget, machine_mode mode,
 
     case BUILT_IN_UNREACHABLE:
       expand_builtin_unreachable ();
+      return const0_rtx;
+
+    case BUILT_IN_OBSERVABLE_CHKPT:
+      /* Generate no code.  */
       return const0_rtx;
 
     CASE_FLT_FN (BUILT_IN_SIGNBIT):
@@ -9126,7 +9153,7 @@ builtin_mathfn_code (const_tree t)
 /* Fold a call to __builtin_constant_p, if we know its argument ARG will
    evaluate to a constant.  */
 
-static tree
+tree
 fold_builtin_constant_p (tree arg)
 {
   /* We return 1 for a numeric type that's known to be a constant
@@ -9818,6 +9845,19 @@ fold_builtin_interclass_mathfn (location_t loc, tree fndecl, tree arg)
 			      max_exp, min_exp);
 	return result;
       }
+    CASE_FLT_FN (BUILT_IN_ISNAN):
+    case BUILT_IN_ISNAND32:
+    case BUILT_IN_ISNAND64:
+    case BUILT_IN_ISNAND128:
+      {
+	/* In IBM extended NaN and Inf are encoded in the high-order double
+	   value only.  The low-order value is not significant.  */
+	if (is_ibm_extended)
+	  arg = fold_build1_loc (loc, NOP_EXPR, double_type_node, arg);
+	arg = builtin_save_expr (arg);
+	tree type = TREE_TYPE (TREE_TYPE (fndecl));
+	return fold_build2_loc (loc, UNORDERED_EXPR, type, arg, arg);
+      }
     default:
       break;
     }
@@ -9889,18 +9929,7 @@ fold_builtin_classify (location_t loc, tree fndecl, tree arg, int builtin_index)
 	return omit_one_operand_loc (loc, type, integer_one_node, arg);
       if (!tree_expr_maybe_nan_p (arg))
 	return omit_one_operand_loc (loc, type, integer_zero_node, arg);
-
-      {
-	bool is_ibm_extended = MODE_COMPOSITE_P (TYPE_MODE (TREE_TYPE (arg)));
-	if (is_ibm_extended)
-	  {
-	    /* NaN and Inf are encoded in the high-order double value
-	       only.  The low-order value is not significant.  */
-	    arg = fold_build1_loc (loc, NOP_EXPR, double_type_node, arg);
-	  }
-      }
-      arg = builtin_save_expr (arg);
-      return fold_build2_loc (loc, UNORDERED_EXPR, type, arg, arg);
+      return NULL_TREE;
 
     case BUILT_IN_ISSIGNALING:
       /* Folding to true for REAL_CST is done in fold_const_call_ss.
@@ -10665,7 +10694,7 @@ fold_builtin_1 (location_t loc, tree expr, tree fndecl, tree arg0)
     case BUILT_IN_UABS:
     case BUILT_IN_ULABS:
     case BUILT_IN_ULLABS:
-    case BUILT_IN_UIMAXABS:
+    case BUILT_IN_UMAXABS:
       return fold_builtin_abs (loc, arg0, type);
 
     CASE_FLT_FN (BUILT_IN_CONJ):
@@ -10732,7 +10761,12 @@ fold_builtin_1 (location_t loc, tree expr, tree fndecl, tree arg0)
     case BUILT_IN_ISNAND32:
     case BUILT_IN_ISNAND64:
     case BUILT_IN_ISNAND128:
-      return fold_builtin_classify (loc, fndecl, arg0, BUILT_IN_ISNAN);
+      {
+	tree ret = fold_builtin_classify (loc, fndecl, arg0, BUILT_IN_ISNAN);
+	if (ret)
+	  return ret;
+	return fold_builtin_interclass_mathfn (loc, fndecl, arg0);
+      }
 
     case BUILT_IN_ISSIGNALING:
       return fold_builtin_classify (loc, fndecl, arg0, BUILT_IN_ISSIGNALING);

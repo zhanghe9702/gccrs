@@ -97,6 +97,8 @@ range_op_table::range_op_table ()
   set (INTEGER_CST, op_cst);
   set (NOP_EXPR, op_cast);
   set (CONVERT_EXPR, op_cast);
+  set (FLOAT_EXPR, op_cast);
+  set (FIX_TRUNC_EXPR, op_cast);
   set (PLUS_EXPR, op_plus);
   set (ABS_EXPR, op_abs);
   set (MINUS_EXPR, op_minus);
@@ -165,7 +167,7 @@ dispatch_trio (unsigned lhs, unsigned op1, unsigned op2)
 // of the routines in range_operator.  Note the last 3 characters are
 // shorthand for the LHS, OP1, and OP2 range discriminator class.
 // Reminder, single operand instructions use the LHS type for op2, even if
-// unused. so FLOAT = INT would be RO_FIF.
+// unused.  So FLOAT = INT would be RO_FIF.
 
 const unsigned RO_III =	dispatch_trio (VR_IRANGE, VR_IRANGE, VR_IRANGE);
 const unsigned RO_IFI = dispatch_trio (VR_IRANGE, VR_FRANGE, VR_IRANGE);
@@ -298,10 +300,10 @@ range_op_handler::op1_range (vrange &r, tree type,
 	return m_operator->op1_range (as_a <irange> (r), type,
 				      as_a <irange> (lhs),
 				      as_a <irange> (op2), rel);
-      case RO_IFF:
+      case RO_IFI:
 	return m_operator->op1_range (as_a <irange> (r), type,
 				      as_a <frange> (lhs),
-				      as_a <frange> (op2), rel);
+				      as_a <irange> (op2), rel);
       case RO_PPP:
 	return m_operator->op1_range (as_a <prange> (r), type,
 				      as_a <prange> (lhs),
@@ -322,10 +324,6 @@ range_op_handler::op1_range (vrange &r, tree type,
 	return m_operator->op1_range (as_a <frange> (r), type,
 				      as_a <irange> (lhs),
 				      as_a <frange> (op2), rel);
-      case RO_FII:
-	return m_operator->op1_range (as_a <frange> (r), type,
-				      as_a <irange> (lhs),
-				      as_a <irange> (op2), rel);
       case RO_FFF:
 	return m_operator->op1_range (as_a <frange> (r), type,
 				      as_a <frange> (lhs),
@@ -785,13 +783,6 @@ range_operator::fold_range (frange &, tree, const irange &,
 
 bool
 range_operator::op1_range (irange &, tree, const frange &,
-			   const frange &, relation_trio) const
-{
-  return false;
-}
-
-bool
-range_operator::op1_range (frange &, tree, const irange &,
 			   const irange &, relation_trio) const
 {
   return false;
@@ -2464,7 +2455,7 @@ class operator_div : public cross_product_operator
 public:
   operator_div (tree_code div_kind) { m_code = div_kind; }
   bool op2_range (irange &r, tree type, const irange &lhs, const irange &,
-		  relation_trio) const;
+		  relation_trio) const final override;
   virtual void wi_fold (irange &r, tree type,
 		        const wide_int &lh_lb,
 		        const wide_int &lh_ub,
@@ -2473,7 +2464,8 @@ public:
   virtual bool wi_op_overflows (wide_int &res, tree type,
 				const wide_int &, const wide_int &)
     const final override;
-  void update_bitmask (irange &r, const irange &lh, const irange &rh) const
+  void update_bitmask (irange &r, const irange &lh, const irange &rh)
+    const final override
     { update_known_bitmask (r, m_code, lh, rh); }
 protected:
   tree_code m_code;
@@ -3111,8 +3103,9 @@ operator_cast::fold_range (irange &r, tree type ATTRIBUTE_UNUSED,
       int_range_max tmp;
       fold_pair (tmp, x, inner, outer);
       r.union_ (tmp);
+      // If we hit varying, go update the bitmask.
       if (r.varying_p ())
-	return true;
+	break;
     }
 
   update_bitmask (r, inner, outer);
@@ -3212,6 +3205,25 @@ operator_cast::op1_range (irange &r, tree type,
 	}
       // And intersect with any known value passed in the extra operand.
       r.intersect (op2);
+      if (r.undefined_p ())
+	return true;
+
+      // Now create a bitmask indicating that the lower bit must match the
+      // bits in the LHS.   Zero-extend LHS bitmask to precision of op1.
+      irange_bitmask bm = lhs.get_bitmask ();
+      wide_int mask = wide_int::from (bm.mask (), TYPE_PRECISION (type),
+				      UNSIGNED);
+      wide_int value = wide_int::from (bm.value (), TYPE_PRECISION (type),
+				       UNSIGNED);
+
+      // Set then additonal unknown bits in mask.
+      wide_int lim = wi::mask (TYPE_PRECISION (lhs_type), true,
+			       TYPE_PRECISION (type));
+      mask = mask | lim;
+
+      // Now set the new bitmask for the range.
+      irange_bitmask new_bm (value, mask);
+      r.update_bitmask (new_bm);
       return true;
     }
 
@@ -3242,18 +3254,18 @@ class operator_logical_and : public range_operator
   using range_operator::op1_range;
   using range_operator::op2_range;
 public:
-  virtual bool fold_range (irange &r, tree type,
-			   const irange &lh,
-			   const irange &rh,
-			   relation_trio rel = TRIO_VARYING) const;
-  virtual bool op1_range (irange &r, tree type,
-			  const irange &lhs,
-			  const irange &op2,
-			  relation_trio rel = TRIO_VARYING) const;
-  virtual bool op2_range (irange &r, tree type,
-			  const irange &lhs,
-			  const irange &op1,
-			  relation_trio rel = TRIO_VARYING) const;
+  bool fold_range (irange &r, tree type,
+		   const irange &lh,
+		   const irange &rh,
+		   relation_trio rel = TRIO_VARYING) const final override;
+  bool op1_range (irange &r, tree type,
+		  const irange &lhs,
+		  const irange &op2,
+		  relation_trio rel = TRIO_VARYING) const final override;
+  bool op2_range (irange &r, tree type,
+		  const irange &lhs,
+		  const irange &op1,
+		  relation_trio rel = TRIO_VARYING) const final override;
   // Check compatibility of all operands.
   bool operand_check_p (tree t1, tree t2, tree t3) const final override
     { return range_compatible_p (t1, t2) && range_compatible_p (t1, t3); }
@@ -3510,6 +3522,22 @@ operator_bitwise_and::wi_fold (irange &r, tree type,
 			       const wide_int &rh_lb,
 			       const wide_int &rh_ub) const
 {
+  // The AND algorithm does not handle complex signed operations well.
+  // If a signed range crosses the boundry between signed and unsigned
+  // proces sit as 2 ranges and union the results.
+  if (TYPE_SIGN (type) == SIGNED
+      && wi::neg_p (lh_lb, SIGNED) != wi::neg_p (lh_ub, SIGNED))
+    {
+      int prec = TYPE_PRECISION (type);
+      int_range_max tmp;
+      // Process [lh_lb, -1]
+      wi_fold (tmp, type, lh_lb, wi::minus_one (prec), rh_lb, rh_ub);
+      // Now Process [0, rh_ub]
+      wi_fold (r, type, wi::zero (prec), lh_ub, rh_lb, rh_ub);
+      r.union_ (tmp);
+      return;
+    }
+
   if (wi_optimize_and_or (r, BIT_AND_EXPR, type, lh_lb, lh_ub, rh_lb, rh_ub))
     return;
 
@@ -3766,18 +3794,18 @@ class operator_logical_or : public range_operator
   using range_operator::op1_range;
   using range_operator::op2_range;
 public:
-  virtual bool fold_range (irange &r, tree type,
-			   const irange &lh,
-			   const irange &rh,
-			   relation_trio rel = TRIO_VARYING) const;
-  virtual bool op1_range (irange &r, tree type,
-			  const irange &lhs,
-			  const irange &op2,
-			  relation_trio rel = TRIO_VARYING) const;
-  virtual bool op2_range (irange &r, tree type,
-			  const irange &lhs,
-			  const irange &op1,
-			  relation_trio rel = TRIO_VARYING) const;
+  bool fold_range (irange &r, tree type,
+		   const irange &lh,
+		   const irange &rh,
+		   relation_trio rel = TRIO_VARYING) const final override;
+  bool op1_range (irange &r, tree type,
+		  const irange &lhs,
+		  const irange &op2,
+		  relation_trio rel = TRIO_VARYING) const final override;
+  bool op2_range (irange &r, tree type,
+		  const irange &lhs,
+		  const irange &op1,
+		  relation_trio rel = TRIO_VARYING) const final override;
   // Check compatibility of all operands.
   bool operand_check_p (tree t1, tree t2, tree t3) const final override
     { return range_compatible_p (t1, t2) && range_compatible_p (t1, t3); }
@@ -4212,14 +4240,14 @@ class operator_logical_not : public range_operator
   using range_operator::fold_range;
   using range_operator::op1_range;
 public:
-  virtual bool fold_range (irange &r, tree type,
-			   const irange &lh,
-			   const irange &rh,
-			   relation_trio rel = TRIO_VARYING) const;
-  virtual bool op1_range (irange &r, tree type,
-			  const irange &lhs,
-			  const irange &op2,
-			  relation_trio rel = TRIO_VARYING) const;
+  bool fold_range (irange &r, tree type,
+		   const irange &lh,
+		   const irange &rh,
+		   relation_trio rel = TRIO_VARYING) const final override;
+  bool op1_range (irange &r, tree type,
+		  const irange &lhs,
+		  const irange &op2,
+		  relation_trio rel = TRIO_VARYING) const final override;
   // Check compatibility of LHS and op1.
   bool operand_check_p (tree t1, tree t2, tree) const final override
     { return range_compatible_p (t1, t2); }
@@ -4493,7 +4521,8 @@ class operator_absu : public range_operator
  public:
   virtual void wi_fold (irange &r, tree type,
 			const wide_int &lh_lb, const wide_int &lh_ub,
-			const wide_int &rh_lb, const wide_int &rh_ub) const;
+			const wide_int &rh_lb, const wide_int &rh_ub)
+    const final override;
   virtual void update_bitmask (irange &r, const irange &lh,
 			       const irange &rh) const final override;
 } op_absu;

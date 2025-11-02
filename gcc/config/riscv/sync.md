@@ -186,7 +186,7 @@
    (set (match_dup 1)
 	(unspec_volatile:GPR
 	  [(any_atomic:GPR (match_dup 1)
-		     (match_operand:GPR 2 "reg_or_0_operand" "rJ"))
+		     (match_operand:GPR 2 "arith_operand" "rI"))
 	   (match_operand:SI 3 "const_int_operand")] ;; model
 	 UNSPEC_SYNC_OLD_OP))
    (clobber (match_scratch:GPR 4 "=&r"))]	  ;; tmp_1
@@ -194,7 +194,7 @@
   {
     return "1:\;"
 	   "lr.<amo>%I3\t%0, %1\;"
-	   "<insn>\t%4, %0, %2\;"
+	   "<insn>%i2\t%4, %0, %2\;"
 	   "sc.<amo>%J3\t%4, %4, %1\;"
 	   "bnez\t%4, 1b";
   }
@@ -207,20 +207,20 @@
    (set (match_dup 1)
 	(unspec_volatile:SI
 	  [(any_atomic:SI (match_dup 1)
-		     (match_operand:SI 2 "register_operand" "rI")) ;; value for op
+		     (match_operand:SI 2 "arith_operand" "rI")) ;; value for op
 	   (match_operand:SI 3 "const_int_operand")]		   ;; model
 	 UNSPEC_SYNC_OLD_OP_SUBWORD))
-    (match_operand:SI 4 "register_operand" "rI")		   ;; mask
-    (match_operand:SI 5 "register_operand" "rI")		   ;; not_mask
+    (match_operand:SI 4 "arith_operand" "rI")		   ;; mask
+    (match_operand:SI 5 "arith_operand" "rI")		   ;; not_mask
     (clobber (match_scratch:SI 6 "=&r"))			   ;; tmp_1
     (clobber (match_scratch:SI 7 "=&r"))]			   ;; tmp_2
   "TARGET_ZALRSC && TARGET_INLINE_SUBWORD_ATOMIC"
   {
     return "1:\;"
 	   "lr.w%I3\t%0, %1\;"
-	   "<insn>\t%6, %0, %2\;"
-	   "and\t%6, %6, %4\;"
-	   "and\t%7, %0, %5\;"
+	   "<insn>%i2\t%6, %0, %2\;"
+	   "and%i4\t%6, %6, %4\;"
+	   "and%i5\t%7, %0, %5\;"
 	   "or\t%7, %7, %6\;"
 	   "sc.w%J3\t%6, %7, %1\;"
 	   "bnez\t%6, 1b";
@@ -274,21 +274,21 @@
    (set (match_dup 1)
 	(unspec_volatile:SI
 	  [(not:SI (and:SI (match_dup 1)
-			   (match_operand:SI 2 "register_operand" "rI"))) ;; value for op
+			   (match_operand:SI 2 "arith_operand" "rI")))    ;; value for op
 	   (match_operand:SI 3 "const_int_operand")]			  ;; mask
 	 UNSPEC_SYNC_OLD_OP_SUBWORD))
-    (match_operand:SI 4 "register_operand" "rI")			  ;; mask
-    (match_operand:SI 5 "register_operand" "rI")			  ;; not_mask
+    (match_operand:SI 4 "arith_operand" "rI")				  ;; mask
+    (match_operand:SI 5 "arith_operand" "rI")				  ;; not_mask
     (clobber (match_scratch:SI 6 "=&r"))				  ;; tmp_1
     (clobber (match_scratch:SI 7 "=&r"))]				  ;; tmp_2
   "TARGET_ZALRSC && TARGET_INLINE_SUBWORD_ATOMIC"
   {
     return "1:\;"
 	   "lr.w%I3\t%0, %1\;"
-	   "and\t%6, %0, %2\;"
+	   "and%i2\t%6, %0, %2\;"
 	   "not\t%6, %6\;"
-	   "and\t%6, %6, %4\;"
-	   "and\t%7, %0, %5\;"
+	   "and%i4\t%6, %6, %4\;"
+	   "and%i5\t%7, %0, %5\;"
 	   "or\t%7, %7, %6\;"
 	   "sc.w%J3\t%6, %7, %1\;"
 	   "bnez\t%6, 1b";
@@ -376,7 +376,19 @@
    (match_operand:SI 3 "const_int_operand")] ;; model
   "TARGET_ZAAMO || TARGET_ZALRSC"
   {
-    if (TARGET_ZAAMO)
+    if (TARGET_ZAAMO && TARGET_64BIT && <MODE>mode == SImode)
+      {
+	rtx t = gen_reg_rtx (DImode);
+	emit_insn (gen_amo_atomic_exchange_extended (t,
+						     operands[1],
+						     operands[2],
+						     operands[3]));
+	t = gen_lowpart (SImode, t);
+	SUBREG_PROMOTED_VAR_P (t) = 1;
+	SUBREG_PROMOTED_SET (t, SRP_SIGNED);
+	emit_move_insn (operands[0], t);
+      }
+    else if (TARGET_ZAAMO)
       emit_insn (gen_amo_atomic_exchange<mode> (operands[0], operands[1],
 					    operands[2], operands[3]));
     else
@@ -386,15 +398,28 @@
   })
 
 (define_insn "amo_atomic_exchange<mode>"
-  [(set (match_operand:GPR 0 "register_operand" "=&r")
+  [(set (match_operand:GPR 0 "register_operand" "=r")
 	(unspec_volatile:GPR
 	  [(match_operand:GPR 1 "memory_operand" "+A")
 	   (match_operand:SI 3 "const_int_operand")] ;; model
 	  UNSPEC_SYNC_EXCHANGE))
    (set (match_dup 1)
-	(match_operand:GPR 2 "register_operand" "0"))]
+	(match_operand:GPR 2 "reg_or_0_operand" "rJ"))]
   "TARGET_ZAAMO"
   "amoswap.<amo>%A3\t%0,%z2,%1"
+  [(set_attr "type" "atomic")
+   (set (attr "length") (const_int 4))])
+
+(define_insn "amo_atomic_exchange_extended"
+  [(set (match_operand:DI 0 "register_operand" "=r")
+    (sign_extend:DI (unspec_volatile:SI
+      [(match_operand:SI 1 "memory_operand" "+A")
+       (match_operand:SI 3 "const_int_operand")] ;; model
+      UNSPEC_SYNC_EXCHANGE)))
+   (set (match_dup 1)
+    (match_operand:SI 2 "reg_or_0_operand" "rJ"))]
+  "TARGET_64BIT && TARGET_ZAAMO"
+  "amoswap.w%A3\t%0,%z2,%1"
   [(set_attr "type" "atomic")
    (set (attr "length") (const_int 4))])
 
@@ -405,18 +430,17 @@
 	   (match_operand:SI 3 "const_int_operand")] ;; model
 	  UNSPEC_SYNC_EXCHANGE))
    (set (match_dup 1)
-	(match_operand:GPR 2 "register_operand" "0"))
+	(match_operand:GPR 2 "reg_or_0_operand" "rJ"))
    (clobber (match_scratch:GPR 4 "=&r"))]	  ;; tmp_1
   "!TARGET_ZAAMO && TARGET_ZALRSC"
   {
     return "1:\;"
-	   "lr.<amo>%I3\t%4, %1\;"
-	   "sc.<amo>%J3\t%0, %0, %1\;"
-	   "bnez\t%0, 1b\;"
-	   "mv\t%0, %4";
+	   "lr.<amo>%I3\t%0, %1\;"
+	   "sc.<amo>%J3\t%4, %z2, %1\;"
+	   "bnez\t%4, 1b\";
   }
   [(set_attr "type" "atomic")
-   (set (attr "length") (const_int 16))])
+   (set (attr "length") (const_int 12))])
 
 (define_expand "atomic_exchange<mode>"
   [(match_operand:SHORT 0 "register_operand") ;; old value at mem
@@ -435,13 +459,13 @@
 })
 
 (define_insn "zabha_atomic_exchange<mode>"
-  [(set (match_operand:SHORT 0 "register_operand" "=&r")
+  [(set (match_operand:SHORT 0 "register_operand" "=r")
 	(unspec_volatile:SHORT
 	  [(match_operand:SHORT 1 "memory_operand" "+A")
 	   (match_operand:SI 3 "const_int_operand")] ;; model
 	  UNSPEC_SYNC_EXCHANGE_ZABHA))
    (set (match_dup 1)
-	(match_operand:SHORT 2 "register_operand" "0"))]
+	(match_operand:SHORT 2 "reg_or_0_operand" "rJ"))]
   "TARGET_ZABHA"
   "amoswap.<amobh>%A3\t%0,%z2,%1"
   [(set_attr "type" "atomic")
@@ -485,17 +509,17 @@
 	(match_operand:SI 1 "memory_operand" "+A"))	 ;; mem location
    (set (match_dup 1)
 	(unspec_volatile:SI
-	  [(match_operand:SI 2 "reg_or_0_operand" "rI")	 ;; value
+	  [(match_operand:SI 2 "arith_operand" "rI")	 ;; value
 	   (match_operand:SI 3 "const_int_operand")]	 ;; model
       UNSPEC_SYNC_EXCHANGE_SUBWORD))
-    (match_operand:SI 4 "reg_or_0_operand" "rI")	 ;; not_mask
+    (match_operand:SI 4 "arith_operand" "rI")	 ;; not_mask
     (clobber (match_scratch:SI 5 "=&r"))]		 ;; tmp_1
   "TARGET_ZALRSC && TARGET_INLINE_SUBWORD_ATOMIC"
   {
     return "1:\;"
 	   "lr.w%I3\t%0, %1\;"
-	   "and\t%5, %0, %4\;"
-	   "or\t%5, %5, %2\;"
+	   "and%i4\t%5, %0, %4\;"
+	   "or%i2\t%5, %5, %2\;"
 	   "sc.w%J3\t%5, %5, %1\;"
 	   "bnez\t%5, 1b";
   }
@@ -628,7 +652,7 @@
 	(match_operand:SHORT 1 "memory_operand" "+A"))				;; memory
    (set (match_dup 1)
 	(unspec_volatile:SHORT [(match_operand:SHORT 2 "register_operand" "0")  ;; expected_val
-				(match_operand:SHORT 3 "register_operand" "rJ") ;; desired_val
+				(match_operand:SHORT 3 "reg_or_0_operand" "rJ") ;; desired_val
 				(match_operand:SI 4 "const_int_operand")	;; mod_s
 				(match_operand:SI 5 "const_int_operand")]	;; mod_f
 	 UNSPEC_COMPARE_AND_SWAP))]
@@ -769,20 +793,20 @@
 	(match_operand:SI 1 "memory_operand" "+A"))			   ;; mem location
    (set (match_dup 1)
 	(unspec_volatile:SI [(match_operand:SI 2 "reg_or_0_operand" "rJ")  ;; expected value
-			     (match_operand:SI 3 "reg_or_0_operand" "rJ")] ;; desired value
+			     (match_operand:SI 3 "arith_operand" "rI")] ;; desired value
 	 UNSPEC_COMPARE_AND_SWAP_SUBWORD))
 	(match_operand:SI 4 "const_int_operand")			   ;; model
-	(match_operand:SI 5 "register_operand" "rI")			   ;; mask
-	(match_operand:SI 6 "register_operand" "rI")			   ;; not_mask
+	(match_operand:SI 5 "arith_operand" "rI")			   ;; mask
+	(match_operand:SI 6 "arith_operand" "rI")			   ;; not_mask
 	(clobber (match_scratch:SI 7 "=&r"))]				   ;; tmp_1
   "TARGET_ZALRSC && TARGET_INLINE_SUBWORD_ATOMIC"
   {
     return "1:\;"
 	   "lr.w%I4\t%0, %1\;"
-	   "and\t%7, %0, %5\;"
+	   "and%i5\t%7, %0, %5\;"
 	   "bne\t%7, %z2, 1f\;"
-	   "and\t%7, %0, %6\;"
-	   "or\t%7, %7, %3\;"
+	   "and%i6\t%7, %0, %6\;"
+	   "or%i3\t%7, %7, %3\;"
 	   "sc.w%J4\t%7, %7, %1\;"
 	   "bnez\t%7, 1b\;"
 	   "1:";

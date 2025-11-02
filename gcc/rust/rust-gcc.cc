@@ -818,6 +818,12 @@ char_constant_expression (char c)
   return build_int_cst (char_type_node, c);
 }
 
+tree
+size_constant_expression (size_t val)
+{
+  return size_int (val);
+}
+
 // Make a constant boolean expression.
 
 tree
@@ -1252,7 +1258,7 @@ constructor_expression (tree type_tree, bool is_variant,
     return error_mark_node;
 
   vec<constructor_elt, va_gc> *init;
-  vec_alloc (init, vals.size ());
+  vec_alloc (init, union_index != -1 ? 1 : vals.size ());
 
   tree sink = NULL_TREE;
   bool is_constant = true;
@@ -1496,6 +1502,34 @@ array_index_expression (tree array_tree, tree index_tree, location_t location)
 			   index_tree);
 
   return ret;
+}
+
+// Return an expression representing SLICE[INDEX]
+
+tree
+slice_index_expression (tree slice_tree, tree index_tree, location_t location)
+{
+  if (error_operand_p (slice_tree) || error_operand_p (index_tree))
+    return error_mark_node;
+
+  // A slice is created in TyTyResolvecompile::create_slice_type_record
+  // For example:
+  //   &[i32] is turned directly into a struct { i32* data, usize len };
+  //   [i32] is also turned into struct { i32* data, usize len }
+
+  // it should have RS_DST_FLAG set to 1
+  rust_assert (RS_DST_FLAG_P (TREE_TYPE (slice_tree)));
+
+  tree data_field = struct_field_expression (slice_tree, 0, location);
+  tree data_field_deref = build_fold_indirect_ref_loc (location, data_field);
+
+  tree element_type = TREE_TYPE (data_field_deref);
+  tree data_pointer = TREE_OPERAND (data_field_deref, 0);
+  rust_assert (POINTER_TYPE_P (TREE_TYPE (data_pointer)));
+  tree data_offset_expr
+    = Rust::pointer_offset_expression (data_pointer, index_tree, location);
+
+  return build1_loc (location, INDIRECT_REF, element_type, data_offset_expr);
 }
 
 // Create an expression for a call to FN_EXPR with FN_ARGS.
@@ -2330,6 +2364,32 @@ write_global_definitions (const std::vector<tree> &type_decls,
   wrapup_global_declarations (defs, i);
 
   delete[] defs;
+}
+
+tree
+lookup_field (const_tree type, tree component)
+{
+  tree field;
+
+  for (field = TYPE_FIELDS (type); field; field = DECL_CHAIN (field))
+    {
+      if (DECL_NAME (field) == NULL_TREE
+	  && RECORD_OR_UNION_TYPE_P (TREE_TYPE (field)))
+	{
+	  tree anon = lookup_field (TREE_TYPE (field), component);
+
+	  if (anon)
+	    return tree_cons (NULL_TREE, field, anon);
+	}
+
+      if (DECL_NAME (field) == component)
+	break;
+    }
+
+  if (field == NULL_TREE)
+    return NULL_TREE;
+
+  return tree_cons (NULL_TREE, field, NULL_TREE);
 }
 
 } // namespace Backend

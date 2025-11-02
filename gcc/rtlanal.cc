@@ -4245,11 +4245,16 @@ subreg_offset_representable_p (unsigned int xregno, machine_mode xmode,
 
    can be simplified.  Return -1 if the subreg can't be simplified.
 
-   XREGNO is a hard register number.  */
+   XREGNO is a hard register number.  ALLOW_STACK_REGS is true if
+   we should allow subregs of stack_pointer_rtx, frame_pointer_rtx.
+   and arg_pointer_rtx (which are normally expected to be the unique
+   way of referring to their respective registers).  */
+
 
 int
 simplify_subreg_regno (unsigned int xregno, machine_mode xmode,
-		       poly_uint64 offset, machine_mode ymode)
+		       poly_uint64 offset, machine_mode ymode,
+		       bool allow_stack_regs)
 {
   struct subreg_info info;
   unsigned int yregno;
@@ -4260,20 +4265,23 @@ simplify_subreg_regno (unsigned int xregno, machine_mode xmode,
       && !REG_CAN_CHANGE_MODE_P (xregno, xmode, ymode))
     return -1;
 
-  /* We shouldn't simplify stack-related registers.  */
-  if ((!reload_completed || frame_pointer_needed)
-      && xregno == FRAME_POINTER_REGNUM)
-    return -1;
+  if (!allow_stack_regs)
+    {
+      /* We shouldn't simplify stack-related registers.  */
+      if ((!reload_completed || frame_pointer_needed)
+	  && xregno == FRAME_POINTER_REGNUM)
+	return -1;
 
-  if (FRAME_POINTER_REGNUM != ARG_POINTER_REGNUM
-      && xregno == ARG_POINTER_REGNUM)
-    return -1;
+      if (FRAME_POINTER_REGNUM != ARG_POINTER_REGNUM
+	  && xregno == ARG_POINTER_REGNUM)
+	return -1;
 
-  if (xregno == STACK_POINTER_REGNUM
-      /* We should convert hard stack register in LRA if it is
-	 possible.  */
-      && ! lra_in_progress)
-    return -1;
+      if (xregno == STACK_POINTER_REGNUM
+	  /* We should convert hard stack register in LRA if it is
+	     possible.  */
+	  && ! lra_in_progress)
+	return -1;
+    }
 
   /* Try to get the register offset.  */
   subreg_get_info (xregno, xmode, offset, ymode, &info);
@@ -5732,7 +5740,8 @@ pattern_cost (rtx pat, bool speed)
 	  rtx x = XVECEXP (pat, 0, i);
 	  if (GET_CODE (x) == SET)
 	    {
-	      if (GET_CODE (SET_SRC (x)) == COMPARE)
+	      if (GET_CODE (SET_SRC (x)) == COMPARE
+		  || GET_MODE_CLASS (GET_MODE (SET_DEST (x))) == MODE_CC)
 		{
 		  if (comparison)
 		    return 0;
@@ -6966,6 +6975,26 @@ add_auto_inc_notes (rtx_insn *insn, rtx x)
 	for (j = XVECLEN (x, i) - 1; j >= 0; j--)
 	  add_auto_inc_notes (insn, XVECEXP (x, i, j));
     }
+}
+
+/* Return true if INSN is the second element of a pair of macro-fused
+   single_sets, both of which having the same register output as another.  */
+bool
+single_output_fused_pair_p (rtx_insn *insn)
+{
+  rtx set, prev_set;
+  rtx_insn *prev;
+
+  return INSN_P (insn)
+	 && SCHED_GROUP_P (insn)
+	 && (prev = prev_nonnote_nondebug_insn (insn))
+	 && (set = single_set (insn)) != NULL_RTX
+	 && (prev_set = single_set (prev))
+	     != NULL_RTX
+	 && REG_P (SET_DEST (set))
+	 && REG_P (SET_DEST (prev_set))
+	 && (!reload_completed
+	     || REGNO (SET_DEST (set)) == REGNO (SET_DEST (prev_set)));
 }
 
 /* Return true if X is register asm.  */

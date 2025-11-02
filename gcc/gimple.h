@@ -682,11 +682,14 @@ struct GTY((tag("GSS_OMP_PARALLEL_LAYOUT")))
 };
 
 /* GIMPLE_OMP_TARGET */
-struct GTY((tag("GSS_OMP_PARALLEL_LAYOUT")))
+struct GTY((tag("GSS_OMP_TARGET")))
   gomp_target : public gimple_statement_omp_parallel_layout
 {
-    /* No extra fields; adds invariant:
-         stmt->code == GIMPLE_OMP_TARGET.  */
+  /* [ WORD 1-10 ] : base class */
+
+  /* [ WORD 11 ]
+     Iterator loops.  */
+  gimple_seq iterator_loops;
 };
 
 /* GIMPLE_OMP_TASK */
@@ -865,7 +868,7 @@ struct GTY((tag("GSS_ASSUME")))
    tell the runtime that it should begin the transaction in
    serial-irrevocable mode.  */
 #define GTMA_DOES_GO_IRREVOCABLE	(1u << 6)
-/* The transaction contains no instrumentation code whatsover, most
+/* The transaction contains no instrumentation code whatsoever, most
    likely because it is guaranteed to go irrevocable upon entry.  */
 #define GTMA_HAS_NO_INSTRUMENTATION	(1u << 7)
 
@@ -1542,7 +1545,7 @@ extern size_t const gimple_ops_offset_[];
 extern enum gimple_statement_structure_enum const gss_for_code_[];
 
 /* This variable holds the currently expanded gimple statement for purposes
-   of comminucating the profile info to the builtin expanders.  */
+   of communicating the profile info to the builtin expanders.  */
 extern gimple *currently_expanding_gimple_stmt;
 
 size_t gimple_size (enum gimple_code code, unsigned num_ops = 0);
@@ -1607,7 +1610,7 @@ gomp_scan *gimple_build_omp_scan (gimple_seq, tree);
 gomp_sections *gimple_build_omp_sections (gimple_seq, tree);
 gimple *gimple_build_omp_sections_switch (void);
 gomp_single *gimple_build_omp_single (gimple_seq, tree);
-gomp_target *gimple_build_omp_target (gimple_seq, int, tree);
+gomp_target *gimple_build_omp_target (gimple_seq, int, tree, gimple_seq = NULL);
 gomp_teams *gimple_build_omp_teams (gimple_seq, tree);
 gomp_atomic_load *gimple_build_omp_atomic_load (tree, tree,
 						enum omp_memory_order);
@@ -1667,7 +1670,8 @@ extern bool nonfreeing_call_p (gimple *);
 extern bool nonbarrier_call_p (gimple *);
 extern bool infer_nonnull_range (gimple *, tree);
 extern bool infer_nonnull_range_by_dereference (gimple *, tree);
-extern bool infer_nonnull_range_by_attribute (gimple *, tree, tree * = NULL);
+extern bool infer_nonnull_range_by_attribute (gimple *, tree, tree * = NULL,
+					      tree * = NULL);
 extern void sort_case_labels (vec<tree> &);
 extern void preprocess_case_label_vec_for_gimple (vec<tree> &, tree, tree *);
 extern void gimple_seq_set_location (gimple_seq, location_t);
@@ -6376,6 +6380,38 @@ gimple_omp_target_set_data_arg (gomp_target *omp_target_stmt,
 				tree data_arg)
 {
   omp_target_stmt->data_arg = data_arg;
+}
+
+
+/* Return the Gimple sequence used to store loops for OpenMP iterators used
+   by OMP_TARGET_STMT.  */
+
+inline gimple_seq
+gimple_omp_target_iterator_loops (const gomp_target *omp_target_stmt)
+{
+  return omp_target_stmt->iterator_loops;
+}
+
+
+/* Return a pointer to the Gimple sequence used to store loops for OpenMP
+   iterators used by OMP_TARGET GS.  */
+
+inline gimple_seq *
+gimple_omp_target_iterator_loops_ptr (gimple *gs)
+{
+  gomp_target *omp_target_stmt = as_a <gomp_target *> (gs);
+  return &omp_target_stmt->iterator_loops;
+}
+
+
+/* Set ITERATOR_LOOPS to be the Gimple sequence used to store loops
+   constructed for OpenMP iterators in OMP_TARGET_STMT.  */
+
+inline void
+gimple_omp_target_set_iterator_loops (gomp_target *omp_target_stmt,
+				      gimple_seq iterator_loops)
+{
+  omp_target_stmt->iterator_loops = iterator_loops;
 }
 
 

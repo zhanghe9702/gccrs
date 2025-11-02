@@ -18,6 +18,7 @@
 
 #include "rust-ast-collector.h"
 #include "rust-ast.h"
+#include "rust-builtin-ast-nodes.h"
 #include "rust-diagnostics.h"
 #include "rust-expr.h"
 #include "rust-item.h"
@@ -75,13 +76,13 @@ TokenCollector::trailing_comma ()
 void
 TokenCollector::newline ()
 {
-  tokens.push_back ({CollectItem::Kind::Newline});
+  tokens.emplace_back (CollectItem::Kind::Newline);
 }
 
 void
 TokenCollector::indentation ()
 {
-  tokens.push_back ({indent_level});
+  tokens.emplace_back (indent_level);
 }
 
 void
@@ -100,7 +101,7 @@ TokenCollector::decrement_indentation ()
 void
 TokenCollector::comment (std::string comment)
 {
-  tokens.push_back ({comment});
+  tokens.emplace_back (comment);
 }
 
 void
@@ -354,7 +355,8 @@ TokenCollector::visit (MaybeNamedParam &param)
 void
 TokenCollector::visit (Token &tok)
 {
-  std::string data = tok.get_tok_ptr ()->has_str () ? tok.get_str () : "";
+  std::string data
+    = tok.get_tok_ptr ()->should_have_str () ? tok.get_str () : "";
   switch (tok.get_id ())
     {
     case IDENTIFIER:
@@ -839,13 +841,13 @@ TokenCollector::visit (MetaItemLitExpr &item)
 }
 
 void
-TokenCollector::visit (MetaItemPathLit &item)
+TokenCollector::visit (MetaItemPathExpr &item)
 {
-  auto path = item.get_path ();
-  auto lit = item.get_literal ();
+  auto &path = item.get_path ();
+  auto &expr = item.get_expr ();
   visit (path);
-  push (Rust::Token::make (COLON, item.get_locus ()));
-  visit (lit);
+  push (Rust::Token::make (EQUAL, item.get_locus ()));
+  visit (expr);
 }
 
 void
@@ -870,7 +872,8 @@ TokenCollector::visit (BorrowExpr &expr)
 	push (Rust::Token::make (MUT, UNDEF_LOCATION));
     }
 
-  visit (expr.get_borrowed_expr ());
+  if (expr.has_borrow_expr ())
+    visit (expr.get_borrowed_expr ());
 }
 
 void
@@ -1272,7 +1275,13 @@ TokenCollector::visit (BlockExpr &expr)
 void
 TokenCollector::visit (AnonConst &expr)
 {
-  visit (expr.get_inner_expr ());
+  if (!expr.is_deferred ())
+    {
+      visit (expr.get_inner_expr ());
+      return;
+    }
+
+  push (Rust::Token::make_string (expr.get_locus (), "_"));
 }
 
 void
@@ -2163,19 +2172,6 @@ TokenCollector::visit (SelfParam &param)
 }
 
 void
-TokenCollector::visit (TraitItemConst &item)
-{
-  auto id = item.get_identifier ().as_string ();
-  indentation ();
-  push (Rust::Token::make (CONST, item.get_locus ()));
-  push (Rust::Token::make_identifier (UNDEF_LOCATION, std::move (id)));
-  push (Rust::Token::make (COLON, UNDEF_LOCATION));
-  visit (item.get_type ());
-  push (Rust::Token::make (SEMICOLON, UNDEF_LOCATION));
-  newline ();
-}
-
-void
 TokenCollector::visit (TraitItemType &item)
 {
   visit_items_as_lines (item.get_outer_attrs ());
@@ -2624,7 +2620,7 @@ TokenCollector::visit (StructPattern &pattern)
   if (elems.has_struct_pattern_fields ())
     {
       visit_items_joined_by_separator (elems.get_struct_pattern_fields ());
-      if (elems.has_etc ())
+      if (elems.has_rest ())
 	{
 	  push (Rust::Token::make (COMMA, UNDEF_LOCATION));
 	  visit_items_as_lines (elems.get_etc_outer_attrs ());
@@ -2641,13 +2637,13 @@ TokenCollector::visit (StructPattern &pattern)
 // void TokenCollector::visit(TupleStructItems& ){}
 
 void
-TokenCollector::visit (TupleStructItemsNoRange &pattern)
+TokenCollector::visit (TupleStructItemsNoRest &pattern)
 {
   visit_items_joined_by_separator (pattern.get_patterns ());
 }
 
 void
-TokenCollector::visit (TupleStructItemsRange &pattern)
+TokenCollector::visit (TupleStructItemsHasRest &pattern)
 {
   for (auto &lower : pattern.get_lower_patterns ())
     {
@@ -2674,13 +2670,13 @@ TokenCollector::visit (TupleStructPattern &pattern)
 // {}
 
 void
-TokenCollector::visit (TuplePatternItemsMultiple &pattern)
+TokenCollector::visit (TuplePatternItemsNoRest &pattern)
 {
   visit_items_joined_by_separator (pattern.get_patterns (), COMMA);
 }
 
 void
-TokenCollector::visit (TuplePatternItemsRanged &pattern)
+TokenCollector::visit (TuplePatternItemsHasRest &pattern)
 {
   for (auto &lower : pattern.get_lower_patterns ())
     {
@@ -2710,10 +2706,34 @@ TokenCollector::visit (GroupedPattern &pattern)
 }
 
 void
+TokenCollector::visit (SlicePatternItemsNoRest &items)
+{
+  visit_items_joined_by_separator (items.get_patterns (), COMMA);
+}
+
+void
+TokenCollector::visit (SlicePatternItemsHasRest &items)
+{
+  if (!items.get_lower_patterns ().empty ())
+    {
+      visit_items_joined_by_separator (items.get_lower_patterns (), COMMA);
+      push (Rust::Token::make (COMMA, UNDEF_LOCATION));
+    }
+
+  push (Rust::Token::make (DOT_DOT, UNDEF_LOCATION));
+
+  if (!items.get_upper_patterns ().empty ())
+    {
+      push (Rust::Token::make (COMMA, UNDEF_LOCATION));
+      visit_items_joined_by_separator (items.get_upper_patterns (), COMMA);
+    }
+}
+
+void
 TokenCollector::visit (SlicePattern &pattern)
 {
   push (Rust::Token::make (LEFT_SQUARE, pattern.get_locus ()));
-  visit_items_joined_by_separator (pattern.get_items (), COMMA);
+  visit (pattern.get_items ());
   push (Rust::Token::make (RIGHT_SQUARE, UNDEF_LOCATION));
 }
 
@@ -2977,8 +2997,234 @@ TokenCollector::visit (BareFunctionType &type)
 void
 TokenCollector::visit (AST::FormatArgs &fmt)
 {
-  rust_sorry_at (fmt.get_locus (), "%s:%u: unimplemented FormatArgs visitor",
-		 __FILE__, __LINE__);
+  push (Rust::Token::make_identifier (fmt.get_locus (), "format_args"));
+  push (Rust::Token::make (EXCLAM, fmt.get_locus ()));
+  push (Rust::Token::make (LEFT_PAREN, fmt.get_locus ()));
+
+  std::string reconstructed_template = "\"";
+  const auto &template_pieces = fmt.get_template ();
+
+  for (const auto &piece : template_pieces.get_pieces ())
+    {
+      if (piece.tag == Fmt::ffi::Piece::Tag::String)
+	{
+	  std::string literal = piece.string._0.to_string ();
+	  for (char c : literal)
+	    {
+	      if (c == '"' || c == '\\')
+		{
+		  reconstructed_template += '\\';
+		}
+	      else if (c == '\n')
+		{
+		  reconstructed_template += "\\n";
+		  continue;
+		}
+	      else if (c == '\r')
+		{
+		  reconstructed_template += "\\r";
+		  continue;
+		}
+	      else if (c == '\t')
+		{
+		  reconstructed_template += "\\t";
+		  continue;
+		}
+	      reconstructed_template += c;
+	    }
+	}
+      else if (piece.tag == Fmt::ffi::Piece::Tag::NextArgument)
+	{
+	  reconstructed_template += "{";
+
+	  const auto &argument = piece.next_argument._0;
+	  const auto &position = argument.position;
+
+	  switch (position.tag)
+	    {
+	    case Fmt::ffi::Position::Tag::ArgumentImplicitlyIs:
+	      break;
+	    case Fmt::ffi::Position::Tag::ArgumentIs:
+	      reconstructed_template
+		+= std::to_string (position.argument_is._0);
+	      break;
+	    case Fmt::ffi::Position::Tag::ArgumentNamed:
+	      reconstructed_template += position.argument_named._0.to_string ();
+	      break;
+	    }
+
+	  // Add format specifiers if any (like :?, :x, etc.)
+	  const auto &format_spec = argument.format;
+
+	  bool has_format_spec = false;
+	  std::string format_part;
+
+	  // For now, skipping the complex format specifications that use FFIOpt
+	  // since FFIOpt::get_opt() has a bug.
+
+	  // Alignment
+	  if (format_spec.align != Fmt::ffi::Alignment::AlignUnknown)
+	    {
+	      has_format_spec = true;
+	      switch (format_spec.align)
+		{
+		case Fmt::ffi::Alignment::AlignLeft:
+		  format_part += "<";
+		  break;
+		case Fmt::ffi::Alignment::AlignRight:
+		  format_part += ">";
+		  break;
+		case Fmt::ffi::Alignment::AlignCenter:
+		  format_part += "^";
+		  break;
+		case Fmt::ffi::Alignment::AlignUnknown:
+		  break;
+		}
+	    }
+
+	  // Alternate flag
+	  if (format_spec.alternate)
+	    {
+	      has_format_spec = true;
+	      format_part += "#";
+	    }
+
+	  // Zero pad flag
+	  if (format_spec.zero_pad)
+	    {
+	      has_format_spec = true;
+	      format_part += "0";
+	    }
+
+	  // Width
+	  if (format_spec.width.tag != Fmt::ffi::Count::Tag::CountImplied)
+	    {
+	      has_format_spec = true;
+	      switch (format_spec.width.tag)
+		{
+		case Fmt::ffi::Count::Tag::CountIs:
+		  format_part += std::to_string (format_spec.width.count_is._0);
+		  break;
+		case Fmt::ffi::Count::Tag::CountIsParam:
+		  format_part
+		    += std::to_string (format_spec.width.count_is_param._0)
+		       + "$";
+		  break;
+		case Fmt::ffi::Count::Tag::CountIsName:
+		  format_part
+		    += format_spec.width.count_is_name._0.to_string () + "$";
+		  break;
+		case Fmt::ffi::Count::Tag::CountIsStar:
+		  format_part += "*";
+		  break;
+		case Fmt::ffi::Count::Tag::CountImplied:
+		  break;
+		}
+	    }
+
+	  // Precision
+	  if (format_spec.precision.tag != Fmt::ffi::Count::Tag::CountImplied)
+	    {
+	      has_format_spec = true;
+	      format_part += ".";
+	      switch (format_spec.precision.tag)
+		{
+		case Fmt::ffi::Count::Tag::CountIs:
+		  format_part
+		    += std::to_string (format_spec.precision.count_is._0);
+		  break;
+		case Fmt::ffi::Count::Tag::CountIsParam:
+		  format_part
+		    += std::to_string (format_spec.precision.count_is_param._0)
+		       + "$";
+		  break;
+		case Fmt::ffi::Count::Tag::CountIsName:
+		  format_part
+		    += format_spec.precision.count_is_name._0.to_string ()
+		       + "$";
+		  break;
+		case Fmt::ffi::Count::Tag::CountIsStar:
+		  format_part += "*";
+		  break;
+		case Fmt::ffi::Count::Tag::CountImplied:
+		  break;
+		}
+	    }
+
+	  // Type/trait (like ?, x, X, etc.)
+	  std::string type_str = format_spec.ty.to_string ();
+	  if (!type_str.empty ())
+	    {
+	      has_format_spec = true;
+	      format_part += type_str;
+	    }
+
+	  // Add the format specification if any
+	  if (has_format_spec)
+	    {
+	      reconstructed_template += ":";
+	      reconstructed_template += format_part;
+	    }
+
+	  reconstructed_template += "}";
+	}
+    }
+  reconstructed_template += "\"";
+
+  push (Rust::Token::make_string (fmt.get_locus (), reconstructed_template));
+
+  // Visit format arguments if any exist
+  auto &arguments = fmt.get_arguments ();
+  if (!arguments.empty ())
+    {
+      push (Rust::Token::make (COMMA, fmt.get_locus ()));
+
+      auto &args = arguments.get_args ();
+      for (size_t i = 0; i < args.size (); ++i)
+	{
+	  if (i > 0)
+	    {
+	      push (Rust::Token::make (COMMA, fmt.get_locus ()));
+	    }
+
+	  auto kind = args[i].get_kind ();
+
+	  // Handle named arguments: name = expr
+	  if (kind.kind == FormatArgumentKind::Kind::Named)
+	    {
+	      auto ident = kind.get_ident ().as_string ();
+	      push (Rust::Token::make_identifier (fmt.get_locus (),
+						  std::move (ident)));
+	      push (Rust::Token::make (EQUAL, fmt.get_locus ()));
+	    }
+	  // Note: Captured arguments are handled implicitly in the template
+	  // reconstruction They don't need explicit "name =" syntax in the
+	  // reconstructed macro call
+
+	  auto &expr = args[i].get_expr ();
+	  expr.accept_vis (*this);
+	}
+    }
+
+  push (Rust::Token::make (RIGHT_PAREN, fmt.get_locus ()));
+}
+
+void
+TokenCollector::visit (AST::OffsetOf &offset_of)
+{
+  auto loc = offset_of.get_locus ();
+
+  push (Rust::Token::make_identifier (loc, "offset_of"));
+  push (Rust::Token::make (EXCLAM, loc));
+  push (Rust::Token::make (LEFT_PAREN, loc));
+
+  visit (offset_of.get_type ());
+
+  push (Rust::Token::make (COMMA, loc));
+
+  push (Rust::Token::make_identifier (offset_of.get_field ()));
+
+  push (Rust::Token::make (RIGHT_PAREN, loc));
 }
 
 } // namespace AST

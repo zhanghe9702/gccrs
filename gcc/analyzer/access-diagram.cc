@@ -1116,7 +1116,7 @@ public:
       {
 	logger.start_log_line ();
 	logger.log_partial ("table_x: %i", table_x);
-	access_range range_for_column (NULL, bit_range (0, 0));
+	access_range range_for_column (nullptr, bit_range (0, 0));
 	if (maybe_get_access_range_for_table_x (table_x, &range_for_column))
 	  {
 	    logger.log_partial (": range: ");
@@ -1216,8 +1216,8 @@ public:
     auto_vec <const binding_key *> binding_keys;
     for (auto iter : map)
       {
-	const binding_key *key = iter.first;
-	const svalue *bound_sval = iter.second;
+	const binding_key *key = iter.m_key;
+	const svalue *bound_sval = iter.m_sval;
 	if (const concrete_binding *concrete_key
 	      = key->dyn_cast_concrete_binding ())
 	  {
@@ -1300,7 +1300,7 @@ class valid_region_spatial_item : public spatial_item
 {
 public:
   valid_region_spatial_item (const access_operation &op,
-			     diagnostic_event_id_t region_creation_event_id,
+			     diagnostics::paths::event_id_t region_creation_event_id,
 			     const theme &theme)
   : m_op (op),
     m_region_creation_event_id (region_creation_event_id),
@@ -1523,7 +1523,7 @@ public:
 
 private:
   const access_operation &m_op;
-  diagnostic_event_id_t m_region_creation_event_id;
+  diagnostics::paths::event_id_t m_region_creation_event_id;
   mutable const boundaries *m_boundaries;
   const svalue *m_existing_sval;
   std::unique_ptr<spatial_item> m_existing_sval_spatial_item;
@@ -2012,7 +2012,7 @@ class access_diagram_impl : public vbox_widget
 {
 public:
   access_diagram_impl (const access_operation &op,
-		       diagnostic_event_id_t region_creation_event_id,
+		       diagnostics::paths::event_id_t region_creation_event_id,
 		       style_manager &sm,
 		       const theme &theme,
 		       logger *logger)
@@ -2244,7 +2244,7 @@ private:
     for (int table_x = 0; table_x < t.get_size ().w; table_x++)
       {
 	const int table_y = 1;
-	access_range range_for_column (NULL, bit_range (0, 0));
+	access_range range_for_column (nullptr, bit_range (0, 0));
 	if (m_btm.maybe_get_access_range_for_table_x (table_x,
 						      &range_for_column))
 	  {
@@ -2495,7 +2495,7 @@ private:
     std::vector<bit_offset_t> bit_sizes (num_columns);
     for (unsigned table_x = 0; table_x < num_columns; table_x++)
       {
-	access_range range_for_column (NULL, bit_range (0, 0));
+	access_range range_for_column (nullptr, bit_range (0, 0));
 	if (m_btm.maybe_get_access_range_for_table_x (table_x,
 						      &range_for_column))
 	  {
@@ -2564,7 +2564,7 @@ private:
   }
 
   const access_operation &m_op;
-  diagnostic_event_id_t m_region_creation_event_id;
+  diagnostics::paths::event_id_t m_region_creation_event_id;
   style_manager &m_sm;
   const theme &m_theme;
   logger *m_logger;
@@ -2662,7 +2662,7 @@ direction_widget::paint_to_canvas (canvas &canvas)
    an access_diagram_impl.  */
 
 access_diagram::access_diagram (const access_operation &op,
-				diagnostic_event_id_t region_creation_event_id,
+				diagnostics::paths::event_id_t region_creation_event_id,
 				style_manager &sm,
 				const theme &theme,
 				logger *logger)

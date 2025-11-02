@@ -287,9 +287,9 @@ static bool arm_class_likely_spilled_p (reg_class_t);
 static HOST_WIDE_INT arm_vector_alignment (const_tree type);
 static bool arm_vector_alignment_reachable (const_tree type, bool is_packed);
 static bool arm_builtin_support_vector_misalignment (machine_mode mode,
-						     const_tree type,
 						     int misalignment,
-						     bool is_packed);
+						     bool is_packed,
+						     bool is_gather_scatter);
 static void arm_conditional_register_usage (void);
 static enum flt_eval_method arm_excess_precision (enum excess_precision_type);
 static reg_class_t arm_preferred_rename_class (reg_class_t rclass);
@@ -5695,6 +5695,22 @@ arm_canonicalize_comparison (int *code, rtx *op0, rtx *op1,
     mode = GET_MODE (*op1);
 
   maxval = (HOST_WIDE_INT_1U << (GET_MODE_BITSIZE (mode) - 1)) - 1;
+
+  /* For floating-point comparisons, prefer >= and > over <= and < since
+     the former are supported by VSEL on some architectures.  Only do this
+     if both operands are registers.  */
+  if (GET_MODE_CLASS (mode) == MODE_FLOAT
+      && (*code == LE
+	  || *code == LT
+	  || *code == UNGT
+	  || *code == UNGE)
+      && register_operand (*op0, mode)
+      && register_operand (*op1, mode))
+    {
+      std::swap (*op0, *op1);
+      *code = (int) swap_condition ((rtx_code)*code);
+      return;
+    }
 
   /* For DImode, we have GE/LT/GEU/LTU comparisons (with cmp/sbc).  In
      ARM mode we can also use cmp/cmpeq for GTU/LEU.  GT/LE must be
@@ -18982,7 +18998,8 @@ cmse_nonsecure_call_inline_register_clear (void)
 	      call = SET_SRC (call);
 
 	  /* Check if it is a cmse_nonsecure_call.  */
-	  unspec = XEXP (call, 0);
+	  unspec = XVECEXP (pat, 0, 2);
+
 	  if (GET_CODE (unspec) != UNSPEC
 	      || XINT (unspec, 1) != UNSPEC_NONSECURE_MEM)
 	    continue;
@@ -19009,7 +19026,7 @@ cmse_nonsecure_call_inline_register_clear (void)
 
 	  /* Make sure the register used to hold the function address is not
 	     cleared.  */
-	  address = RTVEC_ELT (XVEC (unspec, 0), 0);
+	  address = XEXP (call, 0);
 	  gcc_assert (MEM_P (address));
 	  gcc_assert (REG_P (XEXP (address, 0)));
 	  address_regnum = REGNO (XEXP (address, 0));
@@ -30660,12 +30677,16 @@ arm_vector_alignment_reachable (const_tree type, bool is_packed)
 
 static bool
 arm_builtin_support_vector_misalignment (machine_mode mode,
-					 const_tree type, int misalignment,
-					 bool is_packed)
+					 int misalignment,
+					 bool is_packed,
+					 bool is_gather_scatter)
 {
   if (TARGET_NEON && !BYTES_BIG_ENDIAN && unaligned_access)
     {
-      HOST_WIDE_INT align = TYPE_ALIGN_UNIT (type);
+      HOST_WIDE_INT align = GET_MODE_UNIT_SIZE (mode);
+
+      if (is_gather_scatter)
+	return true;
 
       if (is_packed)
         return align == 1;
@@ -30682,8 +30703,9 @@ arm_builtin_support_vector_misalignment (machine_mode mode,
       return ((misalignment % align) == 0);
     }
 
-  return default_builtin_support_vector_misalignment (mode, type, misalignment,
-						      is_packed);
+  return default_builtin_support_vector_misalignment (mode, misalignment,
+						      is_packed,
+						      is_gather_scatter);
 }
 
 static void
@@ -32472,6 +32494,9 @@ arm_validize_comparison (rtx *comparison, rtx * op1, rtx * op2)
     case E_HFmode:
       if (!TARGET_VFP_FP16INST)
 	break;
+      if (!arm_vsel_comparison_operator (*comparison, mode))
+	return false;
+
       /* FP16 comparisons are done in SF mode.  */
       mode = SFmode;
       *op1 = convert_to_mode (mode, *op1, 1);

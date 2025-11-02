@@ -149,6 +149,7 @@ begin -- Gen_IL.Gen.Gen_Nodes
         Sm (Is_Controlling_Actual, Flag),
         Sm (Is_Overloaded, Flag),
         Sm (Is_Static_Expression, Flag),
+        Sm (Is_Expanded_Dispatching_Call, Flag),
         Sm (Must_Not_Freeze, Flag),
         Sm (Raises_Constraint_Error, Flag)));
 
@@ -181,7 +182,8 @@ begin -- Gen_IL.Gen.Gen_Nodes
         Sm (Is_Elaboration_Warnings_OK_Node, Flag),
         Sm (Is_SPARK_Mode_On_Node, Flag),
         Sm (Original_Discriminant, Node_Id),
-        Sm (Redundant_Use, Flag)));
+        Sm (Redundant_Use, Flag),
+        Sm (Tag_Propagated, Flag)));
 
    Cc (N_Operator_Symbol, N_Direct_Name,
        (Sy (Strval, String_Id)));
@@ -303,6 +305,7 @@ begin -- Gen_IL.Gen.Gen_Nodes
         Sm (Is_Known_Guaranteed_ABE, Flag),
         Sm (Is_SPARK_Mode_On_Node, Flag),
         Sm (No_Elaboration_Check, Flag),
+        Sm (Is_Expanded_Constructor_Call, Flag),
         Sm (Is_Expanded_Prefixed_Call, Flag)));
 
    Cc (N_Function_Call, N_Subprogram_Call,
@@ -345,7 +348,8 @@ begin -- Gen_IL.Gen.Gen_Nodes
        (Sy (Prefix, Node_Id),
         Sm (Actual_Designated_Subtype, Node_Id),
         Sm (Atomic_Sync_Required, Flag),
-        Sm (Has_Dereference_Action, Flag)));
+        Sm (Has_Dereference_Action, Flag),
+        Sm (Tag_Propagated, Flag)));
 
    Cc (N_Expression_With_Actions, N_Subexpr,
        (Sy (Actions, List_Id, Default_No_List),
@@ -462,18 +466,14 @@ begin -- Gen_IL.Gen.Gen_Nodes
         Sm (Do_Length_Check, Flag),
         Sm (Do_Overflow_Check, Flag),
         Sm (Float_Truncate, Flag),
+        Sm (Tag_Propagated, Flag),
         Sm (Rounded_Result, Flag)));
 
    Cc (N_Unchecked_Type_Conversion, N_Subexpr,
        (Sy (Subtype_Mark, Node_Id, Default_Empty),
         Sy (Expression, Node_Id, Default_Empty),
         Sm (Kill_Range_Check, Flag),
-        Sm (No_Truncation, Flag)),
-       Nmake_Assert => "True or else Nkind (Expression) /= N_Unchecked_Type_Conversion");
---       Nmake_Assert => "Nkind (Expression) /= N_Unchecked_Type_Conversion");
-   --  Assert that we don't have unchecked conversions of unchecked
-   --  conversions; if Expression might be an unchecked conversion,
-   --  then Tbuild.Unchecked_Convert_To should be used.
+        Sm (No_Truncation, Flag)));
 
    Cc (N_Subtype_Indication, N_Has_Etype,
        (Sy (Subtype_Mark, Node_Id, Default_Empty),
@@ -533,8 +533,7 @@ begin -- Gen_IL.Gen.Gen_Nodes
         Sy (Discriminant_Specifications, List_Id, Default_No_List),
         Sy (Type_Definition, Node_Id),
         Sy (Aspect_Specifications, List_Id, Default_No_List),
-        Sm (Discr_Check_Funcs_Built, Flag),
-        Sm (Incomplete_View, Node_Id)));
+        Sm (Discr_Check_Funcs_Built, Flag)));
 
    Cc (N_Incomplete_Type_Declaration, N_Declaration,
        (Sy (Defining_Identifier, Node_Id),
@@ -688,13 +687,14 @@ begin -- Gen_IL.Gen.Gen_Nodes
        (Sy (Defining_Unit_Name, Node_Id),
         Sy (Name, Node_Id, Default_Empty),
         Sy (Generic_Associations, List_Id, Default_No_List),
+        Sm (Parent_Spec, Node_Id),
         Sm (Instance_Spec, Node_Id),
         Sm (Is_Declaration_Level_Node, Flag),
         Sm (Is_Elaboration_Checks_OK_Node, Flag),
         Sm (Is_Elaboration_Warnings_OK_Node, Flag),
         Sm (Is_Known_Guaranteed_ABE, Flag),
         Sm (Is_SPARK_Mode_On_Node, Flag),
-        Sm (Parent_Spec, Node_Id)));
+        Sm (Is_Structural, Flag)));
 
    Ab (N_Subprogram_Instantiation, N_Generic_Instantiation,
        (Sy (Must_Override, Flag),
@@ -910,6 +910,7 @@ begin -- Gen_IL.Gen.Gen_Nodes
         Sm (Cleanup_Actions, List_Id),
         Sm (Exception_Junk, Flag),
         Sm (Is_Abort_Block, Flag),
+        Sm (Is_Expanded_Dispatching_Call, Flag),
         Sm (Is_Initialization_Block, Flag),
         Sm (Is_Task_Master, Flag)));
 
@@ -967,6 +968,16 @@ begin -- Gen_IL.Gen.Gen_Nodes
         Sy (Is_Null_Loop, Flag),
         Sy (Suppress_Loop_Warnings, Flag)));
 
+   Ab (N_Loop_Flow_Statement, N_Statement_Other_Than_Procedure_Call,
+       (Sy (Name, Node_Id, Default_Empty),
+        Sy (Condition, Node_Id, Default_Empty)));
+
+   Cc (N_Continue_Statement, N_Loop_Flow_Statement,
+       (Sm (Call_Or_Target_Loop, Node_Id)));
+
+   Cc (N_Exit_Statement, N_Loop_Flow_Statement,
+       (Sm (Next_Exit_Statement, Node_Id)));
+
    Cc (N_Null_Statement, N_Statement_Other_Than_Procedure_Call,
        (Sm (Next_Rep_Item, Node_Id)));
 
@@ -1012,11 +1023,6 @@ begin -- Gen_IL.Gen.Gen_Nodes
        (Sy (Entry_Call_Alternative, Node_Id),
         Sy (Delay_Alternative, Node_Id)));
 
-   Cc (N_Exit_Statement, N_Statement_Other_Than_Procedure_Call,
-       (Sy (Name, Node_Id, Default_Empty),
-        Sy (Condition, Node_Id, Default_Empty),
-        Sm (Next_Exit_Statement, Node_Id)));
-
    Cc (N_If_Statement, N_Statement_Other_Than_Procedure_Call,
        (Sy (Condition, Node_Id, Default_Empty),
         Sy (Then_Statements, List_Id),
@@ -1030,8 +1036,7 @@ begin -- Gen_IL.Gen.Gen_Nodes
        (Sy (Accept_Statement, Node_Id),
         Sy (Condition, Node_Id, Default_Empty),
         Sy (Statements, List_Id, Default_Empty_List),
-        Sy (Pragmas_Before, List_Id, Default_No_List),
-        Sm (Accept_Handler_Records, List_Id)));
+        Sy (Pragmas_Before, List_Id, Default_No_List)));
 
    Cc (N_Delay_Alternative, Node_Kind,
        (Sy (Delay_Statement, Node_Id),
@@ -1123,6 +1128,7 @@ begin -- Gen_IL.Gen.Gen_Nodes
        (Sy (Identifier, Node_Id, Default_Empty),
         Sy (Expression, Node_Id, Default_Empty),
         Sy (Class_Present, Flag),
+        Sm (Aspect_Ghost_Assertion_Level, Node_Id),
         Sm (Aspect_On_Partial_View, Flag),
         Sm (Aspect_Rep_Item, Node_Id),
         Sm (Aspect_Subprograms, Elist_Id),
@@ -1133,7 +1139,8 @@ begin -- Gen_IL.Gen.Gen_Nodes
         Sm (Is_Delayed_Aspect, Flag),
         Sm (Is_Disabled, Flag),
         Sm (Is_Ignored, Flag),
-        Sm (Next_Rep_Item, Node_Id)));
+        Sm (Next_Rep_Item, Node_Id),
+        Sm (Original_Aspect, Node_Id)));
 
    Cc (N_Call_Marker, Node_Kind,
        (Sm (Is_Declaration_Level_Node, Flag),
@@ -1440,6 +1447,8 @@ begin -- Gen_IL.Gen.Gen_Nodes
         Sm (Is_Ignored_Ghost_Pragma, Flag),
         Sm (Next_Pragma, Node_Id),
         Sm (Next_Rep_Item, Node_Id),
+        Sm (Original_Pragma, Node_Id),
+        Sm (Pragma_Ghost_Assertion_Level, Node_Id),
         Sm (Uneval_Old_Accept, Flag),
         Sm (Uneval_Old_Warn, Flag)));
 

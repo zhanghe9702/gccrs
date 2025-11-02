@@ -1918,17 +1918,21 @@ implementation approaches itself.",
  NULL)
 
 /* Return true if the target supports misaligned store/load of a
-   specific factor denoted in the third parameter.  The last parameter
-   is true if the access is defined in a packed struct.  */
+   specific factor denoted in the third parameter.  The second to the last
+   parameter is true if the access is defined in a packed struct and
+   the last parameter is true if the access is a gather/scatter.  */
 DEFHOOK
 (support_vector_misalignment,
  "This hook should return true if the target supports misaligned vector\n\
 store/load of a specific factor denoted in the @var{misalignment}\n\
-parameter.  The vector store/load should be of machine mode @var{mode} and\n\
-the elements in the vectors should be of type @var{type}.  @var{is_packed}\n\
-parameter is true if the memory access is defined in a packed struct.",
+parameter.  The vector store/load should be of machine mode @var{mode}.\n\
+The @var{is_packed} parameter is true if the original memory access is\n\
+not naturally aligned.  @var{is_gather_scatter} is true if the\n\
+load/store is a gather or scatter.  In that case misalignment\n\
+denotes the misalignment of @var{mode}'s element mode.",
  bool,
- (machine_mode mode, const_tree type, int misalignment, bool is_packed),
+ (machine_mode mode, int misalignment, bool is_packed,
+  bool is_gather_scatter),
  default_builtin_support_vector_misalignment)
 
 /* Returns the preferred mode for SIMD operations for the specified
@@ -2055,6 +2059,20 @@ all zeros.  GCC can then try to branch around the instruction instead.",
  bool,
  (unsigned ifn),
  default_empty_mask_is_expensive)
+
+/* Prefer gather/scatter loads/stores to e.g. elementwise accesses if\n\
+we cannot use a contiguous access.  */
+DEFHOOK
+(prefer_gather_scatter,
+ "This hook returns TRUE if gather loads or scatter stores are cheaper on\n\
+this target than a sequence of elementwise loads or stores.  The @var{mode}\n\
+and @var{scale} correspond to the @code{gather_load} and\n\
+@code{scatter_store} instruction patterns.  The @var{group_size} is the\n\
+number of scalar elements in each scalar loop iteration that are to be\n\
+combined into the vector.",
+ bool,
+ (machine_mode mode, int scale, unsigned int group_size),
+ hook_bool_mode_int_unsigned_false)
 
 /* Target builtin that implements vector gather operation.  */
 DEFHOOK
@@ -2587,6 +2605,19 @@ versions.  The dispatcher function is called to invoke the right function\n\
 version at run-time. @var{decl} is one version from a set of semantically\n\
 identical versions.",
  tree, (void *decl), NULL)
+
+/* Target hook is used to ignore certain versions specified in a target_clones
+   annoration.  STR is the version to be considered.  */
+DEFHOOK
+(check_target_clone_version ,
+ "This hook is used to check if a version specified in a @code{target_clones}\n\
+annotation is valid. @var{str} is the version to be considered.\n\
+If @var{loc} is not @code{NULL} then emit warnings for invalid versions at\n\
+that location.  Otherwise emit no diagnostics.\n\
+Returns @code{true} if @var{str} is a valid version string, and @code{false}\n\
+otherwise",
+ bool, (string_slice str, location_t *loc),
+ hook_stringslice_locationtptr_true)
 
 /* Returns a code for a target-specific builtin that implements
    reciprocal of a target-specific function, or NULL_TREE if not available.  */
@@ -3508,6 +3539,35 @@ the address space as registered with @code{c_register_addr_space}.\n\
 The default implementation does nothing.",
  void, (addr_space_t as, location_t loc),
  default_addr_space_diagnose_usage)
+
+/* Function to patch the address space of some compiler-generated
+   read-only data.  Used for optimization purposes only.  */
+DEFHOOK
+(for_artificial_rodata,
+ "Define this hook to return a named address space to be used for\n\
+@var{type}, usually the type of an artificial lookup-table that would\n\
+reside in @code{.rodata} and in the generic address space.\n\
+\n\
+The hook can be used to put compiler-generated, artificial lookup tables in\n\
+static storage into a non-generic address space when it is better suited\n\
+than the generic address space.\n\
+The compiler will generate all accesses to the respective data\n\
+so that all associated accesses will also use the specified address space\n\
+and pointer mode.\n\
+\n\
+@var{type} is the type of the lookup table. @var{purpose} specifies\n\
+the purpose of the lookup table.  It is one of:\n\
+@table @code\n\
+@item ARTIFICIAL_RODATA_CSWITCH\n\
+@file{tree-switch-conversion.cc} lowered a GIMPLE_SWITCH expressions\n\
+to something more efficient than a jump table.\n\
+@item ARTIFICIAL_RODATA_CRC\n\
+@file{gimple-crc-optimization.cc} optimized a CRC computation by\n\
+using a polynomial lookup table.\n\
+@end table\n\
+The default implementation of the hook returns @code{ADDR_SPACE_GENERIC}.",
+ addr_space_t, (tree type, enum artificial_rodata purpose),
+ default_addr_space_for_artificial_rodata)
 
 HOOK_VECTOR_END (addr_space)
 
@@ -6894,19 +6954,36 @@ changed via the optimize attribute or pragma, see\n\
  void, (void),
  hook_void_void)
 
-/* This function returns true if DECL1 and DECL2 are versions of the same
-   function.  DECL1 and DECL2 are function versions if and only if they
-   have the same function signature and different target specific attributes,
-   that is, they are compiled for different target machines.  */
+/* This function returns true if FN1 and FN2 define the same version of a
+   function.  */
 DEFHOOK
-(function_versions,
- "This target hook returns @code{true} if @var{DECL1} and @var{DECL2} are\n\
-versions of the same function.  @var{DECL1} and @var{DECL2} are function\n\
-versions if and only if they have the same function signature and\n\
-different target specific attributes, that is, they are compiled for\n\
-different target machines.",
- bool, (tree decl1, tree decl2),
- hook_bool_tree_tree_false)
+(same_function_versions,
+ "This target hook returns @code{true} if the target/target-version strings\n\
+@var{fn1} and @var{fn2} imply the same function version.",
+ bool, (string_slice fn1, string_slice fn2),
+ hook_stringslice_stringslice_unreachable)
+
+/* Checks if we can be certain that function DECL_A could resolve DECL_B.  */
+DEFHOOK
+(functions_b_resolvable_from_a,
+ "@var{decl_b} is a function declaration with a function multi-versioning\n\
+(FMV) attribute; this attribute is either @code{target} or\n\
+@code{target_version}, depending on @code{TARGET_HAS_FMV_TARGET_ATTRIBUTE}.\n\
+@var{decl_a} is a function declaration that may or may not have an FMV\n\
+attribute.\n\
+\n\
+Return true if we have enough information to determine that the\n\
+requirements of @var{decl_b}'s FMV attribute are met whenever @var{decl_a}\n\
+is executed, given that the target supports all features required by\n\
+function declaration @var{base}.\n\
+\n\
+The default implementation just checks whether @var{decl_a} has the same\n\
+FMV attribute as @var{decl_b}.  This is conservatively correct,\n\
+but ports can do better by taking the relationships between architecture\n\
+features into account.  For example, on AArch64, @code{sve} is present\n\
+whenever @code{sve2} is present.",
+ bool, (tree decl_a, tree decl_v, tree base),
+ functions_b_resolvable_from_a)
 
 /* Function to determine if one function can inline another function.  */
 #undef HOOK_PREFIX
@@ -7220,9 +7297,10 @@ It is false if we must use @command{collect2}.",
 DEFHOOKPOD
 (dtors_from_cxa_atexit,
  "This value is true if the target wants destructors to be queued to be\n\
-run from __cxa_atexit.  If this is the case then, for each priority level,\n\
-a new constructor will be entered that registers the destructors for that\n\
-level with __cxa_atexit (and there will be no destructors emitted).\n\
+run from @code{__cxa_atexit}.  If this is the case then, for each\n\
+priority level, a new constructor will be entered that registers the\n\
+destructors for that level with @code{__cxa_atexit} (and there will be\n\
+no destructors emitted).\n\
 It is false the method implied by @code{have_ctors_dtors} is used.",
  bool, false)
 
@@ -7457,11 +7535,11 @@ At preset, this feature does not support address spaces.  It also requires\n\
  bool, (), default_memtag_can_tag_addresses)
 
 DEFHOOK
-(tag_size,
+(tag_bitsize,
  "Return the size of a tag (in bits) for this platform.\n\
 \n\
 The default returns 8.",
-  uint8_t, (), default_memtag_tag_size)
+  uint8_t, (), default_memtag_tag_bitsize)
 
 DEFHOOK
 (granule_size,

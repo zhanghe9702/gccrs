@@ -98,12 +98,42 @@ test_deduction(Extents... exts)
 }
 
 constexpr bool
+test_deduction_from_constant()
+{
+  auto verify = [](auto actual, auto expected)
+    {
+      static_assert(std::same_as<decltype(actual), decltype(expected)>);
+      VERIFY(actual == expected);
+    };
+
+  constexpr auto i1 = std::integral_constant<size_t, 1>{};
+  constexpr auto i2 = std::integral_constant<int, 2>{};
+
+  verify(std::extents(1), std::extents<size_t, dyn>{1});
+  verify(std::extents(i1), std::extents<size_t, 1>{});
+  verify(std::extents(i2), std::extents<size_t, 2>{});
+  verify(std::extents(std::true_type{}, 2), std::dextents<size_t, 2>{1, 2});
+  verify(std::extents(std::false_type{}, 2), std::dextents<size_t, 2>{0, 2});
+
+#if __glibcxx_constant_wrapper
+  constexpr auto c2 = std::constant_wrapper<2>{};
+  verify(std::extents(c2), std::extents<size_t, 2>{});
+  verify(std::extents(1, c2), std::extents<size_t, dyn, 2>{1});
+  verify(std::extents(c2), std::extents<size_t, 2>{});
+  verify(std::extents(1, c2), std::extents<size_t, dyn, 2>{1});
+  verify(std::extents(std::cw<true>, c2), std::extents<size_t, dyn, 2>{1});
+#endif
+  return true;
+}
+
+constexpr bool
 test_deduction_all()
 {
   test_deduction<0>();
   test_deduction<1>(1);
   test_deduction<2>(1.0, 2.0f);
   test_deduction<3>(int(1), short(2), size_t(3));
+  test_deduction_from_constant();
   return true;
 }
 
@@ -138,6 +168,13 @@ static_assert(std::extents<int, 1, dyn>::static_extent(1) == dyn);
 
 static_assert(std::extents<int, dyn, dyn>::static_extent(0) == dyn);
 static_assert(std::extents<int, dyn, dyn>::static_extent(1) == dyn);
+
+// dims
+#if __glibcxx_mdspan >= 202406L
+static_assert(std::is_same_v<std::dims<0>, std::dextents<size_t, 0>>);
+static_assert(std::is_same_v<std::dims<3>, std::dextents<size_t, 3>>);
+static_assert(std::is_same_v<std::dims<3, int>, std::dextents<int, 3>>);
+#endif
 
 // extent
 template<typename Extent>

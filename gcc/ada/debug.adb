@@ -152,7 +152,7 @@ package body Debug is
    --  d_l  Disable strict alignment of array types with aliased component
    --  d_m  Run adareducer on crash
    --  d_n
-   --  d_o
+   --  d_o  Disable Backend_Overflow_Checks_On_Target; used for testing.
    --  d_p  Ignore assertion pragmas for elaboration
    --  d_q  Do not enforce freezing for equality operator of boolean subtype
    --  d_r  Disable the use of the return slot in functions
@@ -168,7 +168,7 @@ package body Debug is
    --  d_A  Stop generation of ALI file
    --  d_B  Warn on build-in-place function calls
    --  d_C
-   --  d_D  Use improved diagnostics
+   --  d_D
    --  d_E  Print diagnostics and switch repository
    --  d_F  Encode full invocation paths in ALI files
    --  d_G
@@ -186,8 +186,8 @@ package body Debug is
    --  d_S
    --  d_T  Output trace information on invocation path recording
    --  d_U  Disable prepending messages with "error:".
-   --  d_V  Enable verifications on the expanded tree
-   --  d_W
+   --  d_V  Enable VAST (verifications on the expanded tree)
+   --  d_W  Enable VAST in verbose mode
    --  d_X  Disable assertions to check matching of extra formals
    --  d_Y
    --  d_Z
@@ -995,6 +995,9 @@ package body Debug is
    --  d_l  The compiler does not enforce the strict alignment of array types
    --       that are declared with an aliased component.
 
+   --  d_o  The compiler disables Backend_Overflow_Checks_On_Target; used to
+   --       test the frontend support on targets without overflow checks.
+
    --  d_p  The compiler ignores calls to subprograms which verify the run-time
    --       semantics of invariants and postconditions in both the static and
    --       dynamic elaboration models.
@@ -1065,8 +1068,11 @@ package body Debug is
    --  d_U  Disable prepending 'error:' to error messages. This used to be the
    --       default and can be seen as the opposite of -gnatU.
 
-   --  d_V  Enable verification of the expanded code before calling the backend
-   --       and generate error messages on each inconsistency found.
+   --  d_V  Enable VAST (Verifier for the Ada Semantic Tree). This does
+   --       verification of the expanded code before calling the backend.
+
+   --  d_W  Same as d_V, but also prints lots of tracing/debugging output
+   --       as it walks the tree.
 
    --  d_X  Disable assertions to check matching of extra formals; switch added
    --       temporarily to disable these checks until this work is complete if

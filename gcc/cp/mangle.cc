@@ -55,6 +55,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "stor-layout.h"
 #include "flags.h"
 #include "attribs.h"
+#include "contracts.h"
 
 /* Debugging support.  */
 
@@ -203,6 +204,7 @@ static void write_conversion_operator_name (const tree);
 static void write_source_name (tree);
 static void write_literal_operator_name (tree);
 static void write_unnamed_type_name (const tree);
+static void write_unnamed_enum_name (const tree);
 static void write_closure_type_name (const tree);
 static int hwint_to_ascii (unsigned HOST_WIDE_INT, const unsigned int, char *,
 			   const unsigned int);
@@ -1591,7 +1593,9 @@ write_unqualified_name (tree decl)
       tree type = TREE_TYPE (decl);
 
       if (TREE_CODE (decl) == TYPE_DECL
-          && TYPE_UNNAMED_P (type))
+	  && enum_with_enumerator_for_linkage_p (type))
+	write_unnamed_enum_name (type);
+      else if (TREE_CODE (decl) == TYPE_DECL && TYPE_UNNAMED_P (type))
         write_unnamed_type_name (type);
       else if (TREE_CODE (decl) == TYPE_DECL && LAMBDA_TYPE_P (type))
         write_closure_type_name (type);
@@ -1818,6 +1822,17 @@ write_unnamed_type_name (const tree type)
 
   write_string ("Ut");
   write_compact_number (discriminator);
+}
+
+/* <unnamed-enum-name> ::= Ue <underlying type> <enumerator source-name> */
+
+static void
+write_unnamed_enum_name (const tree type)
+{
+  MANGLE_TRACE_TREE ("unnamed-enum-name", type);
+  write_string ("Ue");
+  write_type (ENUM_UNDERLYING_TYPE (type));
+  write_source_name (DECL_NAME (TREE_VALUE (TYPE_VALUES (type))));
 }
 
 /* ABI issue #47: if a function template parameter is not "natural" for its
@@ -2161,10 +2176,23 @@ write_real_cst (const tree value)
   int i, limit, dir;
 
   tree type = TREE_TYPE (value);
-  int words = GET_MODE_BITSIZE (SCALAR_FLOAT_TYPE_MODE (type)) / 32;
+  int bits = GET_MODE_BITSIZE (SCALAR_FLOAT_TYPE_MODE (type));
+  int words = bits / 32;
 
   real_to_target (target_real, &TREE_REAL_CST (value),
 		  TYPE_MODE (type));
+
+  if (words == 0)
+    {
+      /* _Float16 and std::bfloat16_t are the only supported types smaller than
+	 32 bits.  */
+      gcc_assert (bits == 16);
+      sprintf (buffer, "%04lx", (unsigned long) target_real[0]);
+      write_chars (buffer, 4);
+      return;
+    }
+
+  gcc_assert (bits % 32 == 0);
 
   /* The value in target_real is in the target word order,
      so we must write it out backward if that happens to be
@@ -2174,6 +2202,29 @@ write_real_cst (const tree value)
     i = 0, limit = words, dir = 1;
   else
     i = words - 1, limit = -1, dir = -1;
+
+  if (GET_MODE_PRECISION (SCALAR_FLOAT_TYPE_MODE (type)) == 80
+      && abi_check (21))
+    {
+      /* For -fabi-version=21 and above mangle
+	 Intel/Motorola extended format 1.0L as
+	 3fff8000000000000000
+	 rather than the previous
+	 0000000000003fff8000000000000000 (x86_64)
+	 00003fff8000000000000000 (ia32)
+	 3fff00008000000000000000 (m68k -mc68020)
+	 i.e. without any embedded padding bits.  */
+      if (words == 4)
+	i += dir;
+      else
+	gcc_assert (words == 3);
+      unsigned long val = (unsigned long) target_real[i];
+      if (REAL_MODE_FORMAT (SCALAR_FLOAT_TYPE_MODE (type))->signbit_ro == 95)
+	val >>= 16;
+      sprintf (buffer, "%04lx", val);
+      write_chars (buffer, 4);
+      i += dir;
+    }
 
   for (; i != limit; i += dir)
     {
@@ -3745,11 +3796,59 @@ write_expression (tree expr)
 		      || !zero_init_expr_p (ce->value))
 		    last_nonzero = i;
 
+	      tree prev_field = NULL_TREE;
 	      if (undigested || last_nonzero != UINT_MAX)
 		for (HOST_WIDE_INT i = 0; vec_safe_iterate (elts, i, &ce); ++i)
 		  {
 		    if (i > last_nonzero)
 		      break;
+		    if (!undigested && !CONSTRUCTOR_NO_CLEARING (expr)
+			&& (TREE_CODE (etype) == RECORD_TYPE
+			    || TREE_CODE (etype) == ARRAY_TYPE))
+		      {
+			/* Write out any implicit non-trailing zeros
+			   (which we neglected to do before v21).  */
+			if (TREE_CODE (etype) == RECORD_TYPE)
+			  {
+			    tree field;
+			    if (i == 0)
+			      field = first_field (etype);
+			    else
+			      field = DECL_CHAIN (prev_field);
+			    for (;;)
+			      {
+				field = next_subobject_field (field);
+				if (field == ce->index)
+				  break;
+				if (abi_check (21))
+				  write_expression (build_zero_cst
+						    (TREE_TYPE (field)));
+				field = DECL_CHAIN (field);
+			      }
+			  }
+			else if (TREE_CODE (etype) == ARRAY_TYPE)
+			  {
+			    unsigned HOST_WIDE_INT j;
+			    if (i == 0)
+			      j = 0;
+			    else
+			      j = 1 + tree_to_uhwi (prev_field);
+			    unsigned HOST_WIDE_INT k;
+			    if (TREE_CODE (ce->index) == RANGE_EXPR)
+			      k = tree_to_uhwi (TREE_OPERAND (ce->index, 0));
+			    else
+			      k = tree_to_uhwi (ce->index);
+			    tree zero = NULL_TREE;
+			    for (; j < k; ++j)
+			      if (abi_check (21))
+				{
+				  if (!zero)
+				    zero = build_zero_cst (TREE_TYPE (etype));
+				  write_expression (zero);
+				}
+			  }
+		      }
+
 		    if (!undigested && TREE_CODE (etype) == UNION_TYPE)
 		      {
 			/* Express the active member as a designator.  */
@@ -3794,6 +3893,9 @@ write_expression (tree expr)
 		    else
 		      for (unsigned j = 0; j < reps; ++j)
 			write_expression (ce->value);
+		    prev_field = ce->index;
+		    if (prev_field && TREE_CODE (prev_field) == RANGE_EXPR)
+		      prev_field = TREE_OPERAND (prev_field, 1);
 		  }
 	    }
 	  else

@@ -72,7 +72,7 @@ along with GCC; see the file COPYING3.  If not see
 enum jump_func_type
 {
   IPA_JF_UNKNOWN = 0,  /* newly allocated and zeroed jump functions default */
-  IPA_JF_CONST,             /* represented by field costant */
+  IPA_JF_CONST,             /* represented by field constant */
   IPA_JF_PASS_THROUGH,	    /* represented by field pass_through */
   IPA_JF_LOAD_AGG,	    /* represented by field load_agg */
   IPA_JF_ANCESTOR	    /* represented by field ancestor */
@@ -1275,10 +1275,6 @@ bool unadjusted_ptr_and_unit_offset (tree op, tree *ret,
 				     poly_int64 *offset_ret);
 void ipa_get_range_from_ip_invariant (vrange &r, tree val, cgraph_node *node);
 void ipa_prop_cc_finalize (void);
-
-/* From tree-sra.cc:  */
-tree build_ref_for_offset (location_t, tree, poly_int64, bool, tree,
-			   gimple_stmt_iterator *, bool);
 
 /* In ipa-cp.cc  */
 void ipa_cp_cc_finalize (void);

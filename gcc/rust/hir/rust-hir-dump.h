@@ -169,6 +169,7 @@ private:
   virtual void visit (AsyncBlockExpr &) override;
   virtual void visit (InlineAsm &) override;
   virtual void visit (LlvmInlineAsm &) override;
+  virtual void visit (OffsetOf &) override;
 
   virtual void visit (TypeParam &) override;
   virtual void visit (ConstGenericParam &) override;
@@ -222,14 +223,18 @@ private:
   virtual void visit (StructPatternFieldIdent &) override;
   virtual void visit (StructPattern &) override;
 
-  virtual void visit (TupleStructItemsNoRange &) override;
-  virtual void visit (TupleStructItemsRange &) override;
+  virtual void visit (TupleStructItemsNoRest &) override;
+  virtual void visit (TupleStructItemsHasRest &) override;
   virtual void visit (TupleStructPattern &) override;
 
-  virtual void visit (TuplePatternItemsMultiple &) override;
-  virtual void visit (TuplePatternItemsRanged &) override;
+  virtual void visit (TuplePatternItemsNoRest &) override;
+  virtual void visit (TuplePatternItemsHasRest &) override;
   virtual void visit (TuplePattern &) override;
+
+  virtual void visit (SlicePatternItemsNoRest &) override;
+  virtual void visit (SlicePatternItemsHasRest &) override;
   virtual void visit (SlicePattern &) override;
+
   virtual void visit (AltPattern &) override;
 
   virtual void visit (EmptyStmt &) override;

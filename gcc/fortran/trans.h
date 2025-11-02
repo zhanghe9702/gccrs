@@ -105,10 +105,6 @@ typedef struct gfc_se
   /* If set, will pass subref descriptors without a temporary.  */
   unsigned force_no_tmp:1;
 
-  /* Unconditionally calculate offset for array segments and constant
-     arrays in gfc_conv_expr_descriptor.  */
-  unsigned use_offset:1;
-
   unsigned want_coarray:1;
 
   /* Scalarization parameters.  */
@@ -961,6 +957,7 @@ extern GTY(()) tree gfor_fndecl_string_scan;
 extern GTY(()) tree gfor_fndecl_string_verify;
 extern GTY(()) tree gfor_fndecl_string_trim;
 extern GTY(()) tree gfor_fndecl_string_minmax;
+extern GTY(()) tree gfor_fndecl_string_split;
 extern GTY(()) tree gfor_fndecl_adjustl;
 extern GTY(()) tree gfor_fndecl_adjustr;
 extern GTY(()) tree gfor_fndecl_select_string;
@@ -972,6 +969,7 @@ extern GTY(()) tree gfor_fndecl_string_scan_char4;
 extern GTY(()) tree gfor_fndecl_string_verify_char4;
 extern GTY(()) tree gfor_fndecl_string_trim_char4;
 extern GTY(()) tree gfor_fndecl_string_minmax_char4;
+extern GTY(()) tree gfor_fndecl_string_split_char4;
 extern GTY(()) tree gfor_fndecl_adjustl_char4;
 extern GTY(()) tree gfor_fndecl_adjustr_char4;
 extern GTY(()) tree gfor_fndecl_select_string_char4;
@@ -985,6 +983,12 @@ extern GTY(()) tree gfor_fndecl_iargc;
 extern GTY(()) tree gfor_fndecl_kill;
 extern GTY(()) tree gfor_fndecl_kill_sub;
 extern GTY(()) tree gfor_fndecl_is_contiguous0;
+extern GTY(()) tree gfor_fndecl_fstat_i4_sub;
+extern GTY(()) tree gfor_fndecl_fstat_i8_sub;
+extern GTY(()) tree gfor_fndecl_lstat_i4_sub;
+extern GTY(()) tree gfor_fndecl_lstat_i8_sub;
+extern GTY(()) tree gfor_fndecl_stat_i4_sub;
+extern GTY(()) tree gfor_fndecl_stat_i8_sub;
 
 /* Implemented in Fortran.  */
 extern GTY(()) tree gfor_fndecl_sc_kind;

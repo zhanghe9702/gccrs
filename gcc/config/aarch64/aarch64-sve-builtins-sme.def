@@ -92,6 +92,12 @@ DEF_SME_FUNCTION (svstr_zt, str_zt, none, none)
 DEF_SME_FUNCTION (svzero_zt, inherent_zt, none, none)
 #undef REQUIRED_EXTENSIONS
 
+#define REQUIRED_EXTENSIONS streaming_only (AARCH64_FL_SME2 \
+					    | AARCH64_FL_FAMINMAX)
+DEF_SME_FUNCTION_GS (svamin, binary_opt_single_n, all_float, x24, none)
+DEF_SME_FUNCTION_GS (svamax, binary_opt_single_n, all_float, x24, none)
+#undef REQUIRED_EXTENSIONS
+
 /* The d_za entries in this section just declare C _za64 overloads,
    which will then be resolved to either an integer function or a
    floating-point function.  They are needed because the integer and
@@ -245,6 +251,12 @@ DEF_SME_ZA_FUNCTION_GS (svreadz_ver, read_za, za_bhsd_data, vg24, none)
 DEF_SME_ZA_FUNCTION_GS (svzero, inherent_za_slice, d_za, vg1x24, none)
 DEF_SME_ZA_FUNCTION_GS (svzero, inherent_za_slice, d_za, vg2, none)
 DEF_SME_ZA_FUNCTION_GS (svzero, inherent_za_slice, d_za, vg4, none)
+#undef REQUIRED_EXTENSIONS
+
+#define REQUIRED_EXTENSIONS streaming_only (AARCH64_FL_SME_LUTv2)
+DEF_SME_FUNCTION_GS (svwrite_zt,      write_zt,      all_data,  none, none)
+DEF_SME_FUNCTION_GS (svwrite_lane_zt, write_lane_zt, all_data,  none, none)
+DEF_SME_FUNCTION_GS (svluti4_zt,      luti4_zt,      b_integer, x4,   none)
 #undef REQUIRED_EXTENSIONS
 
 #undef DEF_SME_ZA_FUNCTION

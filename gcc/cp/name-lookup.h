@@ -142,15 +142,23 @@ struct GTY(()) binding_cluster
 #define BINDING_VECTOR_CLUSTER(NODE,IX) \
   (((tree_binding_vec *)BINDING_VECTOR_CHECK (NODE))->vec[IX])
 
+struct module_tree_map_traits
+  : simple_hashmap_traits<int_hash<unsigned, 0>, tree> {};
+typedef hash_map<unsigned, tree, module_tree_map_traits> module_tree_map_t;
+
 struct GTY(()) tree_binding_vec {
   struct tree_base base;
   tree name;
+  module_tree_map_t *internal_decls;
   binding_cluster GTY((length ("%h.base.u.dependence_info.base"))) vec[1];
 };
 
 /* The name of a module vector.  */
 #define BINDING_VECTOR_NAME(NODE) \
   (((tree_binding_vec *)BINDING_VECTOR_CHECK (NODE))->name)
+/* A collection of internal functions for ADL in this binding.  */
+#define BINDING_VECTOR_INTERNAL_DECLS(NODE) \
+  (((tree_binding_vec *)BINDING_VECTOR_CHECK (NODE))->internal_decls)
 
 /* tree_binding_vec does uses  base.u.dependence_info.base field for
    length.  It does not have lang_flag etc available!  */
@@ -165,6 +173,11 @@ struct GTY(()) tree_binding_vec {
    entity.  */
 #define BINDING_VECTOR_PARTITION_DUPS_P(NODE) \
   (BINDING_VECTOR_CHECK (NODE)->base.volatile_flag)
+
+/* True if the binding slot has internal-linkage functions that should
+   cause ADL to error.  */
+#define MODULE_BINDING_INTERNAL_DECLS_P(NODE) \
+  (OVERLOAD_CHECK (NODE)->base.private_flag)
 
 /* These two flags indicate the provenence of the bindings on this
    particular vector slot.  We can of course determine this from slot
@@ -198,6 +211,7 @@ enum scope_kind {
   sk_catch,	     /* A catch-block.  */
   sk_for,	     /* The scope of the variable declared in a
 			init-statement.  */
+  sk_template_for,   /* Ditto for expansion statements.  */
   sk_cond,	     /* The scope of the variable declared in the condition
 			of an if or switch statement.  */
   sk_stmt_expr,	     /* GNU statement expression block.  */
@@ -214,6 +228,7 @@ enum scope_kind {
 			"template <>", this scope is always empty.  */
   sk_transaction,    /* A synchronized or atomic statement.  */
   sk_omp,	     /* An OpenMP structured block.  */
+  sk_lambda,	     /* A lambda scope.  */
   sk_count	     /* Number of scope_kind enumerations.  */
 };
 
@@ -287,7 +302,7 @@ struct GTY(()) cp_binding_level {
   /* The kind of scope that this object represents.  However, a
       SK_TEMPLATE_SPEC scope is represented with KIND set to
       SK_TEMPLATE_PARMS and EXPLICIT_SPEC_P set to true.  */
-  ENUM_BITFIELD (scope_kind) kind : 4;
+  ENUM_BITFIELD (scope_kind) kind : 5;
 
   /* True if this scope is an SK_TEMPLATE_SPEC scope.  This field is
       only valid if KIND == SK_TEMPLATE_PARMS.  */
@@ -315,7 +330,7 @@ struct GTY(()) cp_binding_level {
      parent scope.  */
   unsigned artificial : 1;
 
-  /* 21 bits left to fill a 32-bit word.  */
+  /* 20 bits left to fill a 32-bit word.  */
 };
 
 /* The binding level currently in effect.  */
@@ -489,7 +504,8 @@ extern bool import_module_binding (tree ctx, tree name, unsigned mod,
 				   unsigned snum);
 extern bool set_module_binding (tree ctx, tree name, unsigned mod,
 				bool global_p, bool partition_p,
-				tree value, tree type, tree visible);
+				tree value, tree type, tree visible,
+				tree internal);
 extern void add_module_namespace_decl (tree ns, tree decl);
 
 enum WMB_Flags

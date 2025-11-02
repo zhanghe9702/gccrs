@@ -21,6 +21,7 @@
 
 #include "optional.h"
 #include "rust-ast.h"
+#include "rust-expr.h"
 #include "rust-path.h"
 
 namespace Rust {
@@ -570,6 +571,12 @@ public:
     return *type;
   }
 
+  std::unique_ptr<TypeNoBounds> &get_type_pointed_to_ptr ()
+  {
+    rust_assert (type != nullptr);
+    return type;
+  }
+
   // Getter for direct access to the type unique_ptr
   std::unique_ptr<TypeNoBounds> &get_type_ptr () { return type; }
 
@@ -645,6 +652,12 @@ public:
     return *type;
   }
 
+  std::unique_ptr<TypeNoBounds> &get_type_referenced_ptr ()
+  {
+    rust_assert (type != nullptr);
+    return type;
+  }
+
   bool get_has_mut () const { return has_mut; }
 
   Lifetime &get_lifetime () { return lifetime.value (); }
@@ -678,27 +691,26 @@ protected:
 class ArrayType : public TypeNoBounds
 {
   std::unique_ptr<Type> elem_type;
-  std::unique_ptr<Expr> size;
+  AnonConst size;
   location_t locus;
 
 public:
   // Constructor requires pointers for polymorphism
-  ArrayType (std::unique_ptr<Type> type, std::unique_ptr<Expr> array_size,
-	     location_t locus)
+  ArrayType (std::unique_ptr<Type> type, AnonConst array_size, location_t locus)
     : elem_type (std::move (type)), size (std::move (array_size)), locus (locus)
   {}
 
   // Copy constructor requires deep copies of both unique pointers
   ArrayType (ArrayType const &other)
-    : elem_type (other.elem_type->clone_type ()),
-      size (other.size->clone_expr ()), locus (other.locus)
+    : elem_type (other.elem_type->clone_type ()), size (other.size),
+      locus (other.locus)
   {}
 
   // Overload assignment operator to deep copy pointers
   ArrayType &operator= (ArrayType const &other)
   {
     elem_type = other.elem_type->clone_type ();
-    size = other.size->clone_expr ();
+    size = other.size;
     locus = other.locus;
     return *this;
   }
@@ -720,17 +732,21 @@ public:
     return *elem_type;
   }
 
-  // TODO: would a "vis_expr" be better?
-  Expr &get_size_expr ()
+  std::unique_ptr<Type> &get_elem_type_ptr ()
   {
-    rust_assert (size != nullptr);
-    return *size;
+    rust_assert (elem_type != nullptr);
+    return elem_type;
+  }
+
+  // TODO: would a "vis_expr" be better?
+  AnonConst &get_size_expr ()
+  {
+    // rust_assert (size != nullptr);
+
+    return size;
   }
 
   std::unique_ptr<Type> &get_element_type () { return elem_type; }
-
-  // Additional getter for direct access to the size expr unique_ptr
-  std::unique_ptr<Expr> &get_size_ptr () { return size; }
 
 protected:
   /* Use covariance to implement clone function as returning this object rather
@@ -741,10 +757,9 @@ protected:
   }
   ArrayType *reconstruct_impl () const override
   {
-    return new ArrayType (
-      elem_type->reconstruct (),
-      size->clone_expr () /* FIXME: This should be `reconstruct_expr()` */,
-      locus);
+    return new ArrayType (elem_type->reconstruct (),
+			  size /* FIXME: This should be `reconstruct_expr()` */,
+			  locus);
   }
 };
 
@@ -989,7 +1004,7 @@ public:
       return_type (std::move (type)), locus (locus)
   {
     if (!variadic_attrs.empty ())
-      is_variadic = true;
+      _is_variadic = true;
   }
 
   // Copy constructor with clone
@@ -1047,14 +1062,24 @@ public:
     return *return_type;
   }
 
+  std::unique_ptr<TypeNoBounds> &get_return_type_ptr ()
+  {
+    rust_assert (has_return_type ());
+    return return_type;
+  }
+
   FunctionQualifiers &get_function_qualifiers () { return function_qualifiers; }
 
   BareFunctionType *reconstruct_impl () const override
   {
+    std::unique_ptr<TypeNoBounds> ret_type = nullptr;
+    if (return_type != nullptr)
+      ret_type = return_type->reconstruct ();
+
     return new BareFunctionType (
       for_lifetimes, function_qualifiers, params,
       /* FIXME: Should params be reconstruct() as well? */
-      _is_variadic, variadic_attrs, return_type->reconstruct (), locus);
+      _is_variadic, variadic_attrs, std::move (ret_type), locus);
   }
 
 protected:

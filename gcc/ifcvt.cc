@@ -101,7 +101,7 @@ static rtx_insn *block_has_only_trap (basic_block);
 static void init_noce_multiple_sets_info (basic_block,
   auto_delete_vec<noce_multiple_sets_info> &);
 static bool noce_convert_multiple_sets_1 (struct noce_if_info *,
-  auto_delete_vec<noce_multiple_sets_info> &, int *);
+  auto_delete_vec<noce_multiple_sets_info> &, int *, bool *);
 
 /* Count the number of non-jump active insns in BB.  */
 
@@ -1178,6 +1178,211 @@ noce_try_move (struct noce_if_info *if_info)
     }
   return false;
 }
+
+/* If a sign bit test is selecting across constants, we may be able
+   to generate efficient code utilizing the -1/0 result of a sign
+   bit splat idiom. 
+
+   Do this before trying the generalized conditional move as these
+   (when applicable) are hopefully faster than a conditional move.  */
+
+static bool
+noce_try_sign_bit_splat (struct noce_if_info *if_info)
+{
+  rtx cond = if_info->cond;
+  enum rtx_code code = GET_CODE (cond);
+
+  /* We're looking for sign bit tests, so only a few cases are
+     interesting.  LT/GE 0 LE/GT -1.  */
+  if (((code == LT || code == GE)
+       && XEXP (cond, 1) == CONST0_RTX (GET_MODE (cond)))
+      || ((code == LE || code == GT)
+	  && XEXP (cond, 1) == CONSTM1_RTX (GET_MODE (cond))))
+    ;
+  else
+    return false;
+
+  /* It would be good if this could be extended since constant synthesis
+     on some platforms will result in blocks which fail this test.  */
+  if (!noce_simple_bbs (if_info))
+    return false;
+
+  /* Only try this for constants in the true/false arms and a REG
+     destination.   We could select between 0 and a REG pretty
+     easily with a logical AND.  */
+  if (!CONST_INT_P (if_info->a)
+      || !CONST_INT_P (if_info->b)
+      || !REG_P (if_info->x))
+    return false;
+
+  machine_mode mode = GET_MODE (if_info->x);
+
+  /* If the mode of the destination does not match the mode of
+     the value we're testing, then this optimization is not valid.  */
+  if (mode != GET_MODE (XEXP (cond, 0)))
+    return false;
+
+  HOST_WIDE_INT val_a = INTVAL (if_info->a);
+  HOST_WIDE_INT val_b = INTVAL (if_info->b);
+
+  rtx_insn *seq;
+  start_sequence ();
+
+  /* We're testing the sign bit of this operand.  */
+  rtx condop = XEXP (cond, 0);
+
+  /* To splat the sign bit we arithmetically shift the
+     input value right by the size of the object - 1 bits. 
+
+     Note some targets do not have strong shifters, but do have
+     alternative ways to generate the sign bit splat.  The
+     profitability test when we end the sequence should reject
+     cases when the branchy sequence is better.  */
+  int splat_count = GET_MODE_BITSIZE (GET_MODE (condop)).to_constant () - 1;
+  rtx splat = GEN_INT (splat_count);
+
+  rtx temp;
+  temp = expand_simple_binop (GET_MODE (XEXP (cond, 0)), ASHIFTRT,
+			      XEXP (cond, 0), splat, NULL_RTX,
+			      false, OPTAB_WIDEN);
+  if (!temp)
+    goto fail;
+
+  /* IOR of anything with -1 still results in -1.  So we can
+     IOR the other operand to generate a select between -1 and
+     an arbitrary constant.  */
+  if (val_a == -1)
+    {
+      if (code == LT || code == LE)
+	{
+	  temp = expand_simple_unop (mode, NOT, temp, NULL_RTX, true);
+	  if (!temp)
+	    goto fail;
+	}
+
+      temp = expand_simple_binop (mode, IOR, temp, GEN_INT (val_b),
+				  if_info->x, false, OPTAB_WIDEN);
+    }
+  /* AND of anything with 0 is still zero.  So we can AND
+     with the -1 operand with the a constant to select
+     between the constant and zero.  */
+  else if (val_b == 0)
+    {
+      if (code == LT || code == LE)
+	{
+	  temp = expand_simple_unop (mode, NOT, temp, NULL_RTX, true);
+	  if (!temp)
+	    goto fail;
+	}
+
+      /* Since we know the value is currenly -1 or 0, some constants may
+	 be more easily handled by shifting the value again.  A right
+	 logical shift constructs 2^n-1 constants a left shift constructs
+	 ~(2^n-1) constants.  Given some targets don't have efficient
+	 shifts, generate the obvious RTL for both forms and select the
+	 one with smaller cost.  */
+      rtx and_form = gen_rtx_AND (mode, temp, GEN_INT (val_a));
+      rtx shift_left = gen_rtx_ASHIFT (mode, temp, GEN_INT (ctz_hwi (val_a)));
+      HOST_WIDE_INT rshift_count
+	= (clz_hwi (val_a) & (GET_MODE_PRECISION (mode).to_constant() - 1));
+      rtx shift_right = gen_rtx_LSHIFTRT (mode, temp, GEN_INT (rshift_count));
+      bool speed_p = optimize_insn_for_speed_p ();
+      if (exact_log2 (val_a + 1) >= 0
+	  && (rtx_cost (shift_right, mode, SET, 1, speed_p)
+	      < rtx_cost (and_form, mode, SET, 1, speed_p)))
+	temp = expand_simple_binop (mode, LSHIFTRT, temp,
+				    GEN_INT (rshift_count),
+				    if_info->x, false, OPTAB_WIDEN);
+      else if (exact_log2 (~val_a + 1) >= 0
+	       && (rtx_cost (shift_left, mode, SET, 1, speed_p)
+		   < rtx_cost (and_form, mode, SET, 1, speed_p)))
+	temp = expand_simple_binop (mode, ASHIFT, temp,
+				    GEN_INT (ctz_hwi (val_a)),
+				    if_info->x, false, OPTAB_WIDEN);
+      else
+	temp = expand_simple_binop (mode, AND, temp, GEN_INT (val_a),
+				    if_info->x, false, OPTAB_WIDEN);
+    }
+  /* Same cases, but with the test or arms swapped.  These
+     can be realized as well, though it typically costs
+     an extra instruction.  */
+  else if (val_b == -1)
+    {
+      if (code != LT && code != LE)
+	{
+	  temp = expand_simple_unop (mode, NOT, temp, NULL_RTX, true);
+	  if (!temp)
+	    goto fail;
+	}
+
+      temp = expand_simple_binop (mode, IOR, temp, GEN_INT (val_a),
+				  if_info->x, false, OPTAB_WIDEN);
+    }
+  else if (val_a == 0)
+    {
+      if (code != LT && code != LE)
+	{
+	  temp = expand_simple_unop (mode, NOT, temp, NULL_RTX, true);
+	  if (!temp)
+	    goto fail;
+	}
+
+      /* Since we know the value is currenly -1 or 0, some constants may
+	 be more easily handled by shifting the value again.  A right
+	 logical shift constructs 2^n-1 constants a left shift constructs
+	 ~(2^n-1) constants.  Given some targets don't have efficient
+	 shifts, generate the obvious RTL for both forms and select the
+	 one with smaller cost.  */
+      rtx and_form = gen_rtx_AND (mode, temp, GEN_INT (val_b));
+      rtx shift_left = gen_rtx_ASHIFT (mode, temp, GEN_INT (ctz_hwi (val_b)));
+      HOST_WIDE_INT rshift_count
+	= (clz_hwi (val_b) & (GET_MODE_PRECISION (mode).to_constant() - 1));
+      rtx shift_right = gen_rtx_LSHIFTRT (mode, temp, GEN_INT (rshift_count));
+      bool speed_p = optimize_insn_for_speed_p ();
+      if (exact_log2 (val_b + 1) >= 0
+	  && (rtx_cost (shift_right, mode, SET, 1, speed_p)
+	      < rtx_cost (and_form, mode, SET, 1, speed_p)))
+	temp = expand_simple_binop (mode, LSHIFTRT, temp,
+				    GEN_INT (rshift_count),
+				    if_info->x, false, OPTAB_WIDEN);
+      else if (exact_log2 (~val_b + 1) >= 0
+	       && (rtx_cost (shift_left, mode, SET, 1, speed_p)
+		   < rtx_cost (and_form, mode, SET, 1, speed_p)))
+	temp = expand_simple_binop (mode, ASHIFT, temp,
+				    GEN_INT (ctz_hwi (val_b)),
+				    if_info->x, false, OPTAB_WIDEN);
+      else
+        temp = expand_simple_binop (mode, AND, temp, GEN_INT (val_b),
+				    if_info->x, false, OPTAB_WIDEN);
+    }
+  /* Nothing worked.  */
+  else
+    temp = NULL_RTX;
+
+  if (!temp)
+    goto fail;
+
+  /* Move into the final destination if the value wasn't
+     constructed there.  */
+  if (if_info->x != temp)
+    emit_move_insn (if_info->x, temp);
+
+  /* This ends the sequence and tests the cost model.  */
+  seq = end_ifcvt_sequence (if_info);
+  if (!seq || !targetm.noce_conversion_profitable_p (seq, if_info))
+    return false;
+
+  /* Everything looks good.  Install the if-converted sequence.  */
+  emit_insn_before_setloc (seq, if_info->jump,
+			   INSN_LOCATION (if_info->insn_a));
+  if_info->transform_name = "splat_sign_bit_trivial";
+  return true;
+
+ fail:
+  end_ifcvt_sequence (if_info);
+  return false;
+}
+
 
 /* Try forming an IF_THEN_ELSE (cond, b, a) and collapsing that
    through simplify_rtx.  Sometimes that can eliminate the IF_THEN_ELSE.
@@ -3492,28 +3697,27 @@ noce_convert_multiple_sets (struct noce_if_info *if_info)
 
   int last_needs_comparison = -1;
 
+  bool use_cond_earliest = false;
+
   bool ok = noce_convert_multiple_sets_1
-    (if_info, insn_info, &last_needs_comparison);
+    (if_info, insn_info, &last_needs_comparison, &use_cond_earliest);
   if (!ok)
       return false;
 
-  /* If there are insns that overwrite part of the initial
-     comparison, we can still omit creating temporaries for
-     the last of them.
-     As the second try will always create a less expensive,
-     valid sequence, we do not need to compare and can discard
-     the first one.  */
-  if (last_needs_comparison != -1)
-    {
-      end_sequence ();
-      start_sequence ();
-      ok = noce_convert_multiple_sets_1
-	(if_info, insn_info, &last_needs_comparison);
-      /* Actually we should not fail anymore if we reached here,
-	 but better still check.  */
-      if (!ok)
-	  return false;
-    }
+  /* Always perform a second attempt that uses information gathered in the
+     first.  At least we can omit creating temporaries until we definitely
+     need them.  The sequence created in the second attempt is never worse
+     than the first.  */
+
+  end_sequence ();
+  start_sequence ();
+  ok = noce_convert_multiple_sets_1
+    (if_info, insn_info, &last_needs_comparison, &use_cond_earliest);
+
+  /* Actually we should not fail anymore if we reached here,
+     but better still check.  */
+  if (!ok)
+    return false;
 
   /* We must have seen some sort of insn to insert, otherwise we were
      given an empty BB to convert, and we can't handle that.  */
@@ -3541,11 +3745,21 @@ noce_convert_multiple_sets (struct noce_if_info *if_info)
   /* Actually emit the sequence if it isn't too expensive.  */
   rtx_insn *seq = get_insns ();
 
+  /* If the created sequence does not use cond_earliest (but the jump
+     does) add its cost to the original_cost before comparing costs.  */
+  unsigned int original_cost = if_info->original_cost;
+  if (if_info->jump != if_info->cond_earliest && !use_cond_earliest)
+    if_info->original_cost += insn_cost (if_info->cond_earliest,
+					 if_info->speed_p);
+
   if (!targetm.noce_conversion_profitable_p (seq, if_info))
     {
       end_sequence ();
       return false;
     }
+
+  /* Restore the original cost in case we do not succeed below.  */
+  if_info->original_cost = original_cost;
 
   for (insn = seq; insn; insn = NEXT_INSN (insn))
     set_used_flags (insn);
@@ -3600,7 +3814,8 @@ noce_convert_multiple_sets (struct noce_if_info *if_info)
 static bool
 noce_convert_multiple_sets_1 (struct noce_if_info *if_info,
 			      auto_delete_vec<noce_multiple_sets_info> &insn_info,
-			      int *last_needs_comparison)
+			      int *last_needs_comparison,
+			      bool *use_cond_earliest)
 {
   basic_block then_bb = if_info->then_bb;
   rtx_insn *jump = if_info->jump;
@@ -3619,6 +3834,7 @@ noce_convert_multiple_sets_1 (struct noce_if_info *if_info,
   rtx_insn *insn;
   int count = 0;
   bool second_try = *last_needs_comparison != -1;
+  *use_cond_earliest = false;
 
   FOR_BB_INSNS (then_bb, insn)
     {
@@ -3795,6 +4011,7 @@ noce_convert_multiple_sets_1 (struct noce_if_info *if_info,
 	  temp_dest = temp_dest2;
 	  if (!second_try && read_comparison)
 	    *last_needs_comparison = count;
+	  *use_cond_earliest = true;
 	}
       else
 	{
@@ -4024,16 +4241,13 @@ noce_process_if_block (struct noce_if_info *if_info)
      to calculate a value for x.
      ??? For future expansion, further expand the "multiple X" rules.  */
 
-  /* First look for multiple SETS.  The original costs already include
-     a base cost of COSTS_N_INSNS (2): one instruction for the compare
-     (which we will be needing either way) and one instruction for the
-     branch.  When comparing costs we want to use the branch instruction
-     cost and the sets vs. the cmovs generated here.  Therefore subtract
-     the costs of the compare before checking.
-     ??? Actually, instead of the branch instruction costs we might want
-     to use COSTS_N_INSNS (BRANCH_COST ()) as in other places.  */
+  /* First look for multiple SETS.
+     The original costs already include costs for the jump insn as well
+     as for a CC comparison if there is any.
+     If a target re-uses the existing CC comparison we keep track of that
+     and add the costs before default noce_conversion_profitable_p.  */
 
-  unsigned potential_cost = if_info->original_cost - COSTS_N_INSNS (1);
+  unsigned potential_cost = if_info->original_cost;
   unsigned old_cost = if_info->original_cost;
   if (!else_bb
       && HAVE_conditional_move
@@ -4237,6 +4451,8 @@ noce_process_if_block (struct noce_if_info *if_info)
     goto success;
   if (!targetm.have_conditional_execution ()
       && noce_try_store_flag_constants (if_info))
+    goto success;
+  if (noce_try_sign_bit_splat (if_info))
     goto success;
   if (HAVE_conditional_move
       && noce_try_cmove (if_info))
@@ -4713,11 +4929,10 @@ noce_find_if_block (basic_block test_bb, edge then_edge, edge else_edge,
     = targetm.max_noce_ifcvt_seq_cost (then_edge);
   /* We'll add in the cost of THEN_BB and ELSE_BB later, when we check
      that they are valid to transform.  We can't easily get back to the insn
-     for COND (and it may not exist if we had to canonicalize to get COND),
-     and jump_insns are always given a cost of 1 by seq_cost, so treat
-     both instructions as having cost COSTS_N_INSNS (1).  */
-  if_info.original_cost = COSTS_N_INSNS (2);
-
+     for COND (and it may not exist if we had to canonicalize to get COND).
+     It is assumed that the costs of a jump insn are dependent on the
+     branch costs.  */
+  if_info.original_cost += insn_cost (if_info.jump, if_info.speed_p);
 
   /* Do the real work.  */
 

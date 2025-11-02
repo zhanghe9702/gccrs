@@ -4273,6 +4273,7 @@ package body Exp_Ch9 is
                    Defining_Identifier => Obj,
                    Object_Definition   => New_Occurrence_Of (Conctyp, Loc),
                    Expression          => ExpR);
+               Mutate_Ekind (Obj, E_Variable);
                Set_Etype (Obj, Conctyp);
                Decls := New_List (Decl);
                Rewrite (Concval, New_Occurrence_Of (Obj, Loc));
@@ -4685,16 +4686,16 @@ package body Exp_Ch9 is
       --  by a missing activation chain entity; also skip generating it when
       --  it is a ghost entity.
 
-      if No (Chain) or else Is_Ignored_Ghost_Entity (Chain) then
+      if No (Chain) or else Is_Ignored_Ghost_Entity_In_Codegen (Chain) then
          return;
 
       --  The availability of the activation chain entity does not ensure
       --  that we have tasks to activate because it may have been declared
-      --  by the frontend to pass a required extra formal to a build-in-place
+      --  by the front end to pass a required extra formal to a build-in-place
       --  subprogram call. If we are within the scope of a protected type and
       --  pragma Detect_Blocking is active we can assume that no tasks will be
       --  activated; if tasks are created in a protected object and this pragma
-      --  is active then the frontend emits a warning and Program_Error is
+      --  is active then the front end emits a warning and Program_Error is
       --  raised at runtime.
 
       elsif Detect_Blocking and then Within_Protected_Type (Current_Scope) then
@@ -5747,7 +5748,7 @@ package body Exp_Ch9 is
       Insert_Before_And_Analyze (N, Decl1);
 
       --  Associate the access to subprogram with its original access to
-      --  protected subprogram type. Needed by the backend to know that this
+      --  protected subprogram type. Needed by CodePeer to know that this
       --  type corresponds with an access to protected subprogram type.
 
       Set_Original_Access_Type (D_T2, T);
@@ -8093,12 +8094,18 @@ package body Exp_Ch9 is
    --  access type. Finally the Entry_Component of each formal is set to
    --  reference the corresponding record component.
 
-   procedure Expand_N_Entry_Declaration (N : Node_Id) is
+   procedure Expand_N_Entry_Declaration
+     (N            : Node_Id;
+      Was_Deferred : Boolean := False)
+   is
+      use Deferred_Extra_Formals_Support;
+
       Loc        : constant Source_Ptr := Sloc (N);
       Entry_Ent  : constant Entity_Id  := Defining_Identifier (N);
       Components : List_Id;
       Formal     : Node_Id;
       Ftype      : Entity_Id;
+      First_Decl : Node_Id;
       Last_Decl  : Node_Id;
       Component  : Entity_Id;
       Ctype      : Entity_Id;
@@ -8107,7 +8114,21 @@ package body Exp_Ch9 is
       Acc_Ent    : Entity_Id;
 
    begin
+      --  No action if the addition of the extra formals was deferred,
+      --  since it means that the underlying type of some formal is not
+      --  available, and hence we cannot build the record type that will
+      --  hold all the parameter values.
+
+      if Present (First_Formal (Entry_Ent))
+        and then not Extra_Formals_Known (Entry_Ent)
+        and then not Is_Unsupported_Extra_Formals_Entity (Entry_Ent)
+      then
+         pragma Assert (Is_Deferred_Extra_Formals_Entity (Entry_Ent));
+         return;
+      end if;
+
       Formal := First_Formal (Entry_Ent);
+      First_Decl := N;
       Last_Decl := N;
 
       --  Most processing is done only if parameters are present
@@ -8183,6 +8204,24 @@ package body Exp_Ch9 is
                  Subtype_Indication => New_Occurrence_Of (Rec_Ent, Loc)));
 
          Insert_After (Last_Decl, Decl);
+         Last_Decl := Decl;
+
+         --  Analyze all the inserted declarations. This is required when
+         --  the entry has formals and the addition of its extra formals
+         --  was deferred; otherwise their analysis will be performed as
+         --  as part of the regular flow of the front end at the end of
+         --  analysis of the enclosing task/protected type declaration.
+
+         if Was_Deferred then
+            Push_Scope (Scope (Entry_Ent));
+
+            while First_Decl /= Last_Decl loop
+               Next (First_Decl);
+               Analyze (First_Decl);
+            end loop;
+
+            End_Scope;
+         end if;
       end if;
    end Expand_N_Entry_Declaration;
 
@@ -9877,7 +9916,7 @@ package body Exp_Ch9 is
          --      (T        => To_Tag_Ptr (Obj'Address).all,
          --       Position =>
          --         Ada.Tags.Get_Offset_Index
-         --           (Ada.Tags.Tag (Concval),
+         --           (Concval._Tag,
          --            <interface dispatch table position of Ename>));
 
          --  Note that Obj'Address is recursively expanded into a call to
@@ -9898,7 +9937,9 @@ package body Exp_Ch9 is
                   Make_Function_Call (Loc,
                     Name => New_Occurrence_Of (RTE (RE_Get_Offset_Index), Loc),
                     Parameter_Associations => New_List (
-                      Unchecked_Convert_To (RTE (RE_Tag), Concval),
+                      Make_Attribute_Reference (Loc,
+                        Prefix         => Concval,
+                        Attribute_Name => Name_Tag),
                       Make_Integer_Literal (Loc,
                         DT_Position (Entity (Ename))))))));
 
@@ -10593,14 +10634,6 @@ package body Exp_Ch9 is
                   Build_Accept_Body (Accept_Statement (Alt)));
 
             Reset_Scopes_To (Proc_Body, PB_Ent);
-
-            --  During the analysis of the body of the accept statement, any
-            --  zero cost exception handler records were collected in the
-            --  Accept_Handler_Records field of the N_Accept_Alternative node.
-            --  This is where we move them to where they belong, namely the
-            --  newly created procedure.
-
-            Set_Handler_Records (PB_Ent, Accept_Handler_Records (Alt));
             Append (Proc_Body, Body_List);
 
          else

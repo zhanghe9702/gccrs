@@ -43,6 +43,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "omp-general.h"
 #include "opts.h"
 #include "gcc-urlifier.h"
+#include "contracts.h"
 
 /* Keep track of forward references to immediate-escalating functions in
    case they become consteval.  This vector contains ADDR_EXPRs and
@@ -197,6 +198,33 @@ genericize_if_stmt (tree *stmt_p)
 		      "both branches of %<if%> statement marked as %qs",
 		      pr == PRED_HOT_LABEL ? "likely" : "unlikely");
 	}
+    }
+
+  if (IF_STMT_VACUOUS_INIT_P (stmt))
+    {
+      gcc_checking_assert (integer_zerop (cond));
+      gcc_checking_assert (!else_ || !TREE_SIDE_EFFECTS (else_));
+      tree lab = create_artificial_label (UNKNOWN_LOCATION);
+      VACUOUS_INIT_LABEL_P (lab) = 1;
+      tree goto_expr = build_stmt (UNKNOWN_LOCATION, GOTO_EXPR, lab);
+      tree label_expr = build_stmt (UNKNOWN_LOCATION, LABEL_EXPR, lab);
+      if (TREE_CODE (then_) == STATEMENT_LIST)
+	{
+	  tree_stmt_iterator i = tsi_start (then_);
+	  tsi_link_before (&i, goto_expr, TSI_CONTINUE_LINKING);
+	  i = tsi_last (then_);
+	  tsi_link_after (&i, label_expr, TSI_CONTINUE_LINKING);
+	  stmt = then_;
+	}
+      else
+	{
+	  stmt = NULL_TREE;
+	  append_to_statement_list (goto_expr, &stmt);
+	  append_to_statement_list (then_, &stmt);
+	  append_to_statement_list (label_expr, &stmt);
+	}
+      *stmt_p = stmt;
+      return;
     }
 
   if (!then_)
@@ -602,6 +630,38 @@ cp_gimplify_arg (tree *arg_p, gimple_seq *pre_p, location_t call_location,
 
 }
 
+/* Emit a decl = {CLOBBER(bob)}; stmt before DECL_EXPR or first
+   TARGET_EXPR gimplification for -flifetime-dse=2.  */
+
+static void
+maybe_emit_clobber_object_begin (tree decl, gimple_seq *pre_p)
+{
+  if (VAR_P (decl)
+      && auto_var_p (decl)
+      && TREE_TYPE (decl) != error_mark_node
+      && DECL_NONTRIVIALLY_INITIALIZED_P (decl)
+      /* Don't do it if it is fully initialized.  */
+      && DECL_INITIAL (decl) == NULL_TREE
+      && !DECL_HAS_VALUE_EXPR_P (decl)
+      && !OPAQUE_TYPE_P (TREE_TYPE (decl))
+      /* Nor going to have decl = .DEFERRED_INIT (...); added.  */
+      && (flag_auto_var_init == AUTO_INIT_UNINITIALIZED
+	  || lookup_attribute ("uninitialized", DECL_ATTRIBUTES (decl))
+	  || lookup_attribute ("indeterminate", DECL_ATTRIBUTES (decl))))
+    {
+      tree eltype = strip_array_types (TREE_TYPE (decl));
+      if (RECORD_OR_UNION_TYPE_P (eltype)
+	  && !is_empty_class (eltype))
+	{
+	  tree clobber
+	    = build_clobber (TREE_TYPE (decl), CLOBBER_OBJECT_BEGIN);
+	  gimple *g = gimple_build_assign (decl, clobber);
+	  gimple_set_location (g, DECL_SOURCE_LOCATION (decl));
+	  gimple_seq_add_stmt_without_update (pre_p, g);
+	}
+    }
+}
+
 /* Do C++-specific gimplification.  Args are as for gimplify_expr.  */
 
 int
@@ -690,6 +750,7 @@ cp_gimplify_expr (tree *expr_p, gimple_seq *pre_p, gimple_seq *post_p)
 		    && (REFERENCE_CLASS_P (op1) || DECL_P (op1)))
 		  op1 = build_fold_addr_expr (op1);
 
+		suppress_warning (op1, OPT_Wunused_result);
 		gimplify_and_add (op1, pre_p);
 	      }
 	    gimplify_expr (&TREE_OPERAND (*expr_p, 0), pre_p, post_p,
@@ -889,6 +950,12 @@ cp_gimplify_expr (tree *expr_p, gimple_seq *pre_p, gimple_seq *post_p)
 			(EXPR_LOCATION (*expr_p), call_expr_nargs (*expr_p),
 			 &CALL_EXPR_ARG (*expr_p, 0));
 		break;
+	      case CP_BUILT_IN_EH_PTR_ADJUST_REF:
+		error_at (EXPR_LOCATION (*expr_p),
+			  "%qs used outside of constant expressions",
+			  "__builtin_eh_ptr_adjust_ref");
+		*expr_p = void_node;
+		break;
 	      default:
 		break;
 	      }
@@ -910,6 +977,10 @@ cp_gimplify_expr (tree *expr_p, gimple_seq *pre_p, gimple_seq *post_p)
 	 on the rhs of an assignment, as in constexpr-aggr1.C.  */
       gcc_checking_assert (!TARGET_EXPR_ELIDING_P (*expr_p)
 			   || !TREE_ADDRESSABLE (TREE_TYPE (*expr_p)));
+      if (flag_lifetime_dse > 1
+	  && TARGET_EXPR_INITIAL (*expr_p)
+	  && VOID_TYPE_P (TREE_TYPE (TARGET_EXPR_INITIAL (*expr_p))))
+	maybe_emit_clobber_object_begin (TARGET_EXPR_SLOT (*expr_p), pre_p);
       ret = GS_UNHANDLED;
       break;
 
@@ -919,6 +990,12 @@ cp_gimplify_expr (tree *expr_p, gimple_seq *pre_p, gimple_seq *post_p)
 	ret = GS_ERROR;
       else
 	ret = GS_OK;
+      break;
+
+    case DECL_EXPR:
+      if (flag_lifetime_dse > 1)
+	maybe_emit_clobber_object_begin (DECL_EXPR_DECL (*expr_p), pre_p);
+      ret = GS_UNHANDLED;
       break;
 
     case RETURN_EXPR:
@@ -2158,13 +2235,16 @@ cp_genericize_r (tree *stmt_p, int *walk_subtrees, void *data)
 	 returns the function with the highest target priority, that is,
 	 the version that will checked for dispatching first.  If this
 	 version is inlinable, a direct call to this version can be made
-	 otherwise the call should go through the dispatcher.  */
+	 otherwise the call should go through the dispatcher.
+	 This is done at multiple_target.cc for target_version semantics.  */
       {
 	tree fn = cp_get_callee_fndecl_nofold (stmt);
-	if (fn && DECL_FUNCTION_VERSIONED (fn)
+	if (TARGET_HAS_FMV_TARGET_ATTRIBUTE
+	    && fn
+	    && DECL_FUNCTION_VERSIONED (fn)
 	    && (current_function_decl == NULL
-		|| !targetm.target_option.can_inline_p (current_function_decl,
-							fn)))
+		|| !targetm.target_option.can_inline_p
+		      (current_function_decl, fn)))
 	  if (tree dis = get_function_version_dispatcher (fn))
 	    {
 	      mark_versions_used (dis);
@@ -3022,7 +3102,7 @@ cp_fold (tree x, fold_flags_t flags)
     case CLEANUP_POINT_EXPR:
       /* Strip CLEANUP_POINT_EXPR if the expression doesn't have side
 	 effects.  */
-      r = cp_fold_rvalue (TREE_OPERAND (x, 0), flags);
+      r = cp_fold (TREE_OPERAND (x, 0), flags);
       if (!TREE_SIDE_EFFECTS (r))
 	x = r;
       break;
@@ -3211,7 +3291,16 @@ cp_fold (tree x, fold_flags_t flags)
 
       loc = EXPR_LOCATION (x);
       op0 = cp_fold_maybe_rvalue (TREE_OPERAND (x, 0), rval_ops, flags);
-      op1 = cp_fold_rvalue (TREE_OPERAND (x, 1), flags);
+      bool clear_decl_read;
+      clear_decl_read = false;
+      if (code == MODIFY_EXPR
+	  && (VAR_P (op0) || TREE_CODE (op0) == PARM_DECL)
+	  && !DECL_READ_P (op0))
+	clear_decl_read = true;
+      op1 = cp_fold_maybe_rvalue (TREE_OPERAND (x, 1),
+				  code != COMPOUND_EXPR, flags);
+      if (clear_decl_read)
+	DECL_READ_P (op0) = 0;
 
       /* decltype(nullptr) has only one value, so optimize away all comparisons
 	 with that type right away, keeping them in the IL causes troubles for
@@ -3887,7 +3976,6 @@ struct source_location_table_entry_hash
 
 static GTY(()) hash_table <source_location_table_entry_hash>
   *source_location_table;
-static GTY(()) unsigned int source_location_id;
 
 /* Fold the __builtin_source_location () call T.  */
 
@@ -3920,9 +4008,7 @@ fold_builtin_source_location (const_tree t)
     var = entryp->var;
   else
     {
-      char tmp_name[32];
-      ASM_GENERATE_INTERNAL_LABEL (tmp_name, "Lsrc_loc", source_location_id++);
-      var = build_decl (loc, VAR_DECL, get_identifier (tmp_name),
+      var = build_decl (loc, VAR_DECL, generate_internal_label ("Lsrc_loc"),
 			source_location_impl);
       TREE_STATIC (var) = 1;
       TREE_PUBLIC (var) = 0;

@@ -24,6 +24,7 @@
 #include "rust-ast-lower-pattern.h"
 #include "rust-ast-lower-type.h"
 #include "rust-ast.h"
+#include "rust-builtin-ast-nodes.h"
 #include "rust-diagnostics.h"
 #include "rust-hir-map.h"
 #include "rust-system.h"
@@ -80,11 +81,10 @@ void
 ASTLoweringExpr::visit (AST::TupleExpr &expr)
 {
   std::vector<std::unique_ptr<HIR::Expr>> tuple_elements;
+  tuple_elements.reserve (expr.get_tuple_elems ().size ());
+
   for (auto &e : expr.get_tuple_elems ())
-    {
-      HIR::Expr *t = ASTLoweringExpr::translate (*e);
-      tuple_elements.push_back (std::unique_ptr<HIR::Expr> (t));
-    }
+    tuple_elements.emplace_back (ASTLoweringExpr::translate (*e));
 
   auto crate_num = mappings.get_current_crate ();
   Analysis::NodeMapping mapping (crate_num, expr.get_node_id (),
@@ -130,17 +130,24 @@ ASTLoweringExpr::visit (AST::BlockExpr &expr)
 void
 ASTLoweringExpr::visit (AST::AnonConst &expr)
 {
-  auto inner_expr = ASTLoweringExpr::translate (expr.get_inner_expr ());
-
   auto &mappings = Analysis::Mappings::get ();
   auto crate_num = mappings.get_current_crate ();
   auto mapping = Analysis::NodeMapping (crate_num, expr.get_node_id (),
 					mappings.get_next_hir_id (crate_num),
 					UNKNOWN_LOCAL_DEFID);
 
-  translated = new HIR::AnonConst (std::move (mapping),
-				   std::unique_ptr<Expr> (inner_expr),
-				   expr.get_locus ());
+  if (expr.is_deferred ())
+    {
+      translated = new HIR::AnonConst (std::move (mapping), expr.get_locus ());
+    }
+  else
+    {
+      auto inner_expr = ASTLoweringExpr::translate (expr.get_inner_expr ());
+
+      translated = new HIR::AnonConst (std::move (mapping),
+				       std::unique_ptr<Expr> (inner_expr),
+				       expr.get_locus ());
+    }
 }
 
 void
@@ -213,12 +220,12 @@ ASTLoweringExpr::visit (AST::CallExpr &expr)
   HIR::Expr *func = ASTLoweringExpr::translate (expr.get_function_expr ());
 
   auto const &in_params = expr.get_params ();
+
   std::vector<std::unique_ptr<HIR::Expr>> params;
+  params.reserve (in_params.size ());
+
   for (auto &param : in_params)
-    {
-      auto trans = ASTLoweringExpr::translate (*param);
-      params.push_back (std::unique_ptr<HIR::Expr> (trans));
-    }
+    params.emplace_back (ASTLoweringExpr::translate (*param));
 
   auto crate_num = mappings.get_current_crate ();
   Analysis::NodeMapping mapping (
@@ -240,11 +247,10 @@ ASTLoweringExpr::visit (AST::MethodCallExpr &expr)
 
   auto const &in_params = expr.get_params ();
   std::vector<std::unique_ptr<HIR::Expr>> params;
+  params.reserve (in_params.size ());
+
   for (auto &param : in_params)
-    {
-      auto trans = ASTLoweringExpr::translate (*param);
-      params.push_back (std::unique_ptr<HIR::Expr> (trans));
-    }
+    params.emplace_back (ASTLoweringExpr::translate (*param));
 
   auto crate_num = mappings.get_current_crate ();
   Analysis::NodeMapping mapping (crate_num, expr.get_node_id (),
@@ -330,11 +336,10 @@ void
 ASTLoweringExpr::visit (AST::ArrayElemsValues &elems)
 {
   std::vector<std::unique_ptr<HIR::Expr>> elements;
+  elements.reserve (elems.get_values ().size ());
+
   for (auto &elem : elems.get_values ())
-    {
-      HIR::Expr *translated_elem = ASTLoweringExpr::translate (*elem);
-      elements.push_back (std::unique_ptr<HIR::Expr> (translated_elem));
-    }
+    elements.emplace_back (ASTLoweringExpr::translate (*elem));
 
   auto crate_num = mappings.get_current_crate ();
   Analysis::NodeMapping mapping (mappings.get_current_crate (),
@@ -561,13 +566,12 @@ ASTLoweringExpr::visit (AST::StructExprStructFields &struct_expr)
     }
 
   auto const &in_fields = struct_expr.get_fields ();
+
   std::vector<std::unique_ptr<HIR::StructExprField>> fields;
+  fields.reserve (in_fields.size ());
+
   for (auto &field : in_fields)
-    {
-      HIR::StructExprField *translated
-	= ASTLowerStructExprField::translate (*field);
-      fields.push_back (std::unique_ptr<HIR::StructExprField> (translated));
-    }
+    fields.emplace_back (ASTLowerStructExprField::translate (*field));
 
   auto crate_num = mappings.get_current_crate ();
   Analysis::NodeMapping mapping (crate_num, struct_expr.get_node_id (),
@@ -624,12 +628,6 @@ void
 ASTLoweringExpr::visit (AST::WhileLoopExpr &expr)
 {
   translated = ASTLoweringExprWithBlock::translate (expr, &terminated);
-}
-
-void
-ASTLoweringExpr::visit (AST::ForLoopExpr &expr)
-{
-  rust_unreachable ();
 }
 
 void
@@ -812,11 +810,10 @@ ASTLoweringExpr::visit (AST::ClosureExprInner &expr)
     = ASTLoweringExpr::translate (expr.get_definition_expr ());
 
   std::vector<HIR::ClosureParam> closure_params;
+  closure_params.reserve (expr.get_params ().size ());
+
   for (auto &param : expr.get_params ())
-    {
-      HIR::ClosureParam p = lower_closure_param (param);
-      closure_params.push_back (std::move (p));
-    }
+    closure_params.emplace_back (lower_closure_param (param));
 
   auto crate_num = mappings.get_current_crate ();
   Analysis::NodeMapping mapping (crate_num, expr.get_node_id (),
@@ -839,11 +836,10 @@ ASTLoweringExpr::visit (AST::ClosureExprInnerTyped &expr)
     = ASTLoweringExpr::translate (expr.get_definition_expr ());
 
   std::vector<HIR::ClosureParam> closure_params;
+  closure_params.reserve (expr.get_params ().size ());
+
   for (auto &param : expr.get_params ())
-    {
-      HIR::ClosureParam p = lower_closure_param (param);
-      closure_params.push_back (std::move (p));
-    }
+    closure_params.emplace_back (lower_closure_param (param));
 
   auto crate_num = mappings.get_current_crate ();
   Analysis::NodeMapping mapping (crate_num, expr.get_node_id (),
@@ -998,6 +994,23 @@ ASTLoweringExpr::visit (AST::InlineAsm &expr)
 			  expr.get_options (), mapping);
 }
 
+namespace {
+// We're not really supporting llvm_asm, only the bare minimum for libcore's
+// blackbox
+// llvm_asm!("" : : "r"(&mut dummy) : "memory" : "volatile");
+bool
+check_llvm_asm_support (const std::vector<LlvmOperand> &inputs,
+			const std::vector<LlvmOperand> &outputs,
+			const AST::LlvmInlineAsm &expr)
+{
+  return outputs.size () == 0 && inputs.size () <= 1
+	 && expr.get_clobbers ().size () <= 1
+	 && expr.get_templates ().size () == 1
+	 && expr.get_templates ()[0].symbol == "";
+}
+
+} // namespace
+
 void
 ASTLoweringExpr::visit (AST::LlvmInlineAsm &expr)
 {
@@ -1007,7 +1020,10 @@ ASTLoweringExpr::visit (AST::LlvmInlineAsm &expr)
 				 mappings.get_next_localdef_id (crate_num));
 
   std::vector<LlvmOperand> inputs;
+  inputs.reserve (expr.get_inputs ().size ());
+
   std::vector<LlvmOperand> outputs;
+  outputs.reserve (expr.get_outputs ().size ());
 
   for (auto i : expr.get_inputs ())
     {
@@ -1027,13 +1043,15 @@ ASTLoweringExpr::visit (AST::LlvmInlineAsm &expr)
 				      expr.is_stack_aligned (),
 				      expr.get_dialect ()};
 
-  // We're not really supporting llvm_asm, only the bare minimum
-  // we're quite conservative here as the current code support more usecase.
-  rust_assert (outputs.size () == 0);
-  rust_assert (inputs.size () <= 1);
-  rust_assert (expr.get_clobbers ().size () <= 1);
-  rust_assert (expr.get_templates ().size () == 1);
-  rust_assert (expr.get_templates ()[0].symbol == "");
+  if (!check_llvm_asm_support (inputs, outputs, expr))
+    {
+      rust_error_at (expr.get_locus (), "unsupported %qs construct",
+		     "llvm_asm");
+      rust_inform (
+	expr.get_locus (),
+	"%<llvm_asm%> has been replaced with %<asm%>, gccrs only supports a "
+	"subset of %<llvm_asm%> to compile libcore");
+    }
 
   translated
     = new HIR::LlvmInlineAsm (expr.get_locus (), inputs, outputs,
@@ -1046,6 +1064,21 @@ ASTLoweringExpr::visit (AST::FormatArgs &fmt)
 {
   rust_sorry_at (fmt.get_locus (),
 		 "FormatArgs lowering is not implemented yet");
+}
+
+void
+ASTLoweringExpr::visit (AST::OffsetOf &offset_of)
+{
+  auto type = std::unique_ptr<Type> (
+    ASTLoweringType::translate (offset_of.get_type ()));
+
+  auto crate_num = mappings.get_current_crate ();
+  Analysis::NodeMapping mapping (crate_num, offset_of.get_node_id (),
+				 mappings.get_next_hir_id (crate_num),
+				 mappings.get_next_localdef_id (crate_num));
+
+  translated = new HIR::OffsetOf (std::move (type), offset_of.get_field (),
+				  mapping, offset_of.get_locus ());
 }
 
 } // namespace HIR

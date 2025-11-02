@@ -176,6 +176,9 @@ tree char_constant_expression (char c);
 // Get a char literal
 tree wchar_constant_expression (wchar_t c);
 
+// Get a size literal
+tree size_constant_expression (size_t val);
+
 // Return an expression for the boolean value VAL.
 tree boolean_constant_expression (bool val);
 
@@ -241,6 +244,10 @@ tree array_initializer (tree, tree, tree, tree, tree, tree *, location_t);
 // Return an expression for ARRAY[INDEX] as an l-value.  ARRAY is a valid
 // fixed-length array, not a slice.
 tree array_index_expression (tree array, tree index, location_t);
+
+// Return an expresison for SLICE[INDEX] as an l-value.  SLICE is represented
+// with a DST.
+tree slice_index_expression (tree slice, tree index, location_t);
 
 // Create an expression for a call to FN with ARGS, taking place within
 // caller CALLER.
@@ -389,6 +396,12 @@ tree goto_statement (tree, location_t);
 // get the return address of a deferred function which may call
 // recover.
 tree label_address (tree, location_t);
+
+// Lookup a field from a type given its name.
+// Build the `component` tree with `Backend::get_identifier_node`.
+//
+// Forked from the C frontend.
+tree lookup_field (const_tree, tree);
 
 // Functions.
 

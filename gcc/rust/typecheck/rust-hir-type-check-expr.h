@@ -19,6 +19,7 @@
 #ifndef RUST_HIR_TYPE_CHECK_EXPR
 #define RUST_HIR_TYPE_CHECK_EXPR
 
+#include "rust-hir-expr.h"
 #include "rust-hir-type-check-base.h"
 #include "rust-hir-visitor.h"
 #include "rust-tyty.h"
@@ -30,6 +31,11 @@ class TypeCheckExpr : private TypeCheckBase, private HIR::HIRExpressionVisitor
 {
 public:
   static TyTy::BaseType *Resolve (HIR::Expr &expr);
+
+  static TyTy::BaseType *
+  ResolveOpOverload (LangItem::Kind lang_item_type, HIR::OperatorExprMeta expr,
+		     TyTy::BaseType *lhs, TyTy::BaseType *rhs,
+		     HIR::PathIdentSegment specified_segment);
 
   void visit (HIR::TupleIndexExpr &expr) override;
   void visit (HIR::TupleExpr &expr) override;
@@ -73,6 +79,7 @@ public:
   void visit (HIR::ClosureExpr &expr) override;
   void visit (HIR::InlineAsm &expr) override;
   void visit (HIR::LlvmInlineAsm &expr) override;
+  void visit (HIR::OffsetOf &expr) override;
 
   // TODO
   void visit (HIR::ErrorPropagationExpr &) override {}

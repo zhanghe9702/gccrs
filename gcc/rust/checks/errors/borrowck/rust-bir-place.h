@@ -53,7 +53,7 @@ using Variance = TyTy::VarianceAnalysis::Variance;
 /** A unique identifier for a loan in the BIR. */
 struct LoanId
 {
-  uint32_t value;
+  size_t value;
   // some overloads for comparision
   bool operator== (const LoanId &rhs) const { return value == rhs.value; }
   bool operator!= (const LoanId &rhs) const { return !(operator== (rhs)); }
@@ -493,6 +493,7 @@ private:
       case TyTy::PROJECTION: // TODO: DUNNO
       case TyTy::CLOSURE:    // TODO: DUNNO
       case TyTy::DYNAMIC:    // TODO: dunno
+      case TyTy::CONST:
       case TyTy::OPAQUE:
 	return false;
       }

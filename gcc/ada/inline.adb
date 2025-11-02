@@ -151,7 +151,7 @@ package body Inline is
    function Node_Hash (Id : Node_Id) return Node_Header_Num;
    --  Simple hash function for Node_Ids
 
-   package To_Pending_Instantiations is new GNAT.Htable.Simple_HTable
+   package To_Pending_Instantiations is new GNAT.HTable.Simple_HTable
      (Header_Num => Node_Header_Num,
       Element    => Int,
       No_Element => -1,
@@ -320,6 +320,7 @@ package body Inline is
    --    Exit_Cases
    --    Postcondition
    --    Precondition
+   --    Program_Exit
    --    Refined_Global
    --    Refined_Depends
    --    Refined_Post
@@ -1005,9 +1006,9 @@ package body Inline is
          end loop;
 
          --  The list of inlined subprograms is an overestimate, because it
-         --  includes inlined functions called from functions that are compiled
-         --  as part of an inlined package, but are not themselves called. An
-         --  accurate computation of just those subprograms that are needed
+         --  includes inlined subprograms called from subprograms that are
+         --  declared in an inlined package, but are not themselves called.
+         --  An accurate computation of just those subprograms that are needed
          --  requires that we perform a transitive closure over the call graph,
          --  starting from calls in the main compilation unit.
 
@@ -1060,7 +1061,9 @@ package body Inline is
                E : constant Subprogram_Kind_Id := Inlined.Table (Index).Name;
 
             begin
-               if Is_Called (E) and then not Is_Ignored_Ghost_Entity (E) then
+               if Is_Called (E)
+                 and then not Is_Ignored_Ghost_Entity_In_Codegen (E)
+               then
                   Add_Inlined_Subprogram (E);
                end if;
             end;
@@ -3396,10 +3399,6 @@ package body Inline is
       --  If the function body is a single expression, replace call with
       --  expression, else insert block appropriately.
 
-      procedure Rewrite_Procedure_Call (N : Node_Id; Blk : Node_Id);
-      --  If procedure body has no local variables, inline body without
-      --  creating block, otherwise rewrite call with block.
-
       ---------------------
       -- Make_Exit_Label --
       ---------------------
@@ -3784,35 +3783,6 @@ package body Inline is
          end if;
       end Rewrite_Function_Call;
 
-      ----------------------------
-      -- Rewrite_Procedure_Call --
-      ----------------------------
-
-      procedure Rewrite_Procedure_Call (N : Node_Id; Blk : Node_Id) is
-         HSS : constant Node_Id := Handled_Statement_Sequence (Blk);
-
-      begin
-         --  If there is a transient scope for N, this will be the scope of the
-         --  actions for N, and the statements in Blk need to be within this
-         --  scope. For example, they need to have visibility on the constant
-         --  declarations created for the formals.
-
-         --  If N needs no transient scope, and if there are no declarations in
-         --  the inlined body, we can do a little optimization and insert the
-         --  statements for the body directly after N, and rewrite N to a
-         --  null statement, instead of rewriting N into a full-blown block
-         --  statement.
-
-         if not Scope_Is_Transient
-           and then Is_Empty_List (Declarations (Blk))
-         then
-            Insert_List_After (N, Statements (HSS));
-            Rewrite (N, Make_Null_Statement (Loc));
-         else
-            Rewrite (N, Blk);
-         end if;
-      end Rewrite_Procedure_Call;
-
    --  Start of processing for Expand_Inlined_Call
 
    begin
@@ -3828,6 +3798,17 @@ package body Inline is
          Is_Unc_Decl := Nkind (Parent (N)) = N_Object_Declaration
                           and then Is_Unc;
       end if;
+
+      --  Inlining function calls returning an object of unconstrained type as
+      --  function actuals or in a return statement is not supported: a
+      --  temporary variable will be declared of unconstrained type without
+      --  initializing expression.
+
+      pragma Assert
+        (not Uses_Back_End
+           or else Nkind (Parent (N)) not in
+             N_Function_Call | N_Simple_Return_Statement
+           or else not Is_Unc);
 
       --  Check for an illegal attempt to inline a recursive procedure. If the
       --  subprogram has parameters this is detected when trying to supply a
@@ -4077,6 +4058,7 @@ package body Inline is
             --  Replace call with temporary and create its declaration
 
             Temp := Make_Temporary (Loc, 'C');
+            Mutate_Ekind (Temp, E_Constant);
             Set_Is_Internal (Temp);
 
             --  For the unconstrained case, the generated temporary has the
@@ -4271,7 +4253,7 @@ package body Inline is
       end;
 
       if Ekind (Subp) = E_Procedure then
-         Rewrite_Procedure_Call (N, Blk);
+         Rewrite (N, Blk);
 
       else
          Rewrite_Function_Call (N, Blk);
@@ -4922,11 +4904,17 @@ package body Inline is
               and then Ekind (Info.Fin_Scop) = E_Package_Body
             then
                Set_In_Package_Body (Spec_Entity (Info.Fin_Scop), True);
+               Instantiate_Package_Body (Info);
+               Set_In_Package_Body (Spec_Entity (Info.Fin_Scop), False);
+            else
+               Instantiate_Package_Body (Info);
             end if;
 
-            Instantiate_Package_Body (Info);
+            --  No need to generate cleanups if the main unit is generic
 
-            if Present (Info.Fin_Scop) then
+            if Present (Info.Fin_Scop)
+               and then not Is_Generic_Unit (Main_Unit_Entity)
+            then
                Scop := Info.Fin_Scop;
 
                --  If the enclosing finalization scope is dynamic, the instance
@@ -4939,12 +4927,6 @@ package body Inline is
                end if;
 
                Add_Scope_To_Clean (Scop);
-
-               --  Reset the In_Package_Body flag if it was set above
-
-               if Ekind (Info.Fin_Scop) = E_Package_Body then
-                  Set_In_Package_Body (Spec_Entity (Info.Fin_Scop), False);
-               end if;
             end if;
 
          --  For subprogram instances, always instantiate the body
@@ -4964,10 +4946,6 @@ package body Inline is
          Expander_Active := (Operating_Mode = Opt.Generate_Code);
          Push_Scope (Standard_Standard);
          To_Clean := New_Elmt_List;
-
-         if Is_Generic_Unit (Cunit_Entity (Main_Unit)) then
-            Start_Generic;
-         end if;
 
          --  A body instantiation may generate additional instantiations, so
          --  the following loop must scan to the end of a possibly expanding
@@ -5007,16 +4985,10 @@ package body Inline is
             Pending_Instantiations.Init;
          end if;
 
-         --  We can now complete the cleanup actions of scopes that contain
-         --  pending instantiations (skipped for generic units, since we
-         --  never need any cleanups in generic units).
+         --  Expand the cleanup actions of scopes that contain instantiations
 
-         if Expander_Active
-           and then not Is_Generic_Unit (Main_Unit_Entity)
-         then
+         if Expander_Active then
             Cleanup_Scopes;
-         elsif Is_Generic_Unit (Cunit_Entity (Main_Unit)) then
-            End_Generic;
          end if;
 
          Pop_Scope;
@@ -5271,6 +5243,7 @@ package body Inline is
                                         | Name_Exit_Cases
                                         | Name_Postcondition
                                         | Name_Precondition
+                                        | Name_Program_Exit
                                         | Name_Refined_Global
                                         | Name_Refined_Depends
                                         | Name_Refined_Post

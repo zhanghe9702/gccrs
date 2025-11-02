@@ -282,6 +282,7 @@ DEF_INTERNAL_SIGNED_OPTAB_FN (MULHRS, ECF_CONST | ECF_NOTHROW, first,
 
 DEF_INTERNAL_SIGNED_OPTAB_FN (SAT_ADD, ECF_CONST, first, ssadd, usadd, binary)
 DEF_INTERNAL_SIGNED_OPTAB_FN (SAT_SUB, ECF_CONST, first, sssub, ussub, binary)
+DEF_INTERNAL_SIGNED_OPTAB_FN (SAT_MUL, ECF_CONST, first, ssmul, usmul, binary)
 
 DEF_INTERNAL_SIGNED_OPTAB_FN (SAT_TRUNC, ECF_CONST, first, sstrunc, ustrunc, unary_convert)
 
@@ -329,6 +330,13 @@ DEF_INTERNAL_OPTAB_FN (REDUC_IOR, ECF_CONST | ECF_NOTHROW,
 		       reduc_ior_scal, unary)
 DEF_INTERNAL_OPTAB_FN (REDUC_XOR, ECF_CONST | ECF_NOTHROW,
 		       reduc_xor_scal, unary)
+DEF_INTERNAL_OPTAB_FN (REDUC_SBOOL_AND, ECF_CONST | ECF_NOTHROW,
+		       reduc_sbool_and_scal, reduc_sbool)
+DEF_INTERNAL_OPTAB_FN (REDUC_SBOOL_IOR, ECF_CONST | ECF_NOTHROW,
+		       reduc_sbool_ior_scal, reduc_sbool)
+DEF_INTERNAL_OPTAB_FN (REDUC_SBOOL_XOR, ECF_CONST | ECF_NOTHROW,
+		       reduc_sbool_xor_scal, reduc_sbool)
+
 
 /* Extract the last active element from a vector.  */
 DEF_INTERNAL_OPTAB_FN (EXTRACT_LAST, ECF_CONST | ECF_NOTHROW,
@@ -421,6 +429,8 @@ DEF_INTERNAL_OPTAB_FN (COMPLEX_ADD_ROT270, ECF_CONST, cadd270, binary)
 DEF_INTERNAL_OPTAB_FN (COMPLEX_MUL, ECF_CONST, cmul, binary)
 DEF_INTERNAL_OPTAB_FN (COMPLEX_MUL_CONJ, ECF_CONST, cmul_conj, binary)
 DEF_INTERNAL_OPTAB_FN (VEC_ADDSUB, ECF_CONST, vec_addsub, binary)
+DEF_INTERNAL_OPTAB_FN (VEC_TRUNC_ADD_HIGH, ECF_CONST | ECF_NOTHROW,
+		       vec_trunc_add_high, binary)
 DEF_INTERNAL_WIDENING_OPTAB_FN (VEC_WIDEN_PLUS,
 				ECF_CONST | ECF_NOTHROW,
 				first,
@@ -524,7 +534,7 @@ DEF_INTERNAL_FN (DEFERRED_INIT, ECF_CONST | ECF_LEAF | ECF_NOTHROW, NULL)
 
 /* A function to associate the access size and access mode information
    with the corresponding reference to an object.  It only reads from the
-   2nd argument.  */
+   2nd and the 4th arguments.  */
 DEF_INTERNAL_FN (ACCESS_WITH_SIZE, ECF_PURE | ECF_LEAF | ECF_NOTHROW, NULL)
 
 /* DIM_SIZE and DIM_POS return the size of a particular compute

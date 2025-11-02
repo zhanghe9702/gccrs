@@ -17,6 +17,8 @@
 // <http://www.gnu.org/licenses/>.
 
 #include "rust-hir-expr.h"
+#include "rust-hir-map.h"
+#include "optional.h"
 #include "rust-operators.h"
 #include "rust-hir-stmt.h"
 
@@ -793,14 +795,22 @@ BlockExpr::operator= (BlockExpr const &other)
 AnonConst::AnonConst (Analysis::NodeMapping mappings,
 		      std::unique_ptr<Expr> &&expr, location_t locus)
   : ExprWithBlock (std::move (mappings), {}), locus (locus),
-    expr (std::move (expr))
+    kind (Kind::Explicit), expr (std::move (expr))
 {
-  rust_assert (this->expr);
+  rust_assert (this->expr.value ());
 }
 
-AnonConst::AnonConst (const AnonConst &other)
-  : ExprWithBlock (other), locus (other.locus), expr (other.expr->clone_expr ())
+AnonConst::AnonConst (Analysis::NodeMapping mappings, location_t locus)
+  : ExprWithBlock (std::move (mappings), {}), locus (locus),
+    kind (Kind::DeferredInference), expr (tl::nullopt)
 {}
+
+AnonConst::AnonConst (const AnonConst &other)
+  : ExprWithBlock (other), locus (other.locus), kind (other.kind)
+{
+  if (other.expr)
+    expr = other.expr.value ()->clone_expr ();
+}
 
 AnonConst
 AnonConst::operator= (const AnonConst &other)
@@ -808,7 +818,10 @@ AnonConst::operator= (const AnonConst &other)
   ExprWithBlock::operator= (other);
 
   locus = other.locus;
-  expr = other.expr->clone_expr ();
+  kind = other.kind;
+
+  if (other.expr)
+    expr = other.expr.value ()->clone_expr ();
 
   return *this;
 }
@@ -1321,37 +1334,40 @@ AsyncBlockExpr::operator= (AsyncBlockExpr const &other)
 OperatorExprMeta::OperatorExprMeta (HIR::CompoundAssignmentExpr &expr)
   : node_mappings (expr.get_mappings ()),
     lvalue_mappings (expr.get_expr ().get_mappings ()),
-    locus (expr.get_locus ())
+    rvalue_mappings (expr.get_rhs ().get_mappings ()), locus (expr.get_locus ())
 {}
 
 OperatorExprMeta::OperatorExprMeta (HIR::ArithmeticOrLogicalExpr &expr)
   : node_mappings (expr.get_mappings ()),
     lvalue_mappings (expr.get_expr ().get_mappings ()),
-    locus (expr.get_locus ())
+    rvalue_mappings (expr.get_rhs ().get_mappings ()), locus (expr.get_locus ())
 {}
 
 OperatorExprMeta::OperatorExprMeta (HIR::NegationExpr &expr)
   : node_mappings (expr.get_mappings ()),
     lvalue_mappings (expr.get_expr ().get_mappings ()),
+    rvalue_mappings (Analysis::NodeMapping::get_error ()),
     locus (expr.get_locus ())
 {}
 
 OperatorExprMeta::OperatorExprMeta (HIR::DereferenceExpr &expr)
   : node_mappings (expr.get_mappings ()),
     lvalue_mappings (expr.get_expr ().get_mappings ()),
+    rvalue_mappings (Analysis::NodeMapping::get_error ()),
     locus (expr.get_locus ())
 {}
 
 OperatorExprMeta::OperatorExprMeta (HIR::ArrayIndexExpr &expr)
   : node_mappings (expr.get_mappings ()),
     lvalue_mappings (expr.get_array_expr ().get_mappings ()),
+    rvalue_mappings (expr.get_index_expr ().get_mappings ()),
     locus (expr.get_locus ())
 {}
 
 OperatorExprMeta::OperatorExprMeta (HIR::ComparisonExpr &expr)
   : node_mappings (expr.get_mappings ()),
     lvalue_mappings (expr.get_expr ().get_mappings ()),
-    locus (expr.get_locus ())
+    rvalue_mappings (expr.get_rhs ().get_mappings ()), locus (expr.get_locus ())
 {}
 
 InlineAsmOperand::In::In (
@@ -1509,6 +1525,42 @@ InlineAsm::InlineAsm (location_t locus, bool is_global_asm,
     template_strs (std::move (template_strs)), operands (std::move (operands)),
     clobber_abi (std::move (clobber_abi)), options (std::move (options))
 {}
+
+OffsetOf &
+OffsetOf::operator= (const OffsetOf &other)
+{
+  ExprWithoutBlock::operator= (other);
+
+  type = other.type->clone_type ();
+  field = other.field;
+  loc = other.loc;
+
+  return *this;
+}
+
+ExprWithoutBlock *
+OffsetOf::clone_expr_without_block_impl () const
+{
+  return new OffsetOf (*this);
+}
+
+std::string
+OffsetOf::as_string () const
+{
+  return "OffsetOf(" + type->as_string () + ", " + field.as_string () + ")";
+}
+
+void
+OffsetOf::accept_vis (HIRExpressionVisitor &vis)
+{
+  vis.visit (*this);
+}
+
+void
+OffsetOf::accept_vis (HIRFullVisitor &vis)
+{
+  vis.visit (*this);
+}
 
 } // namespace HIR
 } // namespace Rust

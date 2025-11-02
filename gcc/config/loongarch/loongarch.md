@@ -1619,13 +1619,13 @@
     operands[2] = GEN_INT (len);
     operands[4] = GEN_INT (lo);
 
-    if (lo)
-      {
-	rtx tmp = gen_reg_rtx (<MODE>mode);
-	emit_move_insn (tmp, gen_rtx_ASHIFTRT(<MODE>mode, operands[3],
-					      GEN_INT (lo)));
-	operands[3] = tmp;
-      }
+    /* Use a new pseudo register even if lo == 0 or we'll wreck havoc
+       when operands[0] is same as operands[3].  See PR 121906.  */
+    rtx tmp = gen_reg_rtx (<MODE>mode);
+    rtx val = lo ? gen_rtx_ASHIFTRT (<MODE>mode, operands[3], GEN_INT (lo))
+		 : operands[3];
+    emit_move_insn (tmp, val);
+    operands[3] = tmp;
   })
 
 ;; We always avoid the shift operation in bstrins_<mode>_for_ior_mask
@@ -2523,6 +2523,38 @@
   [(set_attr "type" "condmove")
    (set_attr "mode" "<GPR:MODE>")])
 
+(define_insn_and_split "both_non_zero"
+  [(set (match_operand:DI 0 "register_operand" "=r")
+	(and:DI (ne:DI (match_operand:DI 1 "register_operand" "r")
+		       (const_int 0))
+		(ne:DI (match_operand:DI 2 "register_operand" "r")
+		       (const_int 0))))]
+  "TARGET_64BIT"
+  "#"
+  "&& true"
+  [(set (match_dup 0)
+	(ne:DI (match_dup 1) (const_int 0)))
+   (set (match_dup 0)
+	(if_then_else:DI (ne:DI (match_dup 2) (const_int 0))
+			 (match_dup 0)
+			 (const_int 0)))])
+
+(define_insn_and_split "both_non_zero_subreg"
+  [(set (match_operand:DI 0 "register_operand" "=r")
+	(and:DI (subreg:DI (ne:SI (match_operand:DI 1 "register_operand" "r")
+				  (const_int 0)) 0)
+		(subreg:DI (ne:SI (match_operand:DI 2 "register_operand" "r")
+				  (const_int 0)) 0)))]
+  "TARGET_64BIT"
+  "#"
+  "&& true"
+  [(set (match_dup 0)
+	(ne:DI (match_dup 1) (const_int 0)))
+   (set (match_dup 0)
+	(if_then_else:DI (ne:DI (match_dup 2) (const_int 0))
+			 (match_dup 0)
+			 (const_int 0)))])
+
 ;; fsel copies the 3rd argument when the 1st is non-zero and the 2nd
 ;; argument if the 1st is zero.  This means operand 2 and 3 are
 ;; inverted in the instruction.
@@ -3040,6 +3072,16 @@
 }
   [(set_attr "type" "shift")
    (set_attr "mode" "SI")])
+
+(define_insn "sign_extend_ashift<GPR:mode><SHORT:mode>"
+  [(set (match_operand:GPR 0 "register_operand" "=r")
+	(ashift:GPR
+	   (sign_extend:GPR (match_operand:SHORT 1 "register_operand" "r"))
+	   (match_operand:SI 2 "const_uimm5_operand")))]
+  "(GET_MODE_BITSIZE (<SHORT:MODE>mode) + INTVAL (operands[2])) == 32"
+  "slli.w\t%0,%1,%2"
+  [(set_attr "type" "shift")
+   (set_attr "mode" "<GPR:MODE>")])
 
 (define_insn "*rotr<mode>3"
   [(set (match_operand:GPR 0 "register_operand" "=r,r")
@@ -4193,17 +4235,18 @@
   [(set_attr "type" "unknown")
    (set_attr "mode" "<MODE>")])
 
-(define_int_iterator FCLASS_MASK [68 136 952])
+(define_int_iterator FCLASS_MASK [68 136 952 3])
 (define_int_attr fclass_optab
   [(68	"isinf")
    (136	"isnormal")
-   (952	"isfinite")])
+   (952	"isfinite")
+   (3	"isnan")])
 
 (define_expand "<FCLASS_MASK:fclass_optab><ANYF:mode>2"
   [(match_operand:SI   0 "register_operand" "=r")
    (match_operand:ANYF 1 "register_operand" " f")
    (const_int FCLASS_MASK)]
-  "TARGET_HARD_FLOAT"
+  "TARGET_HARD_FLOAT && (<FCLASS_MASK> != 3 || flag_signaling_nans)"
   {
     rtx ft0 = gen_reg_rtx (SImode);
     rtx t0 = gen_reg_rtx (word_mode);
@@ -4573,9 +4616,10 @@
   "&& true"
   [(set (match_dup 3) (match_dup 2))
    (set (match_dup 0)
-	(unspec:SI [(match_dup 3) (subreg:SI (match_dup 1) 0)] CRC))]
+	(unspec:SI [(match_dup 3) (match_dup 1)] CRC))]
   {
     operands[3] = gen_reg_rtx (<MODE>mode);
+    operands[1] = lowpart_subreg (SImode, operands[1], DImode);
   })
 
 ;; With normal or medium code models, if the only use of a pc-relative

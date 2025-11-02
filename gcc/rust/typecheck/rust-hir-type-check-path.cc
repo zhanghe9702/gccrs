@@ -77,9 +77,9 @@ TypeCheckExpr::visit (HIR::QualifiedPathInExpression &expr)
   // lookup the associated item from the specified bound
   HIR::PathExprSegment &item_seg = expr.get_segments ().at (0);
   HIR::PathIdentSegment item_seg_identifier = item_seg.get_segment ();
-  TyTy::TypeBoundPredicateItem item
+  tl::optional<TyTy::TypeBoundPredicateItem> item
     = specified_bound.lookup_associated_item (item_seg_identifier.as_string ());
-  if (item.is_error ())
+  if (!item.has_value ())
     {
       rust_error_at (item_seg.get_locus (), "unknown associated item");
       return;
@@ -116,9 +116,9 @@ TypeCheckExpr::visit (HIR::QualifiedPathInExpression &expr)
       // and we dont need to worry if the trait item is actually implemented or
       // not because this will have already been validated as part of the trait
       // impl block
-      infered = item.get_tyty_for_receiver (root);
+      infered = item->get_tyty_for_receiver (root);
       root_resolved_node_id
-	= item.get_raw_item ()->get_mappings ().get_nodeid ();
+	= item->get_raw_item ()->get_mappings ().get_nodeid ();
     }
   else
     {
@@ -157,20 +157,11 @@ TypeCheckExpr::visit (HIR::QualifiedPathInExpression &expr)
   bool fully_resolved = expr.get_segments ().size () <= 1;
   if (fully_resolved)
     {
-      if (flag_name_resolution_2_0)
-	{
-	  auto &nr_ctx = const_cast<Resolver2_0::NameResolutionContext &> (
-	    Resolver2_0::ImmutableNameResolutionContext::get ().resolver ());
+      auto &nr_ctx = const_cast<Resolver2_0::NameResolutionContext &> (
+	Resolver2_0::ImmutableNameResolutionContext::get ().resolver ());
 
-	  nr_ctx.map_usage (Resolver2_0::Usage (
-			      expr.get_mappings ().get_nodeid ()),
-			    Resolver2_0::Definition (root_resolved_node_id));
-	}
-      else
-	{
-	  resolver->insert_resolved_name (expr.get_mappings ().get_nodeid (),
-					  root_resolved_node_id);
-	}
+      nr_ctx.map_usage (Resolver2_0::Usage (expr.get_mappings ().get_nodeid ()),
+			Resolver2_0::Definition (root_resolved_node_id));
       return;
     }
 
@@ -264,24 +255,16 @@ TypeCheckExpr::resolve_root_path (HIR::PathInExpression &expr, size_t *offset,
       bool is_root = *offset == 0;
       NodeId ast_node_id = seg.get_mappings ().get_nodeid ();
 
-      // then lookup the reference_node_id
-      NodeId ref_node_id = UNKNOWN_NODEID;
+      auto &nr_ctx
+	= Resolver2_0::ImmutableNameResolutionContext::get ().resolver ();
 
-      if (flag_name_resolution_2_0)
+      // lookup the reference_node_id
+      NodeId ref_node_id;
+      if (auto res = nr_ctx.lookup (ast_node_id))
 	{
-	  auto &nr_ctx
-	    = Resolver2_0::ImmutableNameResolutionContext::get ().resolver ();
-
-	  // assign the ref_node_id if we've found something
-	  nr_ctx.lookup (ast_node_id).map ([&ref_node_id] (NodeId resolved) {
-	    ref_node_id = resolved;
-	  });
+	  ref_node_id = *res;
 	}
-      else if (!resolver->lookup_resolved_name (ast_node_id, &ref_node_id))
-	resolver->lookup_resolved_type (ast_node_id, &ref_node_id);
-
-      // ref_node_id is the NodeId that the segments refers to.
-      if (ref_node_id == UNKNOWN_NODEID)
+      else
 	{
 	  if (root_tyty != nullptr && *offset > 0)
 	    {
@@ -534,9 +517,8 @@ TypeCheckExpr::resolve_segments (NodeId root_resolved_node_id,
 	      const auto &predicate
 		= impl_block_ty->lookup_predicate (trait_ref.get_defid ());
 	      if (!predicate.is_error ())
-		impl_block_ty
-		  = associated->setup_associated_types (prev_segment, predicate,
-							nullptr, false);
+		associated->setup_associated_types (prev_segment, predicate,
+						    nullptr, false);
 	    }
 	}
 
@@ -561,33 +543,12 @@ TypeCheckExpr::resolve_segments (NodeId root_resolved_node_id,
     }
 
   rust_assert (resolved_node_id != UNKNOWN_NODEID);
-  if (flag_name_resolution_2_0)
-    {
-      auto &nr_ctx = const_cast<Resolver2_0::NameResolutionContext &> (
-	Resolver2_0::ImmutableNameResolutionContext::get ().resolver ());
 
-      nr_ctx.map_usage (Resolver2_0::Usage (expr_mappings.get_nodeid ()),
-			Resolver2_0::Definition (resolved_node_id));
-    }
-  // name scope first
-  else if (resolver->get_name_scope ().decl_was_declared_here (
-	     resolved_node_id))
-    {
-      resolver->insert_resolved_name (expr_mappings.get_nodeid (),
-				      resolved_node_id);
-    }
-  // check the type scope
-  else if (resolver->get_type_scope ().decl_was_declared_here (
-	     resolved_node_id))
-    {
-      resolver->insert_resolved_type (expr_mappings.get_nodeid (),
-				      resolved_node_id);
-    }
-  else
-    {
-      resolver->insert_resolved_misc (expr_mappings.get_nodeid (),
-				      resolved_node_id);
-    }
+  auto &nr_ctx = const_cast<Resolver2_0::NameResolutionContext &> (
+    Resolver2_0::ImmutableNameResolutionContext::get ().resolver ());
+
+  nr_ctx.map_usage (Resolver2_0::Usage (expr_mappings.get_nodeid ()),
+		    Resolver2_0::Definition (resolved_node_id));
 
   infered = tyseg;
 }

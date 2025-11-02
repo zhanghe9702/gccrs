@@ -5,6 +5,7 @@
 /* { dg-options "-g" } */
 
 #define INCLUDE_MEMORY
+#define INCLUDE_STRING
 #define INCLUDE_VECTOR
 #include "gcc-plugin.h"
 #include "config.h"
@@ -15,7 +16,7 @@
 #include "gimple.h"
 #include "gimple-iterator.h"
 #include "gimple-walk.h"
-#include "diagnostic-event-id.h"
+#include "diagnostics/event-id.h"
 #include "analyzer/common.h"
 #include "analyzer/analyzer-logging.h"
 #include "json.h"
@@ -119,20 +120,22 @@ public:
     return false;
   }
 
-  diagnostic_event::meaning
+  diagnostics::paths::event::meaning
   get_meaning_for_state_change (const evdesc::state_change &change)
     const final override
   {
+    using event = diagnostics::paths::event;
+
     if (change.is_global_p ())
       {
 	if (change.m_new_state == m_sm.m_released_gil)
-	  return diagnostic_event::meaning (diagnostic_event::VERB_release,
-					    diagnostic_event::NOUN_lock);
+	  return event::meaning (event::verb::release,
+				 event::noun::lock);
 	else if (change.m_new_state == m_sm.get_start_state ())
-	  return diagnostic_event::meaning (diagnostic_event::VERB_acquire,
-					    diagnostic_event::NOUN_lock);
+	  return event::meaning (event::verb::acquire,
+				 event::noun::lock);
       }
-    return diagnostic_event::meaning ();
+    return event::meaning ();
   }
  protected:
   gil_diagnostic (const gil_state_machine &sm) : m_sm (sm)

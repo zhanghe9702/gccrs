@@ -56,6 +56,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "tree-pretty-print-markup.h"
 #include "gcc-rich-location.h"
 #include "gcc-urlifier.h"
+#include "diagnostics/diagnostics-selftests.h"
 
 cpp_reader *parse_in;		/* Declared in c-pragma.h.  */
 
@@ -375,9 +376,10 @@ static bool nonnull_check_p (tree, unsigned HOST_WIDE_INT);
    C --std=c17: D_C23 | D_CXXONLY | D_OBJC
    C --std=c23: D_CXXONLY | D_OBJC
    ObjC is like C except that D_OBJC and D_CXX_OBJC are not set
-   C++ --std=c++98: D_CONLY | D_CXX11 | D_CXX20 | D_OBJC
-   C++ --std=c++11: D_CONLY | D_CXX20 | D_OBJC
-   C++ --std=c++20: D_CONLY | D_OBJC
+   C++ --std=c++98: D_CONLY | D_CXX11 | D_CXX20 | D_CXX26 | D_OBJC
+   C++ --std=c++11: D_CONLY | D_CXX20 | D_CXX26 | D_OBJC
+   C++ --std=c++20: D_CONLY | D_CXX26 | D_OBJC
+   C++ --std=c++26: D_CONLY | D_OBJC
    ObjC++ is like C++ except that D_OBJC is not set
 
    If -fno-asm is used, D_ASM is added to the mask.  If
@@ -461,7 +463,7 @@ const struct c_common_resword c_common_reswords[] =
   { "__builtin_tgmath", RID_BUILTIN_TGMATH, D_CONLY },
   { "__builtin_offsetof", RID_OFFSETOF, 0 },
   { "__builtin_types_compatible_p", RID_TYPES_COMPATIBLE_P, D_CONLY },
-  { "__builtin_c23_va_start", RID_C23_VA_START,	D_C23 },
+  { "__builtin_c23_va_start", RID_C23_VA_START,	D_C23 | D_CXX26 },
   { "__builtin_va_arg",	RID_VA_ARG,	0 },
   { "__complex",	RID_COMPLEX,	0 },
   { "__complex__",	RID_COMPLEX,	0 },
@@ -3438,20 +3440,41 @@ pointer_int_sum (location_t loc, enum tree_code resultcode,
 	 an overflow error if the constant is negative but INTOP is not.  */
       && (TYPE_OVERFLOW_UNDEFINED (TREE_TYPE (intop))
 	  || (TYPE_PRECISION (TREE_TYPE (intop))
-	      == TYPE_PRECISION (TREE_TYPE (ptrop)))))
+	      == TYPE_PRECISION (TREE_TYPE (ptrop))))
+      && TYPE_PRECISION (TREE_TYPE (intop)) <= TYPE_PRECISION (sizetype))
     {
-      enum tree_code subcode = resultcode;
-      tree int_type = TREE_TYPE (intop);
-      if (TREE_CODE (intop) == MINUS_EXPR)
-	subcode = (subcode == PLUS_EXPR ? MINUS_EXPR : PLUS_EXPR);
-      /* Convert both subexpression types to the type of intop,
-	 because weird cases involving pointer arithmetic
-	 can result in a sum or difference with different type args.  */
-      ptrop = build_binary_op (EXPR_LOCATION (TREE_OPERAND (intop, 1)),
-			       subcode, ptrop,
-			       convert (int_type, TREE_OPERAND (intop, 1)),
-			       true);
-      intop = convert (int_type, TREE_OPERAND (intop, 0));
+      tree intop0 = TREE_OPERAND (intop, 0);
+      tree intop1 = TREE_OPERAND (intop, 1);
+      if (TYPE_PRECISION (TREE_TYPE (intop)) != TYPE_PRECISION (sizetype)
+	  || TYPE_UNSIGNED (TREE_TYPE (intop)) != TYPE_UNSIGNED (sizetype))
+	{
+	  tree optype = c_common_type_for_size (TYPE_PRECISION (sizetype),
+						TYPE_UNSIGNED (sizetype));
+	  intop0 = convert (optype, intop0);
+	  intop1 = convert (optype, intop1);
+	}
+      tree t = fold_build2_loc (loc, MULT_EXPR, TREE_TYPE (intop0), intop0,
+				convert (TREE_TYPE (intop0), size_exp));
+      intop0 = convert (sizetype, t);
+      if (TREE_OVERFLOW_P (intop0) && !TREE_OVERFLOW (t))
+	intop0 = wide_int_to_tree (TREE_TYPE (intop0), wi::to_wide (intop0));
+      t = fold_build2_loc (loc, MULT_EXPR, TREE_TYPE (intop1), intop1,
+			   convert (TREE_TYPE (intop1), size_exp));
+      intop1 = convert (sizetype, t);
+      if (TREE_OVERFLOW_P (intop1) && !TREE_OVERFLOW (t))
+	intop1 = wide_int_to_tree (TREE_TYPE (intop1), wi::to_wide (intop1));
+      intop = build_binary_op (EXPR_LOCATION (intop), TREE_CODE (intop),
+			       intop0, intop1, true);
+
+      /* Create the sum or difference.  */
+      if (resultcode == MINUS_EXPR)
+	intop = fold_build1_loc (loc, NEGATE_EXPR, sizetype, intop);
+
+      ret = fold_build_pointer_plus_loc (loc, ptrop, intop);
+
+      fold_undefer_and_ignore_overflow_warnings ();
+
+      return ret;
     }
 
   /* Convert the integer argument to a type the same size as sizetype
@@ -5749,8 +5772,8 @@ struct nonnull_arg_ctx
   /* The function whose arguments are being checked and its type (used
      for calls through function pointers).  */
   const_tree fndecl, fntype;
-  /* For nonnull_if_nonzero, index of the other argument.  */
-  unsigned HOST_WIDE_INT other;
+  /* For nonnull_if_nonzero, index of the other arguments.  */
+  unsigned HOST_WIDE_INT other1, other2;
   /* True if a warning has been issued.  */
   bool warned_p;
 };
@@ -5818,6 +5841,7 @@ check_function_nonnull (nonnull_arg_ctx &ctx, int nargs, tree *argarray)
 	    check_function_arguments_recurse (check_nonnull_arg, &ctx,
 					      argarray[i], i + 1,
 					      OPT_Wnonnull);
+	  a = NULL_TREE;
 	}
     }
   if (a == NULL_TREE)
@@ -5829,17 +5853,25 @@ check_function_nonnull (nonnull_arg_ctx &ctx, int nargs, tree *argarray)
 	unsigned int idx = TREE_INT_CST_LOW (TREE_VALUE (args)) - 1;
 	unsigned int idx2
 	  = TREE_INT_CST_LOW (TREE_VALUE (TREE_CHAIN (args))) - 1;
+	unsigned int idx3 = idx2;
+	if (tree chain2 = TREE_CHAIN (TREE_CHAIN (args)))
+	  idx3 = TREE_INT_CST_LOW (TREE_VALUE (chain2)) - 1;
 	if (idx < (unsigned) nargs - firstarg
 	    && idx2 < (unsigned) nargs - firstarg
+	    && idx3 < (unsigned) nargs - firstarg
 	    && INTEGRAL_TYPE_P (TREE_TYPE (argarray[firstarg + idx2]))
-	    && integer_nonzerop (argarray[firstarg + idx2]))
+	    && integer_nonzerop (argarray[firstarg + idx2])
+	    && INTEGRAL_TYPE_P (TREE_TYPE (argarray[firstarg + idx3]))
+	    && integer_nonzerop (argarray[firstarg + idx3]))
 	  {
-	    ctx.other = firstarg + idx2 + 1;
+	    ctx.other1 = firstarg + idx2 + 1;
+	    ctx.other2 = firstarg + idx3 + 1;
 	    check_function_arguments_recurse (check_nonnull_arg, &ctx,
 					      argarray[firstarg + idx],
 					      firstarg + idx + 1,
 					      OPT_Wnonnull);
-	    ctx.other = 0;
+	    ctx.other1 = 0;
+	    ctx.other2 = 0;
 	  }
       }
   return ctx.warned_p;
@@ -6023,14 +6055,25 @@ check_nonnull_arg (void *ctx, tree param, unsigned HOST_WIDE_INT param_num)
     }
   else
     {
-      if (pctx->other)
+      if (pctx->other1 && pctx->other2 != pctx->other1)
+	warned = warning_at (loc, OPT_Wnonnull,
+			     "argument %u null where non-null expected "
+			     "because arguments %u and %u are nonzero",
+			     (unsigned) param_num,
+			     TREE_CODE (pctx->fntype) == METHOD_TYPE
+			     ? (unsigned) pctx->other1 - 1
+			     : (unsigned) pctx->other1,
+			     TREE_CODE (pctx->fntype) == METHOD_TYPE
+			     ? (unsigned) pctx->other2 - 1
+			     : (unsigned) pctx->other2);
+      else if (pctx->other1)
 	warned = warning_at (loc, OPT_Wnonnull,
 			     "argument %u null where non-null expected "
 			     "because argument %u is nonzero",
 			     (unsigned) param_num,
 			     TREE_CODE (pctx->fntype) == METHOD_TYPE
-			     ? (unsigned) pctx->other - 1
-			     : (unsigned) pctx->other);
+			     ? (unsigned) pctx->other1 - 1
+			     : (unsigned) pctx->other1);
       else
 	warned = warning_at (loc, OPT_Wnonnull,
 			     "argument %u null where non-null expected",
@@ -6039,7 +6082,7 @@ check_nonnull_arg (void *ctx, tree param, unsigned HOST_WIDE_INT param_num)
 	inform (DECL_SOURCE_LOCATION (pctx->fndecl),
 		"in a call to function %qD declared %qs",
 		pctx->fndecl,
-		pctx->other ? "nonnull_if_nonzero" : "nonnull");
+		pctx->other1 ? "nonnull_if_nonzero" : "nonnull");
     }
 
   if (warned)
@@ -6295,7 +6338,7 @@ check_function_arguments (location_t loc, const_tree fndecl, const_tree fntype,
      to do this if format checking is enabled.  */
   if (warn_nonnull)
     {
-      nonnull_arg_ctx ctx = { loc, fndecl, fntype, 0, false };
+      nonnull_arg_ctx ctx = { loc, fndecl, fntype, 0, 0, false };
       warned_p = check_function_nonnull (ctx, nargs, argarray);
     }
 
@@ -6984,7 +7027,7 @@ c_parse_error (const char *gmsgid, enum cpp_ttype token_type,
 /* Return the gcc option code associated with the reason for a cpp
    message, or 0 if none.  */
 
-static diagnostic_option_id
+static diagnostics::option_id
 c_option_controlling_cpp_diagnostic (enum cpp_warning_reason reason)
 {
   const struct cpp_reason_option_codes_t *entry;
@@ -7026,8 +7069,8 @@ c_cpp_diagnostic (cpp_reader *pfile ATTRIBUTE_UNUSED,
 		  rich_location *richloc,
 		  const char *msg, va_list *ap)
 {
-  diagnostic_info diagnostic;
-  diagnostic_t dlevel;
+  diagnostics::diagnostic_info diagnostic;
+  enum diagnostics::kind dlevel;
   bool save_warn_system_headers = global_dc->m_warn_system_headers;
   bool ret;
 
@@ -7041,24 +7084,24 @@ c_cpp_diagnostic (cpp_reader *pfile ATTRIBUTE_UNUSED,
     case CPP_DL_WARNING:
       if (flag_no_output)
 	return false;
-      dlevel = DK_WARNING;
+      dlevel = diagnostics::kind::warning;
       break;
     case CPP_DL_PEDWARN:
       if (flag_no_output && !flag_pedantic_errors)
 	return false;
-      dlevel = DK_PEDWARN;
+      dlevel = diagnostics::kind::pedwarn;
       break;
     case CPP_DL_ERROR:
-      dlevel = DK_ERROR;
+      dlevel = diagnostics::kind::error;
       break;
     case CPP_DL_ICE:
-      dlevel = DK_ICE;
+      dlevel = diagnostics::kind::ice;
       break;
     case CPP_DL_NOTE:
-      dlevel = DK_NOTE;
+      dlevel = diagnostics::kind::note;
       break;
     case CPP_DL_FATAL:
-      dlevel = DK_FATAL;
+      dlevel = diagnostics::kind::fatal;
       break;
     default:
       gcc_unreachable ();
@@ -9922,8 +9965,11 @@ c_family_tests (void)
   c_indentation_cc_tests ();
   c_pretty_print_cc_tests ();
   c_spellcheck_cc_tests ();
-  c_diagnostic_cc_tests ();
   c_opt_problem_cc_tests ();
+
+  /* According to https://gcc.gnu.org/pipermail/gcc/2021-November/237703.html
+     this has some language-specific assumptions, so we run it here.  */
+  diagnostics::selftest::context_cc_tests ();
 }
 
 } // namespace selftest
@@ -10005,7 +10051,7 @@ try_to_locate_new_include_insertion_point (const char *file, location_t loc)
     return UNKNOWN_LOCATION;
 
   /* The "start_location" is column 0, meaning "the whole line".
-     rich_location and edit_context can't cope with this, so use
+     rich_location and diagnostics::changes can't cope with this, so use
      column 1 instead.  */
   location_t col_0 = ord_map_for_insertion->start_location;
   return linemap_position_for_loc_and_offset (line_table, col_0, 1);
@@ -10069,7 +10115,7 @@ maybe_add_include_fixit (rich_location *richloc, const char *header,
   richloc->add_fixit_insert_before (include_insert_loc, text);
   free (text);
 
-  if (override_location && global_dc->m_source_printing.enabled)
+  if (override_location && global_dc->get_source_printing_options ().enabled)
     {
       /* Replace the primary location with that of the insertion point for the
 	 fix-it hint.
@@ -10250,6 +10296,7 @@ braced_list_to_string (tree type, tree ctor, bool member)
 		    j = i - start;
 		  else
 		    j -= start;
+		  value = copy_node (value);
 		  RAW_DATA_POINTER (value) -= start;
 		  RAW_DATA_LENGTH (value) += start + end;
 		  i += end;

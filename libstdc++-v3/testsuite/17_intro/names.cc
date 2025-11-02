@@ -286,6 +286,8 @@
 // <sys/ucontext.h> defines fpreg_t::d and fpreg_t::f
 #undef d
 #undef f
+// <asm/types.h> defines __vector128::u
+#undef u
 #endif
 
 #if defined (__linux__) && defined (__sparc__)
@@ -403,5 +405,9 @@
 #  undef sz
 # endif
 #endif
+
+// PR libstdc++/119496
+// _Temporary_buffer used to have a member with this name
+#define requested_size 1
 
 #include <bits/stdc++.h>

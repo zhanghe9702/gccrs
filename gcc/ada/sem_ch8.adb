@@ -77,6 +77,7 @@ with Style;
 with Table;
 with Tbuild;         use Tbuild;
 with Uintp;          use Uintp;
+with Uname;          use Uname;
 with Warnsw;         use Warnsw;
 
 package body Sem_Ch8 is
@@ -4269,6 +4270,40 @@ package body Sem_Ch8 is
          Local_Restrict.Check_Actual_Subprogram_For_Instance
            (Actual_Subp_Name => Nam, Formal_Subp => Formal_Spec);
       end if;
+
+      --  If pragma Short_Circuit_And_Or is specified, then we give an error
+      --  for renaming an operator that is made short circuit.
+      --  For example, this is illegal:
+      --
+      --      function My_And (X, Y: Boolean) return Boolean renames "and";
+      --
+      --  if "and" denotes the usual predefined Boolean operator. Otherwise,
+      --  the semantics are confusing (sometimes short circuit, and sometimes
+      --  not, for calls to My_And). If we ever relax this rule, we will need
+      --  to clean up that run-time semantics.
+
+      if Short_Circuit_And_Or
+        and then Chars (Old_S) in Name_Op_And | Name_Op_Or
+        and then In_Extended_Main_Source_Unit (N)
+        and then Etype (Old_S) = Standard_Boolean
+        and then Is_Intrinsic_Subprogram (Old_S)
+      then
+         if Comes_From_Source (N) then
+            Error_Msg_N
+              ("pragma Short_Circuit_And_Or disallows renaming of " &
+               "operator", N);
+
+         --  Same error in case of an instantiation with My_And => "and"
+
+         elsif Present (Corresponding_Formal_Spec (N)) then
+            Error_Msg_N
+              ("pragma Short_Circuit_And_Or disallows passing of " &
+               "operator as a generic actual", N);
+
+         else
+            raise Program_Error;
+         end if;
+      end if;
    end Analyze_Subprogram_Renaming;
 
    -------------------------
@@ -4300,6 +4335,49 @@ package body Sem_Ch8 is
 
       begin
          pragma Assert (Nkind (Clause) = N_Use_Package_Clause);
+
+         --  Perform "use implies with" expansion (when extensions are enabled)
+         --  by inserting an extra with clause since redundant clauses don't
+         --  really matter.
+
+         if All_Extensions_Allowed
+           and then Is_In_Context_Clause (Clause)
+           and then Nkind (Pack) in N_Expanded_Name
+                                  | N_Identifier
+                                  | N_Selected_Component
+         then
+            declare
+               Unum        : Unit_Number_Type;
+               With_Clause : constant Node_Id :=
+                 Make_With_Clause (Sloc (Clause),
+                   Name => New_Copy_Tree (Pack));
+            begin
+               --  Attempt to load the unit mentioned in the use clause
+
+               Unum := Load_Unit
+                         (Load_Name  => Get_Unit_Name (With_Clause),
+                          Required   => False,
+                          Subunit    => False,
+                          Error_Node => Clause,
+                          With_Node  => With_Clause);
+
+               --  Either we can't file the unit or the use clause is a
+               --  reference to a nested package - in that case just handle
+               --  the use clause normally.
+
+               if Unum /= No_Unit then
+
+                  Set_Library_Unit (With_Clause, Cunit (Unum));
+                  Set_Is_Implicit_With (With_Clause);
+
+                  Analyze (With_Clause);
+                  Expand_With_Clause
+                   (With_Clause, Name (With_Clause),
+                     Enclosing_Comp_Unit_Node (Clause));
+               end if;
+            end;
+         end if;
+
          Analyze (Pack);
 
          --  Verify that the package standard is not directly named in a
@@ -4458,6 +4536,10 @@ package body Sem_Ch8 is
 
       Id := Subtype_Mark (N);
       Find_Type (Id);
+      if not Is_Entity_Name (Id) then
+         pragma Assert (Serious_Errors_Detected > 0);
+         return;
+      end if;
       E := Base_Type (Entity (Id));
 
       --  There are many cases where a use_type_clause may be reanalyzed due to
@@ -4958,9 +5040,36 @@ package body Sem_Ch8 is
    -----------------------------------
 
    procedure Check_In_Previous_With_Clause (N, Nam : Node_Id) is
-      Pack : constant Entity_Id := Entity (Original_Node (Nam));
+
+      function Get_Name (N : Node_Id) return Node_Id;
+      --  Return the name of a package that may be present in a clause
+
+      --------------
+      -- Get_Name --
+      --------------
+
+      function Get_Name (N : Node_Id) return Node_Id is
+      begin
+         case Nkind (N) is
+            when N_Indexed_Component =>
+               return Prefix (N);
+
+            when N_Function_Call =>
+               return Name (N);
+
+            when others =>
+               return N;
+         end case;
+      end Get_Name;
+
+      --  Local variables
+
+      Pack : constant Entity_Id := Entity (Get_Name (Original_Node (Nam)));
+
       Item : Node_Id;
       Par  : Node_Id;
+
+   --  Start of processing for Check_In_Previous_With_Clause
 
    begin
       Item := First (Context_Items (Parent (N)));
@@ -4972,7 +5081,7 @@ package body Sem_Ch8 is
            and then Nkind (Name (Item)) /= N_Selected_Component
            and then Entity (Name (Item)) = Pack
          then
-            Par := Nam;
+            Par := Get_Name (Original_Node (Nam));
 
             --  Find root library unit in with_clause
 
@@ -4980,7 +5089,7 @@ package body Sem_Ch8 is
                Par := Prefix (Par);
             end loop;
 
-            if Is_Child_Unit (Entity (Original_Node (Par))) then
+            if Is_Child_Unit (Entity (Par)) then
                Error_Msg_NE ("& is not directly visible", Par, Entity (Par));
             else
                return;
@@ -5010,6 +5119,14 @@ package body Sem_Ch8 is
 
    begin
       if Nkind (Parent (N)) /= N_Compilation_Unit then
+         return;
+
+      --  Structural instances can always be renamed
+
+      elsif Is_Generic_Instance (Old_E)
+        and then Present (Get_Unit_Instantiation_Node (Old_E))
+        and then Is_Structural (Get_Unit_Instantiation_Node (Old_E))
+      then
          return;
 
       --  Check for library unit. Note that we used to check for the scope
@@ -5218,23 +5335,19 @@ package body Sem_Ch8 is
       Id        : Entity_Id;
       Elmt      : Elmt_Id;
 
-      function Is_Primitive_Operator_In_Use
-        (Op : Entity_Id;
-         F  : Entity_Id) return Boolean;
-      --  Check whether Op is a primitive operator of a use-visible type
+      function Type_In_Use (T : Entity_Id; P : Entity_Id) return Boolean;
+      --  Check whether type T is declared in P and appears in an active
+      --  use_type clause.
 
-      ----------------------------------
-      -- Is_Primitive_Operator_In_Use --
-      ----------------------------------
+      -----------------
+      -- Type_In_Use --
+      -----------------
 
-      function Is_Primitive_Operator_In_Use
-        (Op : Entity_Id;
-         F  : Entity_Id) return Boolean
-      is
-         T : constant Entity_Id := Base_Type (Etype (F));
+      function Type_In_Use (T : Entity_Id; P : Entity_Id) return Boolean is
+         BT : constant Entity_Id := Base_Type (T);
       begin
-         return In_Use (T) and then Scope (T) = Scope (Op);
-      end Is_Primitive_Operator_In_Use;
+         return Scope (BT) = P and then (In_Use (T) or else In_Use (BT));
+      end Type_In_Use;
 
    --  Start of processing for End_Use_Package
 
@@ -5264,12 +5377,13 @@ package body Sem_Ch8 is
 
                if Nkind (Id) = N_Defining_Operator_Symbol
                  and then
-                   (Is_Primitive_Operator_In_Use (Id, First_Formal (Id))
+                   (Type_In_Use (Etype (Id), Pack)
+                     or else Type_In_Use (Etype (First_Formal (Id)), Pack)
                      or else
                        (Present (Next_Formal (First_Formal (Id)))
                          and then
-                           Is_Primitive_Operator_In_Use
-                             (Id, Next_Formal (First_Formal (Id)))))
+                           Type_In_Use
+                             (Etype (Next_Formal (First_Formal (Id))), Pack)))
                then
                   null;
                else
@@ -5371,7 +5485,15 @@ package body Sem_Ch8 is
          elsif In_Open_Scopes (Scope (Base_Type (T))) then
             null;
 
-         elsif not Redundant_Use (Id) then
+         --  Turn off the use_type_clause on the type unless the clause is
+         --  redundant, or there's a previous use_type_clause. (The case where
+         --  a use_type_clause without "all" is followed by one with "all" in
+         --  a more nested scope is not considered redundant, necessitating
+         --  the test for a previous clause. One might expect the latter test
+         --  to suffice, but it turns out there are cases where Redundant_Use
+         --  is set, but Prev_Use_Clause is not set. ???)
+
+         elsif not Redundant_Use (Id) and then No (Prev_Use_Clause (N)) then
             Set_In_Use (T, False);
             Set_In_Use (Base_Type (T), False);
             Set_Current_Use_Clause (T, Empty);
@@ -5386,10 +5508,7 @@ package body Sem_Ch8 is
          end if;
       end if;
 
-      if Is_Empty_Elmt_List (Used_Operations (N)) then
-         return;
-
-      else
+      if Present (Used_Operations (N)) then
          Elmt := First_Elmt (Used_Operations (N));
          while Present (Elmt) loop
             Set_Is_Potentially_Use_Visible (Node (Elmt), False);
@@ -8365,7 +8484,8 @@ package body Sem_Ch8 is
 
             if Is_Overloaded (P) then
 
-               --  The prefix must resolve to a unique enclosing construct
+               --  The prefix must resolve to a unique enclosing construct, per
+               --  the last sentence of RM 4.1.3 (13).
 
                declare
                   Found : Boolean := False;
@@ -8379,6 +8499,7 @@ package body Sem_Ch8 is
                         if Found then
                            Error_Msg_N (
                               "prefix must be unique enclosing scope", N);
+                           Change_Selected_Component_To_Expanded_Name (N);
                            Set_Entity (N, Any_Id);
                            Set_Etype  (N, Any_Type);
                            return;
@@ -9504,6 +9625,11 @@ package body Sem_Ch8 is
            and then Present (Scope (Entity (E)))
          then
             Mark_Use_Package (Scope (Entity (E)));
+
+            --  Additionally mark the types of the formals and the return
+            --  types as used when dealing with an overloaded operator.
+
+            Mark_Parameters (Entity (E));
          end if;
 
          Curr := Current_Use_Clause (Base);
@@ -9878,28 +10004,8 @@ package body Sem_Ch8 is
 
    procedure Premature_Usage (N : Node_Id) is
       Kind : constant Node_Kind := Nkind (Parent (Entity (N)));
-      E    : Entity_Id := Entity (N);
 
    begin
-      --  Within an instance, the analysis of the actual for a formal object
-      --  does not see the name of the object itself. This is significant only
-      --  if the object is an aggregate, where its analysis does not do any
-      --  name resolution on component associations. (see 4717-008). In such a
-      --  case, look for the visible homonym on the chain.
-
-      if In_Instance and then Present (Homonym (E)) then
-         E := Homonym (E);
-         while Present (E) and then not In_Open_Scopes (Scope (E)) loop
-            E := Homonym (E);
-         end loop;
-
-         if Present (E) then
-            Set_Entity (N, E);
-            Set_Etype (N, Etype (E));
-            return;
-         end if;
-      end if;
-
       case Kind is
          when N_Component_Declaration =>
             Error_Msg_N

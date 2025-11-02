@@ -21,7 +21,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "analyzer/common.h"
 
 #include "tree-pretty-print.h"
-#include "diagnostic-event-id.h"
+#include "diagnostics/event-id.h"
 #include "tree-dfa.h"
 #include "intl.h"
 
@@ -232,7 +232,7 @@ tree_to_json (tree node)
    for unknown).  */
 
 std::unique_ptr<json::value>
-diagnostic_event_id_to_json (const diagnostic_event_id_t &event_id)
+diagnostic_event_id_to_json (const diagnostics::paths::event_id_t &event_id)
 {
   if (event_id.known_p ())
     {
@@ -518,7 +518,7 @@ make_label_text (bool can_colorize, const char *fmt, ...)
 
   va_start (ap, fmt);
 
-  text_info ti (_(fmt), &ap, 0, NULL, &rich_loc);
+  text_info ti (_(fmt), &ap, 0, nullptr, &rich_loc);
   pp_format (pp.get (), &ti);
   pp_output_formatted_text (pp.get ());
 
@@ -549,7 +549,7 @@ make_label_text_n (bool can_colorize, unsigned HOST_WIDE_INT n,
 
   const char *fmt = ngettext (singular_fmt, plural_fmt, n);
 
-  text_info ti (fmt, &ap, 0, NULL, &rich_loc);
+  text_info ti (fmt, &ap, 0, nullptr, &rich_loc);
 
   pp_format (pp.get (), &ti);
   pp_output_formatted_text (pp.get ());

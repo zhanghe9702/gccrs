@@ -274,6 +274,9 @@ lto_output_edge (struct lto_simple_output_block *ob, struct cgraph_edge *edge,
   bp_pack_value (&bp, edge->speculative_id, 16);
   bp_pack_value (&bp, edge->indirect_inlining_edge, 1);
   bp_pack_value (&bp, edge->speculative, 1);
+  bp_pack_value (&bp, edge->callback, 1);
+  bp_pack_value (&bp, edge->has_callback, 1);
+  bp_pack_value (&bp, edge->callback_id, 16);
   bp_pack_value (&bp, edge->call_stmt_cannot_inline_p, 1);
   gcc_assert (!edge->call_stmt_cannot_inline_p
 	      || edge->inline_failed != CIF_BODY_NOT_AVAILABLE);
@@ -718,11 +721,12 @@ output_profile_summary (struct lto_simple_output_block *ob)
 {
   if (profile_info)
     {
-      /* We do not output num and run_max, they are not used by
-         GCC profile feedback and they are difficult to merge from multiple
-         units.  */
       unsigned runs = (profile_info->runs);
       streamer_write_uhwi_stream (ob->main_stream, runs);
+      streamer_write_gcov_count_stream (ob->main_stream,
+					profile_info->sum_max);
+      streamer_write_gcov_count_stream (ob->main_stream,
+					profile_info->cutoff);
 
       /* IPA-profile computes hot bb threshold based on cumulated
 	 whole program profile.  We need to stream it down to ltrans.  */
@@ -1538,6 +1542,9 @@ input_edge (class lto_input_block *ib, vec<symtab_node *> nodes,
 
   edge->indirect_inlining_edge = bp_unpack_value (&bp, 1);
   edge->speculative = bp_unpack_value (&bp, 1);
+  edge->callback = bp_unpack_value(&bp, 1);
+  edge->has_callback = bp_unpack_value(&bp, 1);
+  edge->callback_id = bp_unpack_value(&bp, 16);
   edge->lto_stmt_uid = stmt_id;
   edge->speculative_id = speculative_id;
   edge->inline_failed = inline_failed;
@@ -1678,6 +1685,8 @@ input_profile_summary (class lto_input_block *ib,
   if (runs)
     {
       file_data->profile_info.runs = runs;
+      file_data->profile_info.sum_max = streamer_read_gcov_count (ib);
+      file_data->profile_info.cutoff = streamer_read_gcov_count (ib);
 
       /* IPA-profile computes hot bb threshold based on cumulated
 	 whole program profile.  We need to stream it down to ltrans.  */
@@ -1719,6 +1728,8 @@ merge_profile_summaries (struct lto_file_decl_data **file_data_vec)
 
   profile_info = XCNEW (gcov_summary);
   profile_info->runs = max_runs;
+  profile_info->sum_max = 0;
+  profile_info->cutoff = 0;
 
   /* If merging already happent at WPA time, we are done.  */
   if (flag_ltrans)
@@ -1735,6 +1746,14 @@ merge_profile_summaries (struct lto_file_decl_data **file_data_vec)
 
 	scale = RDIV (node->count_materialization_scale * max_runs,
                       node->lto_file_data->profile_info.runs);
+	gcov_type sum_max = RDIV (node->lto_file_data->profile_info.sum_max * max_runs,
+				  node->lto_file_data->profile_info.runs);
+	gcov_type cutoff = RDIV (node->lto_file_data->profile_info.cutoff * max_runs,
+				 node->lto_file_data->profile_info.runs);
+	if (sum_max > profile_info->sum_max)
+	  profile_info->sum_max = sum_max;
+	if (cutoff > profile_info->cutoff)
+	  profile_info->cutoff = cutoff;
 	node->count_materialization_scale = scale;
 	if (scale < 0)
 	  fatal_error (input_location, "Profile information in %s corrupted",

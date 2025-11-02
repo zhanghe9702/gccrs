@@ -197,6 +197,7 @@ tree gfor_fndecl_string_scan;
 tree gfor_fndecl_string_verify;
 tree gfor_fndecl_string_trim;
 tree gfor_fndecl_string_minmax;
+tree gfor_fndecl_string_split;
 tree gfor_fndecl_adjustl;
 tree gfor_fndecl_adjustr;
 tree gfor_fndecl_select_string;
@@ -208,6 +209,7 @@ tree gfor_fndecl_string_scan_char4;
 tree gfor_fndecl_string_verify_char4;
 tree gfor_fndecl_string_trim_char4;
 tree gfor_fndecl_string_minmax_char4;
+tree gfor_fndecl_string_split_char4;
 tree gfor_fndecl_adjustl_char4;
 tree gfor_fndecl_adjustr_char4;
 tree gfor_fndecl_select_string_char4;
@@ -223,6 +225,12 @@ tree gfor_fndecl_iargc;
 tree gfor_fndecl_kill;
 tree gfor_fndecl_kill_sub;
 tree gfor_fndecl_is_contiguous0;
+tree gfor_fndecl_fstat_i4_sub;
+tree gfor_fndecl_fstat_i8_sub;
+tree gfor_fndecl_lstat_i4_sub;
+tree gfor_fndecl_lstat_i8_sub;
+tree gfor_fndecl_stat_i4_sub;
+tree gfor_fndecl_stat_i8_sub;
 
 
 /* Intrinsic functions implemented in Fortran.  */
@@ -821,11 +829,6 @@ gfc_finish_var_decl (tree decl, gfc_symbol * sym)
         }
     }
 
-  /* Handle threadprivate variables.  */
-  if (sym->attr.threadprivate
-      && (TREE_STATIC (decl) || DECL_EXTERNAL (decl)))
-    set_decl_tls_model (decl, decl_default_tls_model (decl));
-
   if (sym->attr.omp_allocate && TREE_STATIC (decl))
     {
       struct gfc_omp_namelist *n;
@@ -843,6 +846,11 @@ gfc_finish_var_decl (tree decl, gfc_symbol * sym)
   /* Mark weak variables.  */
   if (sym->attr.ext_attr & (1 << EXT_ATTR_WEAK))
     declare_weak (decl);
+
+  /* Handle threadprivate variables.  */
+  if (sym->attr.threadprivate
+      && (TREE_STATIC (decl) || DECL_EXTERNAL (decl)))
+    set_decl_tls_model (decl, decl_default_tls_model (decl));
 
   gfc_finish_decl_attrs (decl, &sym->attr);
 }
@@ -1680,6 +1688,11 @@ gfc_get_symbol_decl (gfc_symbol * sym)
       && !(sym->attr.use_assoc || sym->attr.dummy))
     gfc_defer_symbol_init (sym);
 
+  if ((sym->ts.type == BT_DERIVED && sym->ts.u.derived->attr.pdt_comp)
+      && gfc_current_ns == sym->ns
+      && !(sym->attr.use_assoc || sym->attr.dummy))
+    gfc_defer_symbol_init (sym);
+
   /* Dummy PDT 'len' parameters should be checked when they are explicit.  */
   if ((sym->ts.type == BT_DERIVED || sym->ts.type == BT_CLASS)
       && (gfc_option.rtcheck & GFC_RTCHECK_BOUNDS)
@@ -2216,12 +2229,12 @@ get_proc_pointer_decl (gfc_symbol *sym)
 						  false, true);
     }
 
+  add_attributes_to_decl (&decl, sym);
+
   /* Handle threadprivate procedure pointers.  */
   if (sym->attr.threadprivate
       && (TREE_STATIC (decl) || DECL_EXTERNAL (decl)))
     set_decl_tls_model (decl, decl_default_tls_model (decl));
-
-  add_attributes_to_decl (&decl, sym);
 
   return decl;
 }
@@ -3569,6 +3582,12 @@ gfc_build_intrinsic_function_decls (void)
 	build_pointer_type (pchar1_type_node), integer_type_node,
 	integer_type_node);
 
+  gfor_fndecl_string_split = gfc_build_library_function_decl_with_spec (
+    get_identifier (PREFIX ("string_split")), ". . R . R . . ",
+    gfc_charlen_type_node, 6, gfc_charlen_type_node, pchar1_type_node,
+    gfc_charlen_type_node, pchar1_type_node, gfc_charlen_type_node,
+    gfc_logical4_type_node);
+
   gfor_fndecl_adjustl = gfc_build_library_function_decl_with_spec (
 	get_identifier (PREFIX("adjustl")), ". W . R ",
 	void_type_node, 3, pchar1_type_node, gfc_charlen_type_node,
@@ -3640,6 +3659,12 @@ gfc_build_intrinsic_function_decls (void)
 	void_type_node, -4, build_pointer_type (gfc_charlen_type_node),
 	build_pointer_type (pchar4_type_node), integer_type_node,
 	integer_type_node);
+
+  gfor_fndecl_string_split_char4 = gfc_build_library_function_decl_with_spec (
+    get_identifier (PREFIX ("string_split_char4")), ". . R . R . . ",
+    gfc_charlen_type_node, 6, gfc_charlen_type_node, pchar4_type_node,
+    gfc_charlen_type_node, pchar4_type_node, gfc_charlen_type_node,
+    gfc_logical4_type_node);
 
   gfor_fndecl_adjustl_char4 = gfc_build_library_function_decl_with_spec (
 	get_identifier (PREFIX("adjustl_char4")), ". W . R ",
@@ -3896,6 +3921,34 @@ gfc_build_intrinsic_function_decls (void)
 	gfc_int4_type_node, 1, pvoid_type_node);
   DECL_PURE_P (gfor_fndecl_is_contiguous0) = 1;
   TREE_NOTHROW (gfor_fndecl_is_contiguous0) = 1;
+
+  gfor_fndecl_fstat_i4_sub = gfc_build_library_function_decl (
+	get_identifier (PREFIX ("fstat_i4_sub")), void_type_node,
+	3, gfc_pint4_type_node, gfc_pint4_type_node, gfc_pint4_type_node);
+
+  gfor_fndecl_fstat_i8_sub = gfc_build_library_function_decl (
+	get_identifier (PREFIX ("fstat_i8_sub")), void_type_node,
+	3, gfc_pint8_type_node, gfc_pint8_type_node, gfc_pint8_type_node);
+
+  gfor_fndecl_lstat_i4_sub = gfc_build_library_function_decl (
+	get_identifier (PREFIX ("lstat_i4_sub")), void_type_node,
+	4, pchar_type_node, gfc_pint4_type_node, gfc_pint4_type_node,
+	gfc_charlen_type_node);
+
+  gfor_fndecl_lstat_i8_sub = gfc_build_library_function_decl (
+	get_identifier (PREFIX ("lstat_i8_sub")), void_type_node,
+	4, pchar_type_node, gfc_pint8_type_node, gfc_pint8_type_node,
+	gfc_charlen_type_node);
+
+  gfor_fndecl_stat_i4_sub = gfc_build_library_function_decl (
+	get_identifier (PREFIX ("stat_i4_sub")), void_type_node,
+	4, pchar_type_node, gfc_pint4_type_node, gfc_pint4_type_node,
+	gfc_charlen_type_node);
+
+  gfor_fndecl_stat_i8_sub = gfc_build_library_function_decl (
+	get_identifier (PREFIX ("stat_i8_sub")), void_type_node,
+	4, pchar_type_node, gfc_pint8_type_node, gfc_pint8_type_node,
+	gfc_charlen_type_node);
 }
 
 
@@ -4773,16 +4826,33 @@ gfc_trans_deferred_vars (gfc_symbol * proc_sym, gfc_wrapped_block * block)
       /* Nullify explicit return class arrays on entry.  */
       tree type;
       tmp = get_proc_result (proc_sym);
-	if (tmp && GFC_CLASS_TYPE_P (TREE_TYPE (tmp)))
-	  {
-	    gfc_start_block (&init);
-	    tmp = gfc_class_data_get (tmp);
-	    type = TREE_TYPE (gfc_conv_descriptor_data_get (tmp));
-	    gfc_conv_descriptor_data_set (&init, tmp, build_int_cst (type, 0));
-	    gfc_add_init_cleanup (block, gfc_finish_block (&init), NULL_TREE);
-	  }
+      if (tmp && GFC_CLASS_TYPE_P (TREE_TYPE (tmp)))
+	{
+	  gfc_start_block (&init);
+	  tmp = gfc_class_data_get (tmp);
+	  type = TREE_TYPE (gfc_conv_descriptor_data_get (tmp));
+	  gfc_conv_descriptor_data_set (&init, tmp, build_int_cst (type, 0));
+	  gfc_add_init_cleanup (block, gfc_finish_block (&init), NULL_TREE);
+	}
     }
 
+  sym = (proc_sym->attr.function
+	 && proc_sym != proc_sym->result) ? proc_sym->result : NULL;
+
+  if (sym && !sym->attr.allocatable && !sym->attr.pointer
+      && sym->ts.type == BT_DERIVED
+      && sym->ts.u.derived
+      && !gfc_has_default_initializer (sym->ts.u.derived)
+      && sym->ts.u.derived->attr.pdt_type)
+    {
+      gfc_init_block (&tmpblock);
+      tmp = gfc_allocate_pdt_comp (sym->ts.u.derived,
+				   sym->backend_decl,
+				   sym->as ? sym->as->rank : 0,
+				   sym->param_list);
+      gfc_add_expr_to_block (&tmpblock, tmp);
+      gfc_add_init_cleanup (block, gfc_finish_block (&tmpblock), NULL);
+    }
 
   /* Initialize the INTENT(OUT) derived type dummy arguments.  This
      should be done here so that the offsets and lbounds of arrays
@@ -4856,25 +4926,28 @@ gfc_trans_deferred_vars (gfc_symbol * proc_sym, gfc_wrapped_block * block)
 
       if (sym->ts.type == BT_DERIVED
 	  && sym->ts.u.derived
-	  && sym->ts.u.derived->attr.pdt_type)
+	  && (sym->ts.u.derived->attr.pdt_type || sym->ts.u.derived->attr.pdt_comp))
 	{
 	  is_pdt_type = true;
 	  gfc_init_block (&tmpblock);
-	  if (!(sym->attr.dummy
-		|| sym->attr.pointer
-		|| sym->attr.allocatable))
+	  if (!sym->attr.dummy && !sym->attr.pointer)
 	    {
-	      tmp = gfc_allocate_pdt_comp (sym->ts.u.derived,
-					   sym->backend_decl,
-					   sym->as ? sym->as->rank : 0,
-					   sym->param_list);
-	      gfc_add_expr_to_block (&tmpblock, tmp);
-	      if (!sym->attr.result)
+	      if (!sym->attr.allocatable)
+		{
+		  tmp = gfc_allocate_pdt_comp (sym->ts.u.derived,
+					       sym->backend_decl,
+					       sym->as ? sym->as->rank : 0,
+					       sym->param_list);
+		  gfc_add_expr_to_block (&tmpblock, tmp);
+		}
+
+	      if (!sym->attr.result && !sym->ts.u.derived->attr.alloc_comp)
 		tmp = gfc_deallocate_pdt_comp (sym->ts.u.derived,
 					       sym->backend_decl,
 					       sym->as ? sym->as->rank : 0);
 	      else
 		tmp = NULL_TREE;
+
 	      gfc_add_init_cleanup (block, gfc_finish_block (&tmpblock), tmp);
 	    }
 	  else if (sym->attr.dummy)
@@ -4920,20 +4993,6 @@ gfc_trans_deferred_vars (gfc_symbol * proc_sym, gfc_wrapped_block * block)
 	      gfc_add_expr_to_block (&tmpblock, tmp);
 	      gfc_add_init_cleanup (block, gfc_finish_block (&tmpblock), NULL);
 	    }
-	}
-
-      if (sym->attr.pointer && sym->attr.dimension
-	  && sym->attr.save == SAVE_NONE
-	  && !sym->attr.use_assoc
-	  && !sym->attr.host_assoc
-	  && !sym->attr.dummy
-	  && GFC_DESCRIPTOR_TYPE_P (TREE_TYPE (sym->backend_decl)))
-	{
-	  gfc_init_block (&tmpblock);
-	  gfc_conv_descriptor_span_set (&tmpblock, sym->backend_decl,
-				build_int_cst (gfc_array_index_type, 0));
-	  gfc_add_init_cleanup (block, gfc_finish_block (&tmpblock),
-				NULL_TREE);
 	}
 
       if (sym->ts.type == BT_CLASS
@@ -5134,18 +5193,31 @@ gfc_trans_deferred_vars (gfc_symbol * proc_sym, gfc_wrapped_block * block)
 		      se.descriptor_only = 1;
 		      gfc_conv_expr (&se, e);
 		      descriptor = se.expr;
-		      se.expr = gfc_conv_descriptor_data_addr (se.expr);
-		      se.expr = build_fold_indirect_ref_loc (input_location, se.expr);
+		      se.expr = gfc_conv_descriptor_data_get (se.expr);
 		    }
 		  gfc_free_expr (e);
 
 		  if (!sym->attr.dummy || sym->attr.intent == INTENT_OUT)
 		    {
 		      /* Nullify when entering the scope.  */
-		      tmp = fold_build2_loc (input_location, MODIFY_EXPR,
-					     TREE_TYPE (se.expr), se.expr,
-					     fold_convert (TREE_TYPE (se.expr),
-							   null_pointer_node));
+		      if (sym->ts.type == BT_CLASS
+			  && (CLASS_DATA (sym)->attr.dimension
+			      || CLASS_DATA (sym)->attr.codimension))
+			{
+			  stmtblock_t nullify;
+			  gfc_init_block (&nullify);
+			  gfc_conv_descriptor_data_set (&nullify, descriptor,
+							null_pointer_node);
+			  tmp = gfc_finish_block (&nullify);
+			}
+		      else
+			{
+			  tree typed_null = fold_convert (TREE_TYPE (se.expr),
+							  null_pointer_node);
+			  tmp = fold_build2_loc (input_location, MODIFY_EXPR,
+						 TREE_TYPE (se.expr), se.expr,
+						 typed_null);
+			}
 		      if (sym->attr.optional)
 			{
 			  tree present = gfc_conv_expr_present (sym);
@@ -5326,7 +5398,7 @@ gfc_trans_deferred_vars (gfc_symbol * proc_sym, gfc_wrapped_block * block)
 	continue;
       /* 'omp allocate( {purpose: allocator, value: align},
 			{purpose: init-stmtlist, value: cleanup-stmtlist},
-			{purpose: size-var, value: last-size-expr}}
+			{purpose: size-var, value: last-size-expr} )
 	  where init-stmt/cleanup-stmt is the STATEMENT list to find the
 	  try-final block; last-size-expr is to find the location after
 	  which to add the code and 'size-var' is for the proper size, cf.

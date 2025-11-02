@@ -319,6 +319,12 @@ package Sem_Attr is
       --  This attribute is identical to the Object_Size attribute. It is
       --  provided for compatibility with the DEC attribute of this name.
 
+      ----------
+      -- Make --
+      ----------
+
+      Attribute_Make => True,
+
       ----------------------
       -- Max_Integer_Size --
       ----------------------
@@ -532,6 +538,15 @@ package Sem_Attr is
       --  subprograms means that Unrestricted_Access applied to a subprogram
       --  yields a value that can be called as long as the subprogram is in
       --  scope (normal Ada 95 accessibility rules restrict this usage).
+
+      -------------------------
+      -- Unsigned_Base_Range --
+      -------------------------
+
+      Attribute_Unsigned_Base_Range => True,
+      --  GNAT core extension. The prefix of 'Unsigned_Base_Range must be a
+      --  signed integer type. The static result is a boolean that indicates
+      --  whether the base range is unsigned.
 
       ---------------
       -- VADS_Size --

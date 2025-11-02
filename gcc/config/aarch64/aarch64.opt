@@ -82,6 +82,11 @@ mbig-endian
 Target RejectNegative Mask(BIG_END)
 Assume target CPU is configured as big endian.
 
+menable-sysreg-checking
+Target RejectNegative Var(aarch64_enable_sysreg_guarding) Init(0)
+Generates an error message if an attempt is made to access a system register
+which is not available on the target architecture.
+
 mgeneral-regs-only
 Target RejectNegative Mask(GENERAL_REGS_ONLY) Save
 Generate code which uses only the general registers.
@@ -290,6 +295,17 @@ msve-vector-bits=
 Target RejectNegative Joined Enum(sve_vector_bits) Var(aarch64_sve_vector_bits) Init(SVE_SCALABLE)
 -msve-vector-bits=<number>	Set the number of bits in an SVE vector register.
 
+mautovec-preference=
+Target RejectNegative Joined Var(autovec_preference) Enum(aarch64_autovec_preference) Init(AARCH64_AUTOVEC_DEFAULT)
+-mautovec-preference=[default|asimd-only|sve-only|prefer-asimd|prefer-sve]
+Force an ISA selection strategy for auto-vectorization.  For best performance it
+is highly recommended to use -mcpu or -mtune instead.  This parameter should
+only be used for code exploration.
+
+mmax-vectorization
+Target Var(flag_aarch64_max_vectorization) Save
+Override the scalar cost model such that vectorization is always profitable.
+
 mverbose-cost-dump
 Target Undocumented Var(flag_aarch64_verbose_cost)
 Enables verbose cost model dumping in the debug dump files.
@@ -356,8 +372,8 @@ The number of Newton iterations for calculating the reciprocal for double type. 
 
 -param=aarch64-autovec-preference=
 Target Joined Var(aarch64_autovec_preference) Enum(aarch64_autovec_preference) Init(AARCH64_AUTOVEC_DEFAULT) Param
---param=aarch64-autovec-preference=[default|asimd-only|sve-only|prefer-asimd|prefer-sve]
-Force an ISA selection strategy for auto-vectorization.
+An old alias for -mautovec-preference.  If both -mautovec-preference and
+--param=aarch64-autovec-preference are passed, the --param value will be used.
 
 Enum
 Name(aarch64_autovec_preference) Type(enum aarch64_autovec_preference_enum) UnknownError(unknown autovec preference %qs)
@@ -434,4 +450,4 @@ trailing destructive updates of the base register used by a pair.
 
 Wexperimental-fmv-target
 Target Var(warn_experimental_fmv) Warning Init(1)
-Warn about usage of experimental Function Multi Versioning.
+This option is deprecated.

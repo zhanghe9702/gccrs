@@ -20,7 +20,7 @@ along with GCC; see the file COPYING3.  If not see
 
 #include "analyzer/common.h"
 
-#include "diagnostic-event-id.h"
+#include "diagnostics/event-id.h"
 #include "stringpool.h"
 #include "attribs.h"
 
@@ -116,7 +116,11 @@ public:
 		     const svalue *rhs) const final override;
 
   bool can_purge_p (state_t s) const final override;
-  std::unique_ptr<pending_diagnostic> on_leak (tree var) const final override;
+
+  std::unique_ptr<pending_diagnostic>
+  on_leak (tree var,
+	   const program_state *old_state,
+	   const program_state *new_state) const final override;
 
   bool is_unchecked_fd_p (state_t s) const;
   bool is_valid_fd_p (state_t s) const;
@@ -210,7 +214,7 @@ public:
   /* State for a file descriptor that we do not want to track anymore . */
   state_t m_stop;
 
-  /* Stashed constant values from the frontend.  These could be NULL.  */
+  /* Stashed constant values from the frontend.  These could be NULL_TREE.  */
   tree m_O_ACCMODE;
   tree m_O_RDONLY;
   tree m_O_WRONLY;
@@ -257,7 +261,7 @@ private:
 			    const svalue *fd_sval,
 			    const supernode *node,
 			    state_t old_state,
-			    bool *complained = NULL) const;
+			    bool *complained = nullptr) const;
   bool check_for_new_socket_fd (const call_details &cd,
 				bool successful,
 				sm_context &sm_ctxt,
@@ -388,21 +392,22 @@ public:
     return false;
   }
 
-  diagnostic_event::meaning
+  diagnostics::paths::event::meaning
   get_meaning_for_state_change (
       const evdesc::state_change &change) const final override
   {
+    using event = diagnostics::paths::event;
     if (change.m_old_state == m_sm.get_start_state ()
 	&& (m_sm.is_unchecked_fd_p (change.m_new_state)
 	    || change.m_new_state == m_sm.m_new_datagram_socket
 	    || change.m_new_state == m_sm.m_new_stream_socket
 	    || change.m_new_state == m_sm.m_new_unknown_socket))
-      return diagnostic_event::meaning (diagnostic_event::VERB_acquire,
-			 diagnostic_event::NOUN_resource);
+      return event::meaning (event::verb::acquire,
+			     event::noun::resource);
     if (change.m_new_state == m_sm.m_closed)
-      return diagnostic_event::meaning (diagnostic_event::VERB_release,
-			 diagnostic_event::NOUN_resource);
-    return diagnostic_event::meaning ();
+      return event::meaning (event::verb::release,
+			     event::noun::resource);
+    return event::meaning ();
   }
 
 protected:
@@ -422,7 +427,7 @@ public:
 
   fd_param_diagnostic (const fd_state_machine &sm, tree arg, tree callee_fndecl)
       : fd_diagnostic (sm, arg), m_callee_fndecl (callee_fndecl),
-	m_attr_name (NULL), m_arg_idx (-1)
+	m_attr_name (nullptr), m_arg_idx (-1)
   {
   }
 
@@ -477,7 +482,14 @@ protected:
 class fd_leak : public fd_diagnostic
 {
 public:
-  fd_leak (const fd_state_machine &sm, tree arg) : fd_diagnostic (sm, arg) {}
+  fd_leak (const fd_state_machine &sm, tree arg,
+	   const program_state *final_state)
+  : fd_diagnostic (sm, arg),
+    m_final_state ()
+  {
+    if (final_state)
+      m_final_state = std::make_unique<program_state> (*final_state);
+  }
 
   const char *
   get_kind () const final override
@@ -543,8 +555,15 @@ public:
     return true;
   }
 
+  const program_state *
+  get_final_state () const final override
+  {
+    return m_final_state.get ();
+  }
+
 private:
-  diagnostic_event_id_t m_open_event;
+  diagnostics::paths::event_id_t m_open_event;
+  std::unique_ptr<program_state> m_final_state;
 };
 
 class fd_access_mode_mismatch : public fd_param_diagnostic
@@ -687,7 +706,7 @@ public:
   }
 
 private:
-  diagnostic_event_id_t m_first_close_event;
+  diagnostics::paths::event_id_t m_first_close_event;
 };
 
 class fd_use_after_close : public fd_param_diagnostic
@@ -766,7 +785,7 @@ public:
   }
 
 private:
-  diagnostic_event_id_t m_first_close_event;
+  diagnostics::paths::event_id_t m_first_close_event;
 };
 
 class fd_use_without_check : public fd_param_diagnostic
@@ -836,7 +855,7 @@ public:
   }
 
 private:
-  diagnostic_event_id_t m_first_open_event;
+  diagnostics::paths::event_id_t m_first_open_event;
 };
 
 /* Concrete pending_diagnostic subclass for -Wanalyzer-fd-phase-mismatch.  */
@@ -1296,7 +1315,7 @@ fd_state_machine::valid_to_unchecked_state (state_t state) const
     return m_unchecked_read_only;
   else
     gcc_unreachable ();
-  return NULL;
+  return nullptr;
 }
 
 void
@@ -1305,7 +1324,7 @@ fd_state_machine::mark_as_valid_fd (region_model *model,
 				    const svalue *fd_sval,
 				    const extrinsic_state &ext_state) const
 {
-  smap->set_state (model, fd_sval, m_valid_read_write, NULL, ext_state);
+  smap->set_state (model, fd_sval, m_valid_read_write, nullptr, ext_state);
 }
 
 bool
@@ -1528,7 +1547,7 @@ fd_state_machine::on_open (sm_context &sm_ctxt, const supernode *node,
   else
     {
       sm_ctxt.warn (node, stmt, NULL_TREE,
-		    std::make_unique<fd_leak> (*this, NULL_TREE));
+		    std::make_unique<fd_leak> (*this, NULL_TREE, nullptr));
     }
 }
 
@@ -1541,7 +1560,7 @@ fd_state_machine::on_creat (sm_context &sm_ctxt, const supernode *node,
     sm_ctxt.on_transition (node, stmt, lhs, m_start, m_unchecked_write_only);
   else
     sm_ctxt.warn (node, stmt, NULL_TREE,
-		  std::make_unique<fd_leak> (*this, NULL_TREE));
+		  std::make_unique<fd_leak> (*this, NULL_TREE, nullptr));
 }
 
 void
@@ -1792,7 +1811,7 @@ fd_state_machine::on_socket (const call_details &cd,
 	}
       else
 	sm_ctxt.warn (node, &call, NULL_TREE,
-		      std::make_unique<fd_leak> (*this, NULL_TREE));
+		      std::make_unique<fd_leak> (*this, NULL_TREE, nullptr));
     }
   else
     {
@@ -1967,7 +1986,7 @@ fd_state_machine::on_bind (const call_details &cd,
 
   if (successful)
     {
-      state_t next_state = NULL;
+      state_t next_state = nullptr;
       if (old_state == m_new_stream_socket)
 	next_state = m_bound_stream_socket;
       else if (old_state == m_new_datagram_socket)
@@ -2185,7 +2204,7 @@ fd_state_machine::on_accept (const call_details &cd,
 	}
       else
 	sm_ctxt.warn (node, &call, NULL_TREE,
-		      std::make_unique<fd_leak> (*this, NULL_TREE));
+		      std::make_unique<fd_leak> (*this, NULL_TREE, nullptr));
     }
   else
     {
@@ -2223,7 +2242,7 @@ fd_state_machine::on_connect (const call_details &cd,
   if (successful)
     {
       model->update_for_zero_return (cd, true);
-      state_t next_state = NULL;
+      state_t next_state = nullptr;
       if (old_state == m_new_stream_socket)
 	next_state = m_connected_stream_socket;
       else if (old_state == m_new_datagram_socket)
@@ -2321,9 +2340,11 @@ fd_state_machine::can_purge_p (state_t s) const
 }
 
 std::unique_ptr<pending_diagnostic>
-fd_state_machine::on_leak (tree var) const
+fd_state_machine::on_leak (tree var,
+			   const program_state *,
+			   const program_state *new_state) const
 {
-  return std::make_unique<fd_leak> (*this, var);
+  return std::make_unique<fd_leak> (*this, var, new_state);
 }
 } // namespace
 
@@ -2361,7 +2382,7 @@ region_model::mark_as_valid_fd (const svalue *sval, region_model_context *ctxt)
 {
   sm_state_map *smap;
   const fd_state_machine *fd_sm;
-  if (!get_fd_state (ctxt, &smap, &fd_sm, NULL, NULL))
+  if (!get_fd_state (ctxt, &smap, &fd_sm, nullptr, nullptr))
     return;
   const extrinsic_state *ext_state = ctxt->get_ext_state ();
   if (!ext_state)
@@ -2390,7 +2411,7 @@ public:
       sm_state_map *smap;
       const fd_state_machine *fd_sm;
       std::unique_ptr<sm_context> sm_ctxt;
-      if (!get_fd_state (ctxt, &smap, &fd_sm, NULL, &sm_ctxt))
+      if (!get_fd_state (ctxt, &smap, &fd_sm, nullptr, &sm_ctxt))
 	{
 	  cd.set_any_lhs_with_defaults ();
 	  return true;
@@ -2445,7 +2466,7 @@ public:
       sm_state_map *smap;
       const fd_state_machine *fd_sm;
       std::unique_ptr<sm_context> sm_ctxt;
-      if (!get_fd_state (ctxt, &smap, &fd_sm, NULL, &sm_ctxt))
+      if (!get_fd_state (ctxt, &smap, &fd_sm, nullptr, &sm_ctxt))
 	{
 	  cd.set_any_lhs_with_defaults ();
 	  return true;
@@ -2498,7 +2519,7 @@ class kf_listen : public known_function
       sm_state_map *smap;
       const fd_state_machine *fd_sm;
       std::unique_ptr<sm_context> sm_ctxt;
-      if (!get_fd_state (ctxt, &smap, &fd_sm, NULL, &sm_ctxt))
+      if (!get_fd_state (ctxt, &smap, &fd_sm, nullptr, &sm_ctxt))
 	{
 	  cd.set_any_lhs_with_defaults ();
 	  return true;
@@ -2552,7 +2573,7 @@ class kf_accept : public known_function
       sm_state_map *smap;
       const fd_state_machine *fd_sm;
       std::unique_ptr<sm_context> sm_ctxt;
-      if (!get_fd_state (ctxt, &smap, &fd_sm, NULL, &sm_ctxt))
+      if (!get_fd_state (ctxt, &smap, &fd_sm, nullptr, &sm_ctxt))
 	{
 	  cd.set_any_lhs_with_defaults ();
 	  return true;
@@ -2609,7 +2630,7 @@ public:
       sm_state_map *smap;
       const fd_state_machine *fd_sm;
       std::unique_ptr<sm_context> sm_ctxt;
-      if (!get_fd_state (ctxt, &smap, &fd_sm, NULL, &sm_ctxt))
+      if (!get_fd_state (ctxt, &smap, &fd_sm, nullptr, &sm_ctxt))
 	{
 	  cd.set_any_lhs_with_defaults ();
 	  return true;
@@ -2687,7 +2708,7 @@ class kf_isatty : public known_function
 	  sm_state_map *smap;
 	  const fd_state_machine *fd_sm;
 	  std::unique_ptr<sm_context> sm_ctxt;
-	  if (!get_fd_state (ctxt, &smap, &fd_sm, NULL, &sm_ctxt))
+	  if (!get_fd_state (ctxt, &smap, &fd_sm, nullptr, &sm_ctxt))
 	    return true;
 	  const extrinsic_state *ext_state = ctxt->get_ext_state ();
 	  if (!ext_state)

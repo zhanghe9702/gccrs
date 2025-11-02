@@ -33,7 +33,13 @@
 #include <cassert>
 #include <cstdio>
 #include <cstdint>
+
+#include <algorithm>
 #include <list>
+#include <set>
+#include <vector>
+
+#include "encodings.h"
 
 #define COUNT_OF(X) (sizeof(X) / sizeof(X[0]))
 
@@ -52,12 +58,35 @@
 // COBOL tables can have up to seven subscripts
 #define MAXIMUM_TABLE_DIMENSIONS 7
 
-// This bit gets turned on in the first or last byte (depending on the leading_e attribute
-// phrase) of a NumericDisplay to indicate that the value is negative.
+/*  COBOL has the concept of Numeric Display values, which use an entire byte
+    per digit.  IBM also calls this "Zoned Decimal".
+    
+    In ASCII, the digits are '0' through '9' (0x30 through 0x39'.  Signed
+    values are indicated by turning on the 0x40 bit in either the first
+    byte (for LEADING variables) or the last byte (for TRAILING).
 
-// When running the EBCDIC character set, the meaning of this bit is flipped,
-// because an EBCDIC zero is 0xF0, while ASCII is 0x30
-#define NUMERIC_DISPLAY_SIGN_BIT 0x40
+    In IBM EBCDIC, the representation is slightly more complex, because the
+    concept of Zone carries a little more information.  Unsigned numbers are
+    made up of just the EBCDIC digits '0' through '9' (0xF0 through 0xF9).
+
+    The TRAILING signed value +1234 has the byte sequence 0xF1 0xF2 0xF3 0xC3.
+    The TRAILING signed value -1234 has the byte sequence 0xF1 0xF2 0xF3 0xD3.
+    The LEADING  signed value +1234 has the byte sequence 0xC1 0xF2 0xF3 0xF3.
+    The LEADING  signed value -1234 has the byte sequence 0xD1 0xF2 0xF3 0xF3.
+
+    Note that for IBM EBCDIC, the nybble indicating sign has the same meaning
+    as for COMP-3/packed-decimal numbers.
+
+    The effective result of this is that for ASCII, the byte carrying the sign
+    is made negative by turning on the 0x40 bit.
+
+    For EBCDIC, the value must be constructed properly as a positive value by
+    setting the high nybble of the sign-carrying byte to 0xC0, after which the
+    value is flagged negative by turning on the 0x10 bit, turning the 0xC0 to
+    0xD0. */
+
+#define NUMERIC_DISPLAY_SIGN_BIT_ASCII  0x40
+#define NUMERIC_DISPLAY_SIGN_BIT_EBCDIC 0x20
 
 #define LEVEL01 (1)
 #define LEVEL49 (49)
@@ -65,7 +94,6 @@
 
 // In the __gg__move_literala() call, we piggyback this bit onto the
 // cbl_round_t parameter, just to cut down on the number of parameters passed
-
 #define REFER_ALL_BIT 0x80
 
 // Other bits for handling MOVE ALL and so on.
@@ -84,6 +112,14 @@
 
 #define MINIMUM_ALLOCATION_SIZE 16
 
+// This was part of an exercise to make cppcheck shut up about invalid
+// pointer type conversions.
+// It was also to avoid having reinterpret_cast<> all over the place.
+// So, instead of                 reinterpret_cast<char *>(VALUE)
+// I sometimes use                PTRCAST(char, VALUE)
+// Note that "(char *)" is implied by "PTRCAST(char, VALUE)"
+#define PTRCAST(TYPE, VALUE) static_cast<TYPE *>(static_cast<void *>(VALUE))
+
 /*
  * User-defined names in IBM COBOL can have at most 30 characters.
  * For DBCS, the maximum is 14.
@@ -92,6 +128,8 @@
  * "A COBOL word is a character-string of not more than 63 characters"
  */
 typedef char cbl_name_t[64];
+
+typedef void (callback_t)();
 
 // Note that the field_type enum is duplicated in the source code for the
 // COBOL-aware GDB, and so any changes here (or there) have to be reflected
@@ -120,7 +158,6 @@ enum cbl_field_type_t {
   FldSwitch,
   FldDisplay,
   FldPointer,
-  FldBlob,
 };
 
 
@@ -162,7 +199,7 @@ enum cbl_field_attr_t : uint64_t {
   function_e        = 0x0000000100,
   quoted_e          = 0x0000000200,
   filler_e          = 0x0000000400,
-  _spare_e          = 0x0000000800, //
+  register_e        = 0x0000000800, // Data definition is found in constants.cc
   intermediate_e    = 0x0000001000, // Compiler-defined temporary variable
   embiggened_e      = 0x0000002000, // redefined numeric made 64-bit by USAGE POINTER
   all_alpha_e       = 0x0000004000, // FldAlphanumeric, but all A's
@@ -182,7 +219,7 @@ enum cbl_field_attr_t : uint64_t {
   leading_e         = 0x0004000000, // leading sign (signable_e alone means trailing)
   separate_e        = 0x0008000000, // separate sign
   envar_e           = 0x0010000000, // names an environment variable
-   dnu_1_e          = 0x0020000000, // unused: this attribute bit is available
+  encoded_e         = 0x0020000000, // data.initial matches codeset.encoding
   bool_encoded_e    = 0x0040000000, // data.initial is a boolean string
   hex_encoded_e     = 0x0080000000, // data.initial is a hex-encoded string
   depends_on_e      = 0x0100000000, // A group hierachy contains a DEPENDING_ON
@@ -215,7 +252,6 @@ enum cbl_figconst_t
 #define FIGCONST_MASK (figconst_1_e|figconst_2_e|figconst_4_e)
 #define DATASECT_MASK (linkage_e | local_e)
 
-
 enum cbl_file_org_t {
   file_disorganized_e,
   file_sequential_e,
@@ -237,7 +273,7 @@ enum cbl_file_mode_t {
   file_mode_output_e = 'w',
   file_mode_extend_e = 'a',
   file_mode_io_e     = '+',
-  file_mode_any_e, 
+  file_mode_any_e,
 };
 
 enum cbl_round_t {
@@ -288,15 +324,15 @@ enum bitop_t {
 };
 
 enum file_stmt_t {
-  file_stmt_delete_e, 
-  file_stmt_merge_e, 
-  file_stmt_read_e, 
-  file_stmt_rewrite_e, 
-  file_stmt_sort_e, 
-  file_stmt_start_e, 
-  file_stmt_write_e, 
+  file_stmt_delete_e,
+  file_stmt_merge_e,
+  file_stmt_read_e,
+  file_stmt_rewrite_e,
+  file_stmt_sort_e,
+  file_stmt_start_e,
+  file_stmt_write_e,
 };
-  
+
 enum file_close_how_t {
   file_close_no_how_e     = 0x00,
   file_close_removal_e    = 0x01,
@@ -320,13 +356,6 @@ enum cbl_arith_format_t {
     not_expected_e,
     no_giving_e, giving_e,
     corresponding_e };
-
-enum cbl_encoding_t {
-  ASCII_e,   // STANDARD-1 (in caps to avoid conflict with ascii_e in libgcobol.cc)
-  iso646_e,  // STANDARD-2
-  EBCDIC_e,  // NATIVE or EBCDIC
-  custom_encoding_e,
-};
 
 enum cbl_truncation_mode {
     trunc_std_e,
@@ -412,14 +441,14 @@ ec_cmp( ec_type_t raised, ec_type_t ec )
 {
   if( raised == ec ) return true;
 
-  // If both low bytes are nonzero, we had to match exactly, above. 
+  // If both low bytes are nonzero, we had to match exactly, above.
   if( (~EC_ALL_E & static_cast<uint32_t>(raised))
       &&
       (~EC_ALL_E & static_cast<uint32_t>(ec)) ) {
     return false;
   }
 
-  // Level 1 and 2 have low byte of zero. 
+  // Level 1 and 2 have low byte of zero.
   // If one low byte is zero, see if they're the same kind.
   return 0xFF < ( static_cast<uint32_t>(raised)
 		  &
@@ -464,8 +493,7 @@ struct cbl_declarative_t {
   uint32_t nfile, files[files_max];
   cbl_file_mode_t mode;
 
-  // cppcheck-suppress noExplicitConstructor
-  cbl_declarative_t( cbl_file_mode_t mode = file_mode_none_e )
+  explicit cbl_declarative_t( cbl_file_mode_t mode = file_mode_none_e )
     : section(0)
     , global(false)
     , type(ec_none_e)
@@ -474,8 +502,7 @@ struct cbl_declarative_t {
   {
     std::fill(files, files + COUNT_OF(files), 0);
   }
-  // cppcheck-suppress noExplicitConstructor
-  cbl_declarative_t( ec_type_t type )
+  explicit cbl_declarative_t( ec_type_t type )
     : section(0)
     , global(false)
     , type(type)
@@ -512,7 +539,7 @@ struct cbl_declarative_t {
       std::copy( that.files, that.files + nfile, this->files );
     }
   }
-  constexpr cbl_declarative_t& operator=(const cbl_declarative_t&) = default;
+  cbl_declarative_t& operator=(const cbl_declarative_t&) = default;
 
   std::vector<uint64_t> encode() const;
 
@@ -539,7 +566,7 @@ struct cbl_declarative_t {
 
     // TRUE if there are no files to match, or the provided file is in the list.
     bool match_file( size_t file ) const {
-    static const auto pend = files + nfile; // cppcheck-suppress constVariablePointer
+    static const uint32_t * pend = files + nfile;
 
     return nfile == 0 || pend != std::find(files, files + nfile, file);
   }
@@ -568,11 +595,11 @@ class cbl_enabled_exceptions_t : protected std::set<cbl_enabled_exception_t>
 
  public:
   cbl_enabled_exceptions_t() {}
-  cbl_enabled_exceptions_t( size_t nec, const cbl_enabled_exception_t *ecs ) 
+  cbl_enabled_exceptions_t( size_t nec, const cbl_enabled_exception_t *ecs )
     : std::set<cbl_enabled_exception_t>(ecs, ecs + nec)
   {}
   void turn_on_off( bool enabled, bool location, ec_type_t type,
-                    std::set<size_t> files );
+                    const std::set<size_t>& files );
 
   const cbl_enabled_exception_t * match( ec_type_t ec, size_t file = 0 ) const;
 
@@ -591,7 +618,7 @@ class cbl_enabled_exceptions_t : protected std::set<cbl_enabled_exception_t>
   cbl_enabled_exceptions_t& operator=( const cbl_enabled_exceptions_t& ) = default;
 };
 
-extern cbl_enabled_exceptions_t enabled_exceptions;
+cbl_enabled_exceptions_t& cdf_enabled_exceptions();
 
 template <typename T>
 T enabled_exception_match( T beg, T end, ec_type_t type, size_t file ) {

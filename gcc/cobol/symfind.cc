@@ -48,7 +48,7 @@ extern int yydebug;
 static bool
 is_data_field( symbol_elem_t& e ) {
   if( e.type != SymField ) return false;
-  auto f = cbl_field_of(&e);
+  const cbl_field_t *f = cbl_field_of(&e);
   if( f->name[0] == '\0' ) return false;
   if( is_filler(f) ) return false;
 
@@ -129,7 +129,7 @@ finalize_symbol_map2() {
   for( auto& elem : symbol_map2 ) {
     auto& fields( elem.second );
     fields.remove_if( []( auto isym ) {
-			auto f = cbl_field_of(symbol_at(isym));
+			const cbl_field_t *f = cbl_field_of(symbol_at(isym));
 			return f->type == FldInvalid;
 		      } );
     if( fields.empty() ) empties.insert(elem.first);
@@ -205,6 +205,7 @@ field_structure( symbol_elem_t& sym ) {
   if( !is_data_field(sym) ) return none;
 
   cbl_field_t *field = cbl_field_of(&sym);
+  assert(field->type != FldForward); // eliminated by is_data_field
 
   symbol_map_t::key_type key( sym.program, field->name, field->parent );
   symbol_map_t::value_type elem( key, std::vector<size_t>() );
@@ -230,16 +231,6 @@ field_structure( symbol_elem_t& sym ) {
   }
 
   return elem;
-}
-
-void erase_symbol_map_fwds( size_t beg ) {
-  for( auto p = symbols_begin(beg); p < symbols_end(); p++ ) {
-    if( p->type != SymField ) continue;
-    const auto& field(*cbl_field_of(p));
-    if( field.type == FldForward ) {
-      symbol_map.erase( sym_name_t(p->program, field.name, field.parent) );
-    }
-  }
 }
 
 void
@@ -275,8 +266,8 @@ update_symbol_map( symbol_elem_t *e ) {
 class is_name {
   const char *name;
 public:
-  is_name( const char *name ) : name(name) {}
-  bool operator()( symbol_map_t::value_type& elem ) {
+  explicit is_name( const char *name ) : name(name) {}
+  bool operator()( const symbol_map_t::value_type& elem ) {
     const bool tf = elem.first == name;
     return tf;
   }
@@ -298,7 +289,7 @@ class reduce_ancestry {
   static symbol_map_t::mapped_type
     candidates_only( const symbol_map_t::value_type& elem ) { return elem.second; }
 public:
-  reduce_ancestry( const symbol_map_t& groups )
+  explicit reduce_ancestry( const symbol_map_t& groups )
     : candidates( groups.size() )
     {
       std::transform( groups.begin(), groups.end(), candidates.begin(),
@@ -316,9 +307,9 @@ public:
       if( p != item.second.end() ) {
         // Preserve symbol's index at front of ancestor list.
         symbol_map_t::mapped_type shorter(1 + ancestors->size());
-        auto p = shorter.begin();
-        *p = item.second.front();
-        shorter.insert( ++p, ancestors->begin(), ancestors->end() );
+        auto p_l = shorter.begin();
+        *p_l = item.second.front();
+        shorter.insert( ++p_l, ancestors->begin(), ancestors->end() );
         return make_pair(item.first, shorter);
       }
     }
@@ -331,7 +322,7 @@ public:
 class different_program {
   size_t program;
 public:
-  different_program( size_t program ) : program(program) {}
+  explicit different_program( size_t program ) : program(program) {}
   bool operator()( const symbol_map_t::value_type& item ) const {
     return ! item.first.same_program(program);
   }
@@ -341,16 +332,16 @@ class in_scope {
   size_t program;
 
   static size_t prog_of( size_t program ) {
-    auto L = cbl_label_of(symbol_at(program));
+    const cbl_label_t *L = cbl_label_of(symbol_at(program));
     return L->parent;
   }
 
 public:
-  in_scope( size_t program ) : program(program) {}
+  explicit in_scope( size_t program ) : program(program) {}
 
   // A symbol is in scope if it's defined by this program or by an ancestor.
   bool operator()( const symbol_map_t::value_type& item ) const {
-    symbol_elem_t *e = symbol_at(item.second.front());
+    const symbol_elem_t *e = symbol_at(item.second.front());
     for( size_t prog = this->program; prog != 0; prog = prog_of(prog) ) {
       if( e->program == prog ) return true;
     }
@@ -430,7 +421,7 @@ symbol_match2( size_t program,
   auto plist = symbol_map2.find(key);
   if( plist != symbol_map2.end() ) {
     for( auto candidate : plist->second ) {
-      auto e = symbol_at(candidate);
+      const symbol_elem_t *e = symbol_at(candidate);
       if( name_has_names( e, names, local ) ) {
         fields.push_back( symbol_index(e) );
       }
@@ -504,7 +495,7 @@ symbol_match( size_t program, const std::list<const char *>& names ) {
     }
     auto inserted = output.insert(*p);
     if( ! inserted.second ) {
-      yyerror("%s is not a unique reference", key.name);
+      error_msg_direct("%s is not a unique reference", key.name);
     }
   }
   return output;
@@ -539,13 +530,13 @@ symbol_find( size_t program, std::list<const char *> names ) {
 
   auto unique = items.size() == 1;
 
-  if( !unique ) {
+  if( ! unique ) {
     if( items.empty() ) {
       return std::pair<symbol_elem_t *, bool>(NULL, false);
     }
     if( yydebug ) {
       dbgmsg( "%s:%d: '%s' has " HOST_SIZE_T_PRINT_UNSIGNED " possible matches",
-             __func__, __LINE__, names.back(), (fmt_size_t)items.size() );
+              __func__, __LINE__, names.back(), (fmt_size_t)items.size() );
       std::for_each( items.begin(), items.end(), dump_symbol_map_value1 );
     }
   }
@@ -561,7 +552,7 @@ symbol_find( size_t program, std::list<const char *> names ) {
 class in_group {
   size_t group;
 public:
-  in_group( size_t group ) : group(group) {}
+  explicit in_group( size_t group ) : group(group) {}
 
   bool operator()( symbol_map_t::const_reference elem ) const {
     return 0 < std::count( elem.second.begin(),

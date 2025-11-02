@@ -80,6 +80,11 @@ along with GCC; see the file COPYING3.  If not see
 /* For a PARM_DECL, nonzero if it was declared as an array.  */
 #define C_ARRAY_PARAMETER(NODE) DECL_LANG_FLAG_0 (NODE)
 
+/* For FUNCTION_DECLs, evaluates true if the decl is a nested
+   function that requires a non-local context.  */
+#define C_FUNC_NONLOCAL_CONTEXT(EXP)		\
+  DECL_LANG_FLAG_4 (FUNCTION_DECL_CHECK (EXP))
+
 /* For FUNCTION_DECLs, evaluates true if the decl is built-in but has
    been declared.  */
 #define C_DECL_DECLARED_BUILTIN(EXP)		\
@@ -111,7 +116,8 @@ along with GCC; see the file COPYING3.  If not see
 /* Record whether a decl was declared register.  This is strictly a
    front-end flag, whereas DECL_REGISTER is used for code generation;
    they may differ for structures with volatile fields.  */
-#define C_DECL_REGISTER(EXP) DECL_LANG_FLAG_4 (EXP)
+#define C_DECL_REGISTER(EXP) \
+  DECL_LANG_FLAG_4 (TREE_NOT_CHECK (EXP, FUNCTION_DECL))
 
 /* Record whether a decl was used in an expression anywhere except an
    unevaluated operand of sizeof / typeof / alignof.  This is only
@@ -163,7 +169,8 @@ along with GCC; see the file COPYING3.  If not see
   (TREE_CODE (TYPE) == BOOLEAN_TYPE					\
    || (TREE_CODE (TYPE) == ENUMERAL_TYPE				\
        && ENUM_UNDERLYING_TYPE (TYPE) != NULL_TREE			\
-       && TREE_CODE (ENUM_UNDERLYING_TYPE (TYPE)) == BOOLEAN_TYPE))
+       && (TREE_CODE (ENUM_UNDERLYING_TYPE (TYPE)) == BOOLEAN_TYPE	\
+	   || c_hardbool_type_attr (TYPE))))
 
 /* Record parser information about an expression that is irrelevant
    for code generation alongside a tree representing its value.  */
@@ -617,6 +624,19 @@ enum c_inline_static_type {
   csi_modifiable
 };
 
+/* Record details of decls possibly used inside sizeof or typeof.  */
+struct maybe_used_decl
+{
+  /* The decl.  */
+  tree decl;
+  /* The level seen at (in_sizeof + in_typeof + in_countof + in_generic).  */
+  int level;
+  /* Seen in address-of.  */
+  bool address;
+  /* The next one at this level or above, or NULL.  */
+  struct maybe_used_decl *next;
+};
+
 
 /* in c-parser.cc */
 struct c_tree_token_vec;
@@ -693,6 +713,7 @@ extern struct c_arg_info *get_parm_info (bool, tree);
 extern tree grokfield (location_t, struct c_declarator *,
 		       struct c_declspecs *, tree, tree *, tree *);
 extern tree groktypename (struct c_type_name *, tree *, bool *);
+extern tree grokgenassoc (struct c_type_name *);
 extern tree grokparm (const struct c_parm *, tree *);
 extern tree implicitly_declare (location_t, tree);
 extern void keep_next_level (void);
@@ -757,7 +778,7 @@ extern tree c_finish_bc_name (location_t, tree, bool);
 extern bool c_objc_common_init (void);
 extern bool c_missing_noreturn_ok_p (tree);
 extern bool c_warn_unused_global_decl (const_tree);
-extern void c_initialize_diagnostics (diagnostic_context *);
+extern void c_initialize_diagnostics (diagnostics::context *);
 extern bool c_var_mod_p (tree x, tree fn);
 extern alias_set_type c_get_alias_set (tree);
 extern int c_type_dwarf_attribute (const_tree, int);
@@ -767,6 +788,7 @@ extern int in_alignof;
 extern int in_sizeof;
 extern int in_countof;
 extern int in_typeof;
+extern int in_generic;
 extern bool c_in_omp_for;
 extern bool c_omp_array_section_p;
 
@@ -806,7 +828,7 @@ extern bool comptypes_same_p (tree, tree);
 extern bool comptypes_equiv_p (tree, tree);
 extern int comptypes_check_different_types (tree, tree, bool *);
 extern int comptypes_check_enum_int (tree, tree, bool *);
-extern bool c_mark_addressable (tree, bool = false);
+extern bool c_mark_addressable (tree, bool = false, bool = false);
 extern void c_incomplete_type_error (location_t, const_tree, const_tree);
 extern tree c_type_promotes_to (tree);
 extern struct c_expr default_function_array_conversion (location_t,
@@ -820,12 +842,15 @@ extern void mark_exp_read (tree);
 extern tree composite_type (tree, tree);
 extern tree lookup_field (const_tree, tree);
 extern tree build_component_ref (location_t, tree, tree, location_t,
-				 location_t, bool = true);
+				 location_t);
 extern tree handle_counted_by_for_component_ref (location_t, tree);
 extern tree build_array_ref (location_t, tree, tree);
 extern tree build_omp_array_section (location_t, tree, tree, tree);
 extern tree build_external_ref (location_t, tree, bool, tree *);
 extern void pop_maybe_used (bool);
+extern struct maybe_used_decl *save_maybe_used ();
+extern void restore_maybe_used (struct maybe_used_decl *);
+extern void mark_decl_used (tree, bool);
 extern struct c_expr c_expr_sizeof_expr (location_t, struct c_expr);
 extern struct c_expr c_expr_sizeof_type (location_t, struct c_type_name *);
 extern struct c_expr c_expr_countof_expr (location_t, struct c_expr);
@@ -960,13 +985,13 @@ extern void c_bind (location_t, tree, bool);
 extern bool tag_exists_p (enum tree_code, tree);
 
 /* In c-errors.cc */
-extern bool pedwarn_c90 (location_t, diagnostic_option_id, const char *, ...)
+extern bool pedwarn_c90 (location_t, diagnostics::option_id, const char *, ...)
     ATTRIBUTE_GCC_DIAG(3,4);
-extern bool pedwarn_c99 (location_t, diagnostic_option_id, const char *, ...)
+extern bool pedwarn_c99 (location_t, diagnostics::option_id, const char *, ...)
     ATTRIBUTE_GCC_DIAG(3,4);
-extern bool pedwarn_c11 (location_t, diagnostic_option_id, const char *, ...)
+extern bool pedwarn_c11 (location_t, diagnostics::option_id, const char *, ...)
     ATTRIBUTE_GCC_DIAG(3,4);
-extern bool pedwarn_c23 (location_t, diagnostic_option_id, const char *, ...)
+extern bool pedwarn_c23 (location_t, diagnostics::option_id, const char *, ...)
     ATTRIBUTE_GCC_DIAG(3,4);
 extern void add_note_about_new_keyword (location_t loc,
 					tree keyword_id);

@@ -33,13 +33,14 @@
 #define RISCV_TUNE(TUNE_NAME, PIPELINE_MODEL, TUNE_INFO)
 #endif
 
+RISCV_TUNE("generic", generic, generic_tune_info)
 RISCV_TUNE("rocket", generic, rocket_tune_info)
 RISCV_TUNE("sifive-3-series", generic, rocket_tune_info)
 RISCV_TUNE("sifive-5-series", generic, rocket_tune_info)
 RISCV_TUNE("sifive-7-series", sifive_7, sifive_7_tune_info)
 RISCV_TUNE("sifive-p400-series", sifive_p400, sifive_p400_tune_info)
 RISCV_TUNE("sifive-p600-series", sifive_p600, sifive_p600_tune_info)
-RISCV_TUNE("tt-ascalon-d8", generic_ooo, tt_ascalon_d8_tune_info)
+RISCV_TUNE("tt-ascalon-d8", tt_ascalon_d8, tt_ascalon_d8_tune_info)
 RISCV_TUNE("thead-c906", generic, thead_c906_tune_info)
 RISCV_TUNE("xt-c908", generic, generic_ooo_tune_info)
 RISCV_TUNE("xt-c908v", generic, generic_ooo_tune_info)
@@ -48,6 +49,7 @@ RISCV_TUNE("xt-c910v2", generic, generic_ooo_tune_info)
 RISCV_TUNE("xt-c920", generic, generic_ooo_tune_info)
 RISCV_TUNE("xt-c920v2", generic, generic_ooo_tune_info)
 RISCV_TUNE("xiangshan-nanhu", xiangshan, xiangshan_nanhu_tune_info)
+RISCV_TUNE("xiangshan-kunminghu", xiangshan, generic_ooo_tune_info)
 RISCV_TUNE("generic-ooo", generic_ooo, generic_ooo_tune_info)
 RISCV_TUNE("size", generic, optimize_size_tune_info)
 RISCV_TUNE("mips-p8700", mips_p8700, mips_p8700_tune_info)
@@ -111,7 +113,7 @@ RISCV_CORE("xt-c908v",        "rv64imafdcv_zicbom_zicbop_zicboz_zicntr_zicsr_"
 			      "zvfh_sstc_svinval_svnapot_svpbmt__xtheadba_"
 			      "xtheadbb_xtheadbs_xtheadcmo_xtheadcondmov_"
 			      "xtheadfmemidx_xtheadmac_xtheadmemidx_"
-			      "xtheadmempair_xtheadsync_xtheadvdot",
+			      "xtheadmempair_xtheadsync",
 			      "xt-c908")
 RISCV_CORE("xt-c910",         "rv64imafdc_zicntr_zicsr_zifencei_zihpm_zfh_"
 			      "xtheadba_xtheadbb_xtheadbs_xtheadcmo_"
@@ -119,7 +121,7 @@ RISCV_CORE("xt-c910",         "rv64imafdc_zicntr_zicsr_zifencei_zihpm_zfh_"
 			      "xtheadmemidx_xtheadmempair_xtheadsync",
 			      "xt-c910")
 RISCV_CORE("xt-c910v2",       "rv64imafdc_zicbom_zicbop_zicboz_zicntr_zicond_"
-			      "zicsr_zifencei _zihintntl_zihintpause_zihpm_"
+			      "zicsr_zifencei_zihintntl_zihintpause_zihpm_"
 			      "zawrs_zfa_zfbfmin_zfh_zca_zcb_zcd_zba_zbb_zbc_"
 			      "zbs_sscofpmf_sstc_svinval_svnapot_svpbmt_"
 			      "xtheadba_xtheadbb_xtheadbs_xtheadcmo_"
@@ -133,13 +135,13 @@ RISCV_CORE("xt-c920",         "rv64imafdc_zicntr_zicsr_zifencei_zihpm_zfh_"
 			      "xtheadvector",
 			      "xt-c910")
 RISCV_CORE("xt-c920v2",       "rv64imafdcv_zicbom_zicbop_zicboz_zicntr_zicond_"
-			      "zicsr_zifencei _zihintntl_zihintpause_zihpm_"
+			      "zicsr_zifencei_zihintntl_zihintpause_zihpm_"
 			      "zawrs_zfa_zfbfmin_zfh_zca_zcb_zcd_zba_zbb_zbc_"
 			      "zbs_zvfbfmin_zvfbfwma_zvfh_sscofpmf_sstc_"
 			      "svinval_svnapot_svpbmt_xtheadba_xtheadbb_"
 			      "xtheadbs_xtheadcmo_xtheadcondmov_xtheadfmemidx_"
 			      "xtheadmac_xtheadmemidx_xtheadmempair_"
-			      "xtheadsync_xtheadvdot",
+			      "xtheadsync",
 			       "xt-c920v2")
 
 RISCV_CORE("tt-ascalon-d8",   "rv64imafdcv_zic64b_zicbom_zicbop_zicboz_"
@@ -154,7 +156,19 @@ RISCV_CORE("xiangshan-nanhu",      "rv64imafdc_zba_zbb_zbc_zbs_"
 			      "svinval_zicbom_zicboz",
 			      "xiangshan-nanhu")
 
-RISCV_CORE("mips-p8700",     	"rv64imafd_zicsr_zmmul_"
-			      "zaamo_zalrsc_zba_zbb",
+RISCV_CORE("xiangshan-kunminghu",   "rv64imafdcbvh_sdtrig_sha_shcounterenw_"
+			      "shgatpa_shlcofideleg_shtvala_shvsatpa_shvstvala_shvstvecd_"
+			      "smaia_smcsrind_smdbltrp_smmpm_smnpm_smrnmi_smstateen_"
+			      "ssaia_ssccptr_sscofpmf_sscounterenw_sscsrind_ssdbltrp_"
+			      "ssnpm_sspm_ssstateen_ssstrict_sstc_sstvala_sstvecd_"
+			      "ssu64xl_supm_svade_svbare_svinval_svnapot_svpbmt_za64rs_"
+			      "zacas_zawrs_zba_zbb_zbc_zbkb_zbkc_zbkx_zbs_zcb_zcmop_"
+			      "zfa_zfh_zfhmin_zic64b_zicbom_zicbop_zicboz_ziccif_"
+			      "zicclsm_ziccrse_zicntr_zicond_zicsr_zifencei_zihintpause_"
+			      "zihpm_zimop_zkn_zknd_zkne_zknh_zksed_zksh_zkt_zvbb_zvfh_"
+			      "zvfhmin_zvkt_zvl128b_zvl32b_zvl64b",
+			      "xiangshan-kunminghu")
+
+RISCV_CORE("mips-p8700",      "rv64imfd_zicsr_zifencei_zalrsc_zba_zbb",
 			      "mips-p8700")
 #undef RISCV_CORE

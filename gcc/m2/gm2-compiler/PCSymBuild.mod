@@ -257,19 +257,19 @@ END PCStartBuildDefModule ;
                               |------------|        |-----------|
 *)
 
-PROCEDURE PCEndBuildDefModule ;
+PROCEDURE PCEndBuildDefModule (tokno: CARDINAL) ;
 VAR
    NameStart,
    NameEnd  : CARDINAL ;
 BEGIN
    Assert(CompilingDefinitionModule()) ;
-   CheckForUnknownInModule ;
+   CheckForUnknownInModule (tokno) ;
    EndScope ;
    PopT(NameEnd) ;
    PopT(NameStart) ;
    IF NameStart#NameEnd
    THEN
-      WriteFormat2('inconsistant definition module was named (%a) and concluded as (%a)',
+      WriteFormat2('inconsistent definition module was named (%a) and concluded as (%a)',
                    NameStart, NameEnd)
    END ;
    M2Error.LeaveErrorScope
@@ -325,13 +325,13 @@ END PCStartBuildImpModule ;
                                   |------------|        |-----------|
 *)
 
-PROCEDURE PCEndBuildImpModule ;
+PROCEDURE PCEndBuildImpModule (tokno: CARDINAL) ;
 VAR
    NameStart,
    NameEnd  : Name ;
 BEGIN
    Assert(CompilingImplementationModule()) ;
-   CheckForUnknownInModule ;
+   CheckForUnknownInModule (tokno) ;
    EndScope ;
    PopT(NameEnd) ;
    PopT(NameStart) ;
@@ -398,13 +398,13 @@ END PCStartBuildProgModule ;
                            |------------|        |-----------|
 *)
 
-PROCEDURE PCEndBuildProgModule ;
+PROCEDURE PCEndBuildProgModule (tokno: CARDINAL) ;
 VAR
    NameStart,
    NameEnd  : Name ;
 BEGIN
    Assert(CompilingProgramModule()) ;
-   CheckForUnknownInModule ;
+   CheckForUnknownInModule (tokno) ;
    EndScope ;
    PopT(NameEnd) ;
    PopT(NameStart) ;
@@ -468,12 +468,12 @@ END PCStartBuildInnerModule ;
                          |------------|        |-----------|
 *)
 
-PROCEDURE PCEndBuildInnerModule ;
+PROCEDURE PCEndBuildInnerModule (tokno: CARDINAL) ;
 VAR
    NameStart,
    NameEnd  : Name ;
 BEGIN
-   CheckForUnknownInModule ;
+   CheckForUnknownInModule (tokno) ;
    EndScope ;
    PopT(NameEnd) ;
    PopT(NameStart) ;
@@ -1168,9 +1168,9 @@ BEGIN
          par := GetParam (p, i) ;
          IF IsParameterVar (par)
          THEN
-            PutProcTypeVarParam (t, GetType (par), IsParameterUnbounded (par))
+            PutProcTypeVarParam (tok, t, GetType (par), IsParameterUnbounded (par))
          ELSE
-            PutProcTypeParam (t, GetType (par), IsParameterUnbounded (par))
+            PutProcTypeParam (tok, t, GetType (par), IsParameterUnbounded (par))
          END ;
          INC(i)
       END ;

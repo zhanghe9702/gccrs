@@ -120,7 +120,7 @@
   ;; Interrupt handler instructions.
   UNSPECV_MRET
   UNSPECV_SRET
-  UNSPECV_URET
+  UNSPECV_MNRET
 
   ;; Blockage and synchronization.
   UNSPECV_BLOCKAGE
@@ -672,7 +672,7 @@
 ;; Microarchitectures we know how to tune for.
 ;; Keep this in sync with enum riscv_microarchitecture.
 (define_attr "tune"
-  "generic,sifive_7,sifive_p400,sifive_p600,xiangshan,generic_ooo,mips_p8700"
+  "generic,sifive_7,sifive_p400,sifive_p600,xiangshan,generic_ooo,mips_p8700,tt_ascalon_d8"
   (const (symbol_ref "((enum attr_tune) riscv_microarchitecture)")))
 
 ;; Describe a user's asm statement.
@@ -702,6 +702,22 @@
   [(set_attr "type" "fadd")
    (set_attr "mode" "<UNITMODE>")])
 
+(define_expand "addptr<mode>3"
+  [(set (match_operand:X 	 0 "register_operand")
+        (plus:X (match_operand:X 1 "register_operand")
+                (match_operand 	 2 "const_int_operand")))]
+  ""
+{
+  gcc_assert (CONST_INT_P (operands[2]));
+  bool status = synthesize_add (operands);
+
+  if (!SMALL_OPERAND (INTVAL (operands[2])))
+    {
+      gcc_assert (status);
+      DONE;
+    }
+})
+
 (define_insn "*addsi3"
   [(set (match_operand:SI          0 "register_operand" "=r,r")
 	(plus:SI (match_operand:SI 1 "register_operand" " r,r")
@@ -712,24 +728,45 @@
    (set_attr "mode" "SI")])
 
 (define_expand "addsi3"
-  [(set (match_operand:SI          0 "register_operand" "=r,r")
-	(plus:SI (match_operand:SI 1 "register_operand" " r,r")
-		 (match_operand:SI 2 "arith_operand"    " r,I")))]
+  [(set (match_operand:SI          0 "register_operand")
+	(plus:SI (match_operand:SI 1 "register_operand")
+		 (match_operand:SI 2 "reg_or_const_int_operand")))]
   ""
 {
+  /* We may be able to find a faster sequence, if so, then we are
+     done.  Otherwise let expansion continue normally.  */
+  if (CONST_INT_P (operands[2])
+      && ((!TARGET_64BIT && synthesize_add (operands))
+	  || (TARGET_64BIT && synthesize_add_extended (operands))))
+    DONE;
+
+  /* Constants have already been handled already.  */
   if (TARGET_64BIT)
     {
-      rtx t = gen_reg_rtx (DImode);
-      emit_insn (gen_addsi3_extended (t, operands[1], operands[2]));
-      t = gen_lowpart (SImode, t);
-      SUBREG_PROMOTED_VAR_P (t) = 1;
-      SUBREG_PROMOTED_SET (t, SRP_SIGNED);
-      emit_move_insn (operands[0], t);
+      rtx tdest = gen_reg_rtx (DImode);
+      emit_insn (gen_addsi3_extended (tdest, operands[1], operands[2]));
+      tdest = gen_lowpart (SImode, tdest);
+      SUBREG_PROMOTED_VAR_P (tdest) = 1;
+      SUBREG_PROMOTED_SET (tdest, SRP_SIGNED);
+      emit_move_insn (operands[0], tdest);
       DONE;
     }
+
 })
 
-(define_insn "adddi3"
+(define_expand "adddi3"
+  [(set (match_operand:DI          0 "register_operand")
+	(plus:DI (match_operand:DI 1 "register_operand")
+		 (match_operand:DI 2 "reg_or_const_int_operand")))]
+  "TARGET_64BIT"
+{
+  /* We may be able to find a faster sequence, if so, then we are
+     done.  Otherwise let expansion continue normally.  */
+  if (CONST_INT_P (operands[2]) && synthesize_add (operands))
+    DONE;
+})
+
+(define_insn "*adddi3"
   [(set (match_operand:DI          0 "register_operand" "=r,r")
 	(plus:DI (match_operand:DI 1 "register_operand" " r,r")
 		 (match_operand:DI 2 "arith_operand"    " r,I")))]
@@ -737,46 +774,6 @@
   "add%i2\t%0,%1,%2"
   [(set_attr "type" "arith")
    (set_attr "mode" "DI")])
-
-;; Special case of adding a reg and constant if latter is sum of two S12
-;; values (in range -2048 to 2047). Avoid materialized the const and fuse
-;; into the add (with an additional add for 2nd value). Makes a 3 insn
-;; sequence into 2 insn.
-
-(define_insn_and_split "*add<mode>3_const_sum_of_two_s12"
-  [(set (match_operand:P	 0 "register_operand" "=r,r")
-	(plus:P (match_operand:P 1 "register_operand" " r,r")
-		(match_operand:P 2 "const_two_s12"    " MiG,r")))]
-  "!riscv_reg_frame_related (operands[0])"
-{
-  /* operand matching MiG constraint is always meant to be split.  */
-  if (which_alternative == 0)
-    return "#";
-  else
-    return "add %0,%1,%2";
-}
-  ""
-  [(set (match_dup 0)
-	(plus:P (match_dup 1) (match_dup 3)))
-   (set (match_dup 0)
-	(plus:P (match_dup 0) (match_dup 4)))]
-{
-  int val = INTVAL (operands[2]);
-  if (SUM_OF_TWO_S12_P (val))
-    {
-       operands[3] = GEN_INT (2047);
-       operands[4] = GEN_INT (val - 2047);
-    }
-  else if (SUM_OF_TWO_S12_N (val))
-    {
-       operands[3] = GEN_INT (-2048);
-       operands[4] = GEN_INT (val + 2048);
-    }
-  else
-      gcc_unreachable ();
-}
-  [(set_attr "type" "arith")
-   (set_attr "mode" "<P:MODE>")])
 
 (define_expand "addv<mode>4"
   [(set (match_operand:GPR           0 "register_operand" "=r,r")
@@ -884,7 +881,7 @@
 ;; Where C1 is not a LUI operand, but ~C1 is a LUI operand
 
 (define_insn_and_split "*lui_constraint<X:mode>_and_to_or"
-	[(set (match_operand:X 0 "register_operand" "=r")
+  [(set (match_operand:X 0 "register_operand" "=r")
 	(plus:X (and:X (match_operand:X 1 "register_operand" "r")
 		       (match_operand 2 "const_int_operand"))
 		(match_operand 3 "const_int_operand")))
@@ -898,13 +895,21 @@
 	<= riscv_const_insns (operands[3], false)))"
   "#"
   "&& reload_completed"
-  [(set (match_dup 4) (match_dup 5))
-   (set (match_dup 0) (ior:X (match_dup 1) (match_dup 4)))
-   (set (match_dup 4) (match_dup 6))
-   (set (match_dup 0) (minus:X (match_dup 0) (match_dup 4)))]
+  [(const_int 0)]
   {
     operands[5] = GEN_INT (~INTVAL (operands[2]));
     operands[6] = GEN_INT ((~INTVAL (operands[2])) | (-INTVAL (operands[3])));
+
+    /* This is always a LUI operand, so it's safe to just emit.  */
+    emit_move_insn (operands[4], operands[5]);
+
+    rtx x = gen_rtx_IOR (word_mode, operands[1], operands[4]);
+    emit_move_insn (operands[0], x);
+
+    /* This may require multiple steps to synthesize.  */
+    riscv_emit_move (operands[4], operands[6]);
+    x = gen_rtx_MINUS (word_mode, operands[0], operands[4]);
+    emit_move_insn (operands[0], x);
   }
   [(set_attr "type" "arith")])
 
@@ -1835,8 +1840,13 @@
   [(set (match_operand:BF    0 "register_operand" "=f")
 	(float_truncate:BF
 	   (match_operand:SF 1 "register_operand" " f")))]
-  "TARGET_ZFBFMIN"
-  "fcvt.bf16.s\t%0,%1"
+  "TARGET_ZFBFMIN || TARGET_XANDESBFHCVT"
+{
+  if (TARGET_ZFBFMIN)
+    return "fcvt.bf16.s\t%0,%1";
+  else
+    return "nds.fcvt.bf16.s\t%0,%1";
+}
   [(set_attr "type" "fcvt")
    (set_attr "mode" "BF")])
 
@@ -1883,6 +1893,7 @@
 	(zero_extend:DI
 	    (match_operand:SI 1 "nonimmediate_operand" " r,m")))]
   "TARGET_64BIT && !TARGET_ZBA && !TARGET_XTHEADBB && !TARGET_XTHEADMEMIDX
+   && !TARGET_XANDESPERF
    && !(REG_P (operands[1]) && VL_REG_P (REGNO (operands[1])))"
   "@
    #
@@ -1909,7 +1920,8 @@
   [(set (match_operand:GPR    0 "register_operand"     "=r,r")
 	(zero_extend:GPR
 	    (match_operand:HI 1 "nonimmediate_operand" " r,m")))]
-  "!TARGET_ZBB && !TARGET_XTHEADBB && !TARGET_XTHEADMEMIDX"
+  "!TARGET_ZBB && !TARGET_XTHEADBB && !TARGET_XTHEADMEMIDX
+   && !TARGET_XANDESPERF"
   "@
    #
    lhu\t%0,%1"
@@ -1971,7 +1983,7 @@
   [(set (match_operand:DI     0 "register_operand"     "=r,r")
 	(sign_extend:DI
 	    (match_operand:SI 1 "nonimmediate_operand" " r,m")))]
-  "TARGET_64BIT && !TARGET_XTHEADMEMIDX"
+  "TARGET_64BIT && !TARGET_XTHEADMEMIDX && !TARGET_XANDESPERF"
   "@
    sext.w\t%0,%1
    lw\t%0,%1"
@@ -1988,7 +2000,8 @@
   [(set (match_operand:SUPERQI   0 "register_operand"     "=r,r")
 	(sign_extend:SUPERQI
 	    (match_operand:SHORT 1 "nonimmediate_operand" " r,m")))]
-  "!TARGET_ZBB && !TARGET_XTHEADBB && !TARGET_XTHEADMEMIDX"
+  "!TARGET_ZBB && !TARGET_XTHEADBB && !TARGET_XTHEADMEMIDX
+   && !TARGET_XANDESPERF"
   "@
    #
    l<SHORT:size>\t%0,%1"
@@ -2020,8 +2033,13 @@
   [(set (match_operand:SF    0 "register_operand" "=f")
 	(float_extend:SF
 	   (match_operand:BF 1 "register_operand" " f")))]
-  "TARGET_ZFBFMIN"
-  "fcvt.s.bf16\t%0,%1"
+  "TARGET_ZFBFMIN || TARGET_XANDESBFHCVT"
+{
+  if (TARGET_ZFBFMIN)
+    return "fcvt.s.bf16\t%0,%1";
+  else
+    return "nds.fcvt.s.bf16\t%0,%1";
+}
   [(set_attr "type" "fcvt")
    (set_attr "mode" "SF")])
 
@@ -2280,23 +2298,38 @@
   else
     {
       rtx reg;
-      rtx label = gen_label_rtx ();
+      rtx label1 = gen_label_rtx ();
+      rtx label2 = gen_label_rtx ();
+      rtx label3 = gen_label_rtx ();
       rtx end_label = gen_label_rtx ();
       rtx abs_reg = gen_reg_rtx (<ANYF:MODE>mode);
       rtx coeff_reg = gen_reg_rtx (<ANYF:MODE>mode);
       rtx tmp_reg = gen_reg_rtx (<ANYF:MODE>mode);
 
       riscv_emit_move (tmp_reg, operands[1]);
+
+      if (flag_trapping_math)
+	{
+	  /* Check if the input is a NaN.  */
+	  riscv_expand_conditional_branch (label1, EQ,
+					   operands[1], operands[1]);
+
+	  emit_jump_insn (gen_jump (label3));
+	  emit_barrier ();
+
+	  emit_label (label1);
+	}
+
       riscv_emit_move (coeff_reg,
 		       riscv_vector::get_fp_rounding_coefficient (<ANYF:MODE>mode));
       emit_insn (gen_abs<ANYF:mode>2 (abs_reg, operands[1]));
 
-      riscv_expand_conditional_branch (label, LT, abs_reg, coeff_reg);
+      riscv_expand_conditional_branch (label2, LT, abs_reg, coeff_reg);
 
       emit_jump_insn (gen_jump (end_label));
       emit_barrier ();
 
-      emit_label (label);
+      emit_label (label2);
       switch (<ANYF:MODE>mode)
 	{
 	case SFmode:
@@ -2314,6 +2347,16 @@
 	}
 
       emit_insn (gen_copysign<ANYF:mode>3 (tmp_reg, abs_reg, operands[1]));
+
+      emit_jump_insn (gen_jump (end_label));
+      emit_barrier ();
+
+      if (flag_trapping_math)
+	{
+	  emit_label (label3);
+	  /* Generate a qNaN from an sNaN if needed.  */
+	  emit_insn (gen_add<ANYF:mode>3 (tmp_reg, operands[1], operands[1]));
+	}
 
       emit_label (end_label);
       riscv_emit_move (operands[0], tmp_reg);
@@ -3068,6 +3111,7 @@
       || TARGET_XVENTANACONDOPS || TARGET_SFB_ALU)
      && (INTVAL (operands[2]) == 1))
    && !TARGET_XTHEADBB
+   && !TARGET_XANDESPERF
    && !(TARGET_64BIT
         && (INTVAL (operands[3]) > 0)
         && (INTVAL (operands[2]) + INTVAL (operands[3]) == 32))"
@@ -3290,7 +3334,7 @@
 			  (match_operand:GPR 2 "movcc_operand")
 			  (match_operand:GPR 3 "movcc_operand")))]
   "TARGET_SFB_ALU || TARGET_XTHEADCONDMOV || TARGET_ZICOND_LIKE
-   || TARGET_MOVCC"
+   || TARGET_MOVCC || TARGET_XMIPSCMOV"
 {
   if (riscv_expand_conditional_move (operands[0], operands[1],
 				     operands[2], operands[3]))
@@ -3453,9 +3497,9 @@
 	    (label_ref (match_operand 1))
 	    (pc)))
    (clobber (match_scratch:X 4 "=&r"))]
-  ""
-  "#"
-  "reload_completed"
+   "!TARGET_XANDESPERF"
+   "#"
+   "&& reload_completed"
   [(set (match_dup 4)
 	(ashift:X (match_dup 2) (match_dup 3)))
    (set (pc)
@@ -4158,11 +4202,11 @@
   "sret"
   [(set_attr "type" "ret")])
 
-(define_insn "riscv_uret"
+(define_insn "riscv_mnret"
   [(return)
-   (unspec_volatile [(const_int 0)] UNSPECV_URET)]
-  ""
-  "uret"
+   (unspec_volatile [(const_int 0)] UNSPECV_MNRET)]
+  "TARGET_SMRNMI"
+  "mnret"
   [(set_attr "type" "ret")])
 
 (define_insn "stack_tie<mode>"
@@ -4394,11 +4438,21 @@
 )
 
 (define_insn "prefetch"
-  [(prefetch (match_operand 0 "address_operand" "r")
-             (match_operand 1 "imm5_operand" "i")
-             (match_operand 2 "const_int_operand" "n"))]
-  "TARGET_ZICBOP"
+  [(prefetch (match_operand 0 "prefetch_operand" "Qr,ZD")
+	     (match_operand 1 "imm5_operand" "i,i")
+	     (match_operand 2 "const_int_operand" "n,n"))]
+  "TARGET_ZICBOP || TARGET_XMIPSCBOP"
 {
+  if (TARGET_XMIPSCBOP)
+    {
+      /* Mips Prefetch write is nop for p8700.  */
+      if (operands[1] != CONST0_RTX (GET_MODE (operands[1])))
+	return "nop";
+
+      operands[1] = riscv_prefetch_cookie (operands[1], operands[2]);
+      return "mips.pref\t%1,%a0";
+    }
+
   switch (INTVAL (operands[1]))
   {
     case 0:
@@ -4414,7 +4468,7 @@
 				      (const_string "4")))])
 
 (define_insn "riscv_prefetchi_<mode>"
-  [(unspec_volatile:X [(match_operand:X 0 "address_operand" "r")
+  [(unspec_volatile:X [(match_operand:X 0 "prefetch_operand" "Q")
               (match_operand:X 1 "imm5_operand" "i")]
               UNSPECV_PREI)]
   "TARGET_ZICBOP"
@@ -4549,6 +4603,26 @@
     FAIL;
 })
 
+; Split (A<<1) | (A>=0) into a rotate + xor. Using two’s-complement identities:
+; (A>=0) == ((A >> (W-1)) ^ 1) and (A<<1) | (A>>(W-1)) == ROL1 (A), so the whole
+; expression equals ROL1 (A) ^ 1.
+(define_split
+  [(set (match_operand:X 0 "register_operand")
+     (ior:X
+       (ashift:X (match_operand:X 1 "register_operand")
+		  (const_int 1))
+		(ge:X (match_dup 1) (const_int 0))))]
+  "TARGET_ZBB"
+  [(set (match_dup 0)
+       (rotatert:X (match_dup 1) (match_operand 2 "const_int_operand")))
+   (set (match_dup 0)
+       (xor:X (match_dup 0) (const_int 1)))]
+  {
+    HOST_WIDE_INT rotval;
+    rotval = GET_MODE_BITSIZE (GET_MODE (operands[1])).to_constant () - 1;
+    operands[2] = GEN_INT (rotval);
+  })
+
 (define_insn "*large_load_address"
   [(set (match_operand:DI 0 "register_operand" "=r")
         (mem:DI (match_operand 1 "pcrel_symbol_operand" "")))]
@@ -4622,6 +4696,17 @@
   ""
   {
     riscv_expand_sssub (operands[0], operands[1], operands[2]);
+    DONE;
+  }
+)
+
+(define_expand "usmul<mode>3"
+  [(match_operand:ANYI 0 "register_operand")
+   (match_operand:ANYI 1 "register_operand")
+   (match_operand:ANYI 2 "register_operand")]
+  ""
+  {
+    riscv_expand_usmul (operands[0], operands[1], operands[2]);
     DONE;
   }
 )
@@ -4834,6 +4919,25 @@
   [(set_attr "type" "move")
    (set_attr "mode" "<MODE>")])
 
+;; If we're trying to create 0 or 2^n-1 based on the result of
+;; a test such as (lt (reg) (const_int 0)), we'll see a splat of
+;; the sign bit across a GPR using srai, then a logical and to
+;; mask off high bits.  We can replace the logical and with
+;; a logical right shift which works without constant synthesis
+;; for larger constants.
+(define_split
+  [(set (match_operand:X 0 "register_operand")
+	(and:X (ashiftrt:X (match_operand:X 1 "register_operand")
+			   (match_operand 2 "const_int_operand"))
+	       (match_operand 3 "const_int_operand")))]
+  "(INTVAL (operands[2]) == BITS_PER_WORD - 1
+    && exact_log2 (INTVAL (operands[3]) + 1) >= 0)"
+  [(set (match_dup 0) (ashiftrt:X (match_dup 1) (match_dup 2)))
+   (set (match_dup 0) (lshiftrt:X (match_dup 0) (match_dup 3)))]
+  { operands[3] = GEN_INT (BITS_PER_WORD
+			   - exact_log2 (INTVAL (operands[3]) + 1)); })
+
+;; Standard extensions and pattern for optimization
 (include "bitmanip.md")
 (include "crypto.md")
 (include "sync.md")
@@ -4841,19 +4945,24 @@
 (include "sync-ztso.md")
 (include "peephole.md")
 (include "pic.md")
-(include "generic.md")
-(include "sifive-7.md")
-(include "sifive-p400.md")
-(include "sifive-p600.md")
-(include "thead.md")
-(include "generic-vector-ooo.md")
-(include "generic-ooo.md")
 (include "vector.md")
 (include "vector-crypto.md")
 (include "vector-bfloat16.md")
 (include "zicond.md")
+(include "mips-insn.md")
 (include "sfb.md")
 (include "zc.md")
+;; Vendor extensions
+(include "thead.md")
 (include "corev.md")
+(include "andes.md")
+;; Pipeline models
+(include "generic.md")
 (include "xiangshan.md")
 (include "mips-p8700.md")
+(include "sifive-7.md")
+(include "sifive-p400.md")
+(include "sifive-p600.md")
+(include "generic-vector-ooo.md")
+(include "generic-ooo.md")
+(include "tt-ascalon-d8.md")

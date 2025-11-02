@@ -25,6 +25,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "gimple-pretty-print.h"
 #include "cgraph.h"
 #include "digraph.h"
+#include "diagnostics/sarif-sink.h"
 
 #include "analyzer/analyzer-logging.h"
 #include "analyzer/call-string.h"
@@ -40,7 +41,6 @@ along with GCC; see the file COPYING3.  If not see
 #include "analyzer/exploded-graph.h"
 #include "analyzer/checker-path.h"
 #include "analyzer/feasible-graph.h"
-#include "diagnostic-format-sarif.h"
 
 /* A subclass of pending_diagnostic for complaining about suspected
    infinite recursion.  */
@@ -55,7 +55,7 @@ public:
   : m_prev_entry_enode (prev_entry_enode),
     m_new_entry_enode (new_entry_enode),
     m_callee_fndecl (callee_fndecl),
-    m_prev_entry_event (NULL)
+    m_prev_entry_event (nullptr)
   {}
 
   const char *get_kind () const final override
@@ -108,9 +108,10 @@ public:
     {
     public:
       recursive_function_entry_event (const program_point &dst_point,
+				      const program_state &dst_state,
 				      const infinite_recursion_diagnostic &pd,
 				      bool topmost)
-      : function_entry_event (dst_point),
+      : function_entry_event (dst_point, dst_state),
 	m_pd (pd),
 	m_topmost (topmost)
       {
@@ -146,17 +147,19 @@ public:
     const program_point &dst_point = dst_node->get_point ();
     if (eedge.m_dest == m_prev_entry_enode)
       {
-	gcc_assert (m_prev_entry_event == NULL);
+	gcc_assert (m_prev_entry_event == nullptr);
 	std::unique_ptr<checker_event> prev_entry_event
-	  = std::make_unique <recursive_function_entry_event> (dst_point,
-							       *this, false);
+	  = std::make_unique <recursive_function_entry_event>
+	      (dst_point,
+	       dst_node->get_state (),
+	       *this, false);
 	m_prev_entry_event = prev_entry_event.get ();
 	emission_path->add_event (std::move (prev_entry_event));
       }
     else if (eedge.m_dest == m_new_entry_enode)
       emission_path->add_event
 	(std::make_unique<recursive_function_entry_event>
-	   (dst_point, *this, true));
+	 (dst_point, dst_node->get_state (), *this, true));
     else
       pending_diagnostic::add_function_entry_event (eedge, emission_path);
   }
@@ -220,10 +223,11 @@ public:
     return false;
   }
 
-  void maybe_add_sarif_properties (sarif_object &result_obj)
+  void
+  maybe_add_sarif_properties (diagnostics::sarif_object &result_obj)
     const final override
   {
-    sarif_property_bag &props = result_obj.get_or_create_properties ();
+    auto &props = result_obj.get_or_create_properties ();
 #define PROPERTY_PREFIX "gcc/analyzer/infinite_recursion_diagnostic/"
     props.set_integer (PROPERTY_PREFIX "prev_entry_enode",
 		       m_prev_entry_enode->m_index);
@@ -288,7 +292,7 @@ private:
       bool m_found_conjured_svalues;
     };
 
-    const svalue *sval = model.get_rvalue (expr, NULL);
+    const svalue *sval = model.get_rvalue (expr, nullptr);
     conjured_svalue_finder v;
     sval->accept (&v);
     return v.m_found_conjured_svalues;
@@ -348,7 +352,7 @@ exploded_graph::find_previous_entry_to (function *top_of_stack_fun,
     }
 
   /* Not found.  */
-  return NULL;
+  return nullptr;
 }
 
 /* Given BASE_REG within ENCLOSING_FRAME (such as a function parameter),
@@ -382,7 +386,7 @@ remap_enclosing_frame (const region *base_reg,
 	const decl_region *decl_reg = (const decl_region *)base_reg;
 	return equiv_prev_frame->get_region_for_local (mgr,
 						       decl_reg->get_decl (),
-						       NULL);
+						       nullptr);
       }
     }
 }
@@ -397,7 +401,7 @@ contains_unknown_p (const svalue *sval)
   if (const compound_svalue *compound_sval
 	= sval->dyn_cast_compound_svalue ())
     for (auto iter : *compound_sval)
-      if (iter.second->get_kind () == SK_UNKNOWN)
+      if (iter.m_sval->get_kind () == SK_UNKNOWN)
 	return true;
   return false;
 }
@@ -424,7 +428,7 @@ sufficiently_different_region_binding_p (exploded_node *new_entry_enode,
 
   /* Get the value within the new frame.  */
   const svalue *new_sval
-    = new_model.get_store_value (base_reg, NULL);
+    = new_model.get_store_value (base_reg, nullptr);
 
   /* If any part of the value is UNKNOWN (e.g. due to hitting
      complexity limits) assume that it differs from the previous
@@ -444,7 +448,7 @@ sufficiently_different_region_binding_p (exploded_node *new_entry_enode,
 	 to the recursion.  */
       const int old_stack_depth = prev_entry_enode->get_stack_depth ();
       if (enclosing_frame->get_stack_depth () < old_stack_depth)
-	prev_sval = prev_model.get_store_value (base_reg, NULL);
+	prev_sval = prev_model.get_store_value (base_reg, nullptr);
       else
 	{
 	  /* Ignore bindings within frames below the new entry node.  */
@@ -466,11 +470,11 @@ sufficiently_different_region_binding_p (exploded_node *new_entry_enode,
 				     equiv_prev_frame,
 				     new_model.get_manager ());
 	  prev_sval
-	    = prev_model.get_store_value (equiv_prev_base_reg, NULL);
+	    = prev_model.get_store_value (equiv_prev_base_reg, nullptr);
 	}
     }
   else
-    prev_sval = prev_model.get_store_value (base_reg, NULL);
+    prev_sval = prev_model.get_store_value (base_reg, nullptr);
 
   /* If the prev_sval contains UNKNOWN (e.g. due to hitting complexity limits)
      assume that it will differ from any new value.  */

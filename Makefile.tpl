@@ -6,7 +6,7 @@ in
 #
 # Makefile for directory with subdirs to build.
 #   Copyright (C) 1990, 1991, 1992, 1993, 1994, 1995, 1996, 1997, 1998,
-#   1999, 2000, 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010, 2011, 2023
+#   1999, 2000, 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010, 2011
 #   Free Software Foundation
 #
 # This file is free software; you can redistribute it and/or modify
@@ -147,8 +147,7 @@ BASE_EXPORTS = \
 	M4="$(M4)"; export M4; \
 	SED="$(SED)"; export SED; \
 	AWK="$(AWK)"; export AWK; \
-	MAKEINFO="$(MAKEINFO)"; export MAKEINFO; \
-	GUILE="$(GUILE)"; export GUILE;
+	MAKEINFO="$(MAKEINFO)"; export MAKEINFO;
 
 # This is the list of variables to export in the environment when
 # configuring subdirectories for the build system.
@@ -210,6 +209,7 @@ HOST_EXPORTS = \
 	GOC="$(GOC)"; export GOC; \
 	GDC="$(GDC)"; export GDC; \
 	GM2="$(GM2)"; export GM2; \
+	GNATMAKE_FOR_BUILD="$(GNATMAKE_FOR_BUILD)"; export GNATMAKE_FOR_BUILD; \
 	AR="$(AR)"; export AR; \
 	AS="$(AS)"; export AS; \
 	CC_FOR_BUILD="$(CC_FOR_BUILD)"; export CC_FOR_BUILD; \
@@ -246,6 +246,7 @@ HOST_EXPORTS = \
 	GMPINC="$(HOST_GMPINC)"; export GMPINC; \
 	ISLLIBS="$(HOST_ISLLIBS)"; export ISLLIBS; \
 	ISLINC="$(HOST_ISLINC)"; export ISLINC; \
+	TARGET_CONFIGDIRS="$(TARGET_CONFIGDIRS)"; export TARGET_CONFIGDIRS; \
 	XGCC_FLAGS_FOR_TARGET="$(XGCC_FLAGS_FOR_TARGET)"; export XGCC_FLAGS_FOR_TARGET; \
 @if gcc-bootstrap
 	$(RPATH_ENVVAR)=`echo "$(TARGET_LIB_PATH)$$$(RPATH_ENVVAR)" | sed 's,::*,:,g;s,^:*,,;s,:*$$,,'`; export $(RPATH_ENVVAR); \
@@ -315,6 +316,7 @@ BASE_TARGET_EXPORTS = \
 	GOC="$(GOC_FOR_TARGET) $(XGCC_FLAGS_FOR_TARGET) $$TFLAGS"; export GOC; \
 	GDC="$(GDC_FOR_TARGET) $(XGCC_FLAGS_FOR_TARGET) $$TFLAGS"; export GDC; \
 	GM2="$(GM2_FOR_TARGET) $(XGCC_FLAGS_FOR_TARGET) $$TFLAGS"; export GM2; \
+	GNATMAKE_FOR_BUILD="$(GNATMAKE_FOR_BUILD)"; export GNATMAKE_FOR_BUILD; \
 	DLLTOOL="$(DLLTOOL_FOR_TARGET)"; export DLLTOOL; \
 	DSYMUTIL="$(DSYMUTIL_FOR_TARGET)"; export DSYMUTIL; \
 	LD="$(COMPILER_LD_FOR_TARGET)"; export LD; \
@@ -384,6 +386,7 @@ GFORTRAN_FOR_BUILD = @GFORTRAN_FOR_BUILD@
 GOC_FOR_BUILD = @GOC_FOR_BUILD@
 GDC_FOR_BUILD = @GDC_FOR_BUILD@
 GM2_FOR_BUILD = @GM2_FOR_BUILD@
+GNATMAKE_FOR_BUILD = @GNATMAKE_FOR_BUILD@
 LDFLAGS_FOR_BUILD = @LDFLAGS_FOR_BUILD@
 LD_FOR_BUILD = @LD_FOR_BUILD@
 NM_FOR_BUILD = @NM_FOR_BUILD@
@@ -434,7 +437,7 @@ DLLTOOL = @DLLTOOL@
 DSYMUTIL = @DSYMUTIL@
 LD = @LD@
 LIPO = @LIPO@
-NM = @NM@
+NM = @NM@ @NM_PLUGIN_OPTION@
 OBJDUMP = @OBJDUMP@
 OTOOL = @OTOOL@
 RANLIB = @RANLIB@ @RANLIB_PLUGIN_OPTION@
@@ -459,8 +462,6 @@ GM2FLAGS = $(CFLAGS)
 CRAB1_LIBS = @CRAB1_LIBS@
 
 PKG_CONFIG_PATH = @PKG_CONFIG_PATH@
-
-GUILE = guile
 
 # Pass additional PGO and LTO compiler options to the PGO build.
 BUILD_CFLAGS = $(PGO_BUILD_CFLAGS) $(PGO_BUILD_LTO_CFLAGS)
@@ -587,7 +588,7 @@ do-compare3 = $(do-compare)
 # Programs producing files for the TARGET machine
 # -----------------------------------------------
 
-AR_FOR_TARGET=@AR_FOR_TARGET@
+AR_FOR_TARGET=@AR_FOR_TARGET@ @AR_PLUGIN_OPTION_FOR_TARGET@
 AS_FOR_TARGET=@AS_FOR_TARGET@
 CC_FOR_TARGET=$(STAGE_CC_WRAPPER) @CC_FOR_TARGET@
 
@@ -607,11 +608,11 @@ DSYMUTIL_FOR_TARGET=@DSYMUTIL_FOR_TARGET@
 LD_FOR_TARGET=@LD_FOR_TARGET@
 
 LIPO_FOR_TARGET=@LIPO_FOR_TARGET@
-NM_FOR_TARGET=@NM_FOR_TARGET@
+NM_FOR_TARGET=@NM_FOR_TARGET@ @NM_PLUGIN_OPTION_FOR_TARGET@
 OBJDUMP_FOR_TARGET=@OBJDUMP_FOR_TARGET@
 OBJCOPY_FOR_TARGET=@OBJCOPY_FOR_TARGET@
 OTOOL_FOR_TARGET=@OTOOL_FOR_TARGET@
-RANLIB_FOR_TARGET=@RANLIB_FOR_TARGET@
+RANLIB_FOR_TARGET=@RANLIB_FOR_TARGET@ @RANLIB_PLUGIN_OPTION_FOR_TARGET@
 READELF_FOR_TARGET=@READELF_FOR_TARGET@
 STRIP_FOR_TARGET=@STRIP_FOR_TARGET@
 WINDRES_FOR_TARGET=@WINDRES_FOR_TARGET@
@@ -978,7 +979,7 @@ local-distclean:
 	-rmdir texinfo/makeinfo texinfo/po texinfo/util 2>/dev/null
 	-rmdir c++tools fastjar gcc gnattools gotools 2>/dev/null
 	-rmdir libcc1 libiberty texinfo zlib 2>/dev/null
-	-find . -name config.cache -exec rm -f {} \; \; 2>/dev/null
+	-find . -name config.cache -exec rm -f {} \; 2>/dev/null
 
 local-maintainer-clean:
 	@echo "This command is intended for maintainers to use;"
@@ -2098,6 +2099,11 @@ ENDFOR dependencies +]@endif gcc-bootstrap
    (if (exist? "no_gcc")
        (hash-create-handle! lang-env-deps
 	  (string-append (get "module") "-" "no_gcc") #t))
+
+   (if (exist? "no_atomic")
+       (hash-create-handle! lang-env-deps
+	  (string-append (get "module") "-" "no_atomic") #t))
+
    "" +][+ ENDFOR lang_env_dependencies +]
 
 @if gcc-bootstrap[+ FOR target_modules +][+ IF (not (lang-dep "no_gcc"))
@@ -2117,6 +2123,17 @@ configure-target-[+module+]: maybe-all-target-newlib maybe-all-target-libgloss[+
 configure-target-[+module+]: maybe-all-target-libstdc++-v3[+
   ENDIF +]
 [+ ENDFOR target_modules +]
+
+@if gcc-bootstrap[+ FOR target_modules +][+ IF (not (lang-dep "no_atomic"))
+  +][+ IF bootstrap +][+ FOR bootstrap_stage +]
+configure-stage[+id+]-target-[+module+]: maybe-all-stage[+id+]-target-libatomic[+
+  ENDFOR +][+ ENDIF bootstrap +][+ ENDIF +][+ ENDFOR target_modules +]
+@endif gcc-bootstrap
+
+@if gcc-no-bootstrap[+ FOR target_modules +][+ IF (not (lang-dep "no_atomic")) +]
+configure-target-[+module+]: maybe-all-target-libatomic[+
+  ENDIF +][+ ENDFOR target_modules +]
+@endif gcc-no-bootstrap
 
 CONFIGURE_GDB_TK = @CONFIGURE_GDB_TK@
 GDB_TK = @GDB_TK@

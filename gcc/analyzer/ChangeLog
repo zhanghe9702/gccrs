@@ -1,3 +1,543 @@
+2025-10-16  David Malcolm  <dmalcolm@redhat.com>
+
+	* ana-state-to-diagnostic-state.cc: Reimplement throughout to use
+	json::property instances found within custom_sarif_properties
+	throughout, rather than types in diagnostics::state_graphs.
+	* ana-state-to-diagnostic-state.h: Likewise.
+	* checker-event.cc: Likewise.
+	* sm-malloc.cc: Likewise.
+
+2025-10-09  David Malcolm  <dmalcolm@redhat.com>
+
+	* access-diagram.cc: Update for renaming of fields of binding_key.
+	* ana-state-to-diagnostic-state.cc: Likewise.
+	* bounds-checking.cc: Likewise.  Add store_manager param.
+	* call-summary.cc: Likewise.
+	* diagnostic-manager.cc: Drop includes of "basic-block.h" and
+	"gimple.h".
+	* engine.cc: Likewise.
+	* infinite-recursion.cc: Update for renaming of fields of
+	binding_key.
+	* kf.cc: Pass store_manager to mark_as_escaped.
+	* program-state.cc: Update for renaming of fields of binding_key.
+	* region-model-asm.cc: Pass store manager to
+	get_or_create_cluster.
+	* region-model-reachability.cc: Likewise.  Update for renaming of
+	fields of binding_key.
+	* region-model.cc: Likewise.
+	(struct bad_pointer_finder): Drop.
+	(region_model::poison_any_pointers_to_descendents): Implement
+	iteration directly, rather than using store::for_each_binding.
+	Drop return value.
+	(selftest::test_struct): Set field in order y then x.  Verify
+	that iteration yields bindings in order x then y.
+	* region-model.h
+	(region_model::poison_any_pointers_to_descendents): Drop return
+	value.
+	* region.cc: Pass store manager to get_or_create_cluster.
+	* store.cc (binding_map::const_iterator::operator==): New.
+	(binding_map::const_iterator::operator++): New.
+	(binding_map::const_iterator::operator*): New.
+	(binding_map::iterator::operator==): New.
+	(binding_map::iterator::operator++): New.
+	(binding_map::iterator::operator*): New.
+	(binding_map::binding_map): Reimplement.
+	(binding_map::operator=): Reimplement.
+	(binding_map::operator==): Reimplement.
+	(binding_map::hash): Reimplement.
+	(binding_map::get): Reimplement.
+	(binding_map::put): Reimplement.
+	(binding_map::overwrite): New.
+	(binding_map::remove): New.
+	(binding_map::begin): New.
+	(binding_map::end): New.
+	(binding_map::elements): New.
+	(binding_map::dump_to_pp): Reimplement.
+	(binding_map::to_json): Iterate over *this directly; drop sort.
+	(binding_map::add_to_tree_widget): Likewise.
+	(binding_map::cmp): Reimplement.
+	(binding_map::get_overlapping_bindings): Update for field
+	renamings.
+	(binding_cluster::binding_cluster): Add store_mgr param.
+	(binding_cluster::validate): Update for field renamings.
+	(binding_cluster::bind_compound_sval): Likewise.
+	(binding_cluster::purge_state_involving): Likewise.
+	(binding_cluster::maybe_get_compound_binding): Likewise.  Add
+	store_mgr param.
+	(binding_cluster::can_merge_p): Likewise.  Update for new
+	implementation.
+	(binding_cluster::make_unknown_relative_to): Likewise.
+	(binding_cluster::on_unknown_fncall): Likewise.
+	(binding_cluster::on_asm): Likewise.
+	(binding_cluster::get_representative_path_vars): Likewise.
+	(store::set_value): Likewise.
+	(store::on_maybe_live_values): Pass around store_manager.
+	(store::fill_region): Likewise.
+	(store::mark_region_as_unknown): Likewise.
+	(store::get_or_create_cluster): Likewise.
+	(store::can_merge_p): Likewise.
+	(store::mark_as_escaped): Likewise.
+	(store::canonicalize): Update for field renamings.
+	(store::loop_replay_fixup): Likewise.  Pass around store_manager.
+	(store::replay_call_summary_cluster): Likewise.
+	(selftest::test_binding_map_ops): New.
+	(selftest::analyzer_store_cc_tests): Call it.
+	* store.h (class binding_map): Reimplement.
+	(binding_map::map_t): Drop.
+	(struct binding_map::symbolic_binding): New.
+	(binding_map::concrete_bindings_t): New.
+	(binding_map::symbolic_bindings_t): New.
+	(struct binding_map::bindings_pair): New.
+	(class binding_map::const_iterator): New.
+	(class binding_map::iterator): New.
+	(binding_map::get): Reimplement.
+	(binding_map::overwrite): New decl.
+	(binding_map::remove): Reimplement.
+	(binding_map::clear): Reimplement.
+	(binding_map::put): Reimplement.
+	(binding_map::empty_p): Reimplement.
+	(binding_map::begin): Reimplement.
+	(binding_map::end): Reimplement.
+	(binding_map::elements): Reimplement.
+	(binding_map::m_map): Drop field.
+	(binding_map::m_store_mgr): New field.
+	(binding_map::m_concrete): New field.
+	(binding_map::m_symbolic): New field.
+	(BindingVisitor): Drop.
+	(binding_cluster::map_t): Drop.
+	(binding_cluster::iterator_t): Reimplement.
+	(binding_cluster::const_iterator_t): New.
+	(binding_cluster::binding_cluster): Add store_mgr param.
+	(binding_cluster::for_each_value): Reimplement.
+	(binding_cluster::empty_p): Reimplement.
+	(binding_cluster::for_each_binding): Drop.
+	(binding_cluster::begin): Split into const/non-const overloads.
+	(binding_cluster::get_map): Add non-const overload.
+	(store::get_or_create_cluster): Add store_mgr param.
+	(store::mark_as_escaped): Likewise.
+	(store::for_each_binding): Drop.
+	(store::on_maybe_live_values): Add store_mgr param.
+	* svalue.cc (compound_svalue::compound_svalue): Reimplement.
+	(compound_svalue::accept): Likewise.
+	(compound_svalue::calc_complexity): Likewise.
+	(compound_svalue::maybe_fold_bits_within): Likewise.
+	* svalue.h (compound_svalue::const_iterator_t): New.
+	(compound_svalue::begin): Split into const/non-const overloads.
+	(compound_svalue::end): Likewise.
+
+2025-10-03  David Malcolm  <dmalcolm@redhat.com>
+
+	Revert:
+	2025-10-03  David Malcolm  <dmalcolm@redhat.com>
+
+	* ana-state-to-diagnostic-state.cc: Reimplement throughout to use
+	json::property instances found within custom_sarif_properties
+	throughout, rather than types in diagnostics::state_graphs.
+	* ana-state-to-diagnostic-state.h: Likewise.
+	* checker-event.cc: Likewise.
+	* sm-malloc.cc: Likewise.
+
+2025-10-02  David Malcolm  <dmalcolm@redhat.com>
+
+	* ana-state-to-diagnostic-state.cc: Reimplement throughout to use
+	json::property instances found within custom_sarif_properties
+	throughout, rather than types in diagnostics::state_graphs.
+	* ana-state-to-diagnostic-state.h: Likewise.
+	* checker-event.cc: Likewise.
+	* sm-malloc.cc: Likewise.
+
+2025-09-15  Alexandre Oliva  <oliva@adacore.com>
+
+	* kf.cc (register_known_functions): Add __get_errno_ptr.
+
+2025-08-29  David Malcolm  <dmalcolm@redhat.com>
+
+	* pending-diagnostic.cc: Include "diagnostics/logging.h".
+	(diagnostic_emission_context::warn): Add logging.
+	(diagnostic_emission_context::inform): Likewise.
+
+2025-07-25  David Malcolm  <dmalcolm@redhat.com>
+
+	* program-point.cc: Make diagnostics::context::m_source_printing
+	private.
+
+2025-07-25  David Malcolm  <dmalcolm@redhat.com>
+
+	* pending-diagnostic.cc: Update for diagnostic_t becoming
+	enum class diagnostics::kind.
+	* program-point.cc: Likewise.
+
+2025-07-25  David Malcolm  <dmalcolm@redhat.com>
+
+	* program-point.cc: : Update for diagnostic_context becoming
+	diagnostics::context, and for diagnostic_source_print_policy
+	becoming diagnostics::source_print_policy.
+
+2025-07-25  David Malcolm  <dmalcolm@redhat.com>
+
+	* ana-state-to-diagnostic-state.cc: Update for move of
+	diagnostics output formats into namespace "diagnostics" as
+	"sinks".
+	* bounds-checking.cc: Likewise.
+	* call-details.cc: Likewise.
+	* checker-event.cc: Likewise.
+	* checker-event.h: Likewise.
+	* diagnostic-manager.cc: Likewise.
+	* diagnostic-manager.h: Likewise.
+	* infinite-loop.cc: Likewise.
+	* infinite-recursion.cc: Likewise.
+	* pending-diagnostic.h: Likewise.
+	* region-model.cc: Likewise.
+	* sm-taint.cc: Likewise.
+
+2025-07-25  David Malcolm  <dmalcolm@redhat.com>
+
+	* access-diagram.cc: Update for changes to diagnostic paths:
+	"diagnostic-path.h" moving to "diagnostics/paths.h",
+	"diagnostic-event-id.h" moving to "diagnostics/event-id.h",
+	diagnostic_event_id_t to diagnostics::paths::event_id_t,
+	diagnostic_path to diagnostics::paths::path, and
+	diagnostic_event to diagnostics::paths::event.
+	* access-diagram.h: Likewise.
+	* analyzer.cc: Likewise.
+	* bounds-checking.cc: Likewise.
+	* call-info.cc: Likewise.
+	* checker-event.cc: Likewise.
+	* checker-event.h: Likewise.
+	* checker-path.cc: Likewise.
+	* checker-path.h: Likewise.
+	* common.h: Likewise.
+	* diagnostic-manager.cc: Likewise.
+	* pending-diagnostic.cc: Likewise.
+	* pending-diagnostic.h: Likewise.
+	* program-point.cc: Likewise.
+	* program-state.cc: Likewise.
+	* region-model.cc: Likewise.
+	* sm-fd.cc: Likewise.
+	* sm-file.cc: Likewise.
+	* sm-malloc.cc: Likewise.
+	* sm-pattern-test.cc: Likewise.
+	* sm-sensitive.cc: Likewise.
+	* sm-signal.cc: Likewise.
+	* sm-taint.cc: Likewise.
+	* varargs.cc: Likewise.
+
+2025-07-25  David Malcolm  <dmalcolm@redhat.com>
+
+	* bounds-checking.cc: Update #include for move of
+	"diagnostic-diagram.h" to "diagnostics/diagram.h". Update for
+	move of diagnostic_diagram to diagnostics::diagram.
+
+2025-07-25  David Malcolm  <dmalcolm@redhat.com>
+
+	* diagnostic-manager.cc: Update for move of diagnostic_metadata to
+	diagnostics::metadata.
+	* kf.cc: Likewise.
+	* pending-diagnostic.h: Likewise; also, update #include for move
+	of "diagnostic-metadata.h" to "diagnostics/metadata.h".
+
+2025-07-25  David Malcolm  <dmalcolm@redhat.com>
+
+	* checker-event.h (checker_event::get_logical_location): Update
+	for conversion of logical_location to
+	diagnostics::logical_locations::key.
+	(checker_event::m_logical_loc): Likewise.
+	* diagnostic-manager.cc
+	(diagnostic_manager::get_logical_location_manager): Likewise.
+	* diagnostic-manager.h
+	(diagnostic_manager::get_logical_location_manager): Likewise.
+
+2025-07-25  David Malcolm  <dmalcolm@redhat.com>
+
+	* ana-state-to-diagnostic-state.cc: Update #include for move of
+	"diagnostic-state-graphs.h" to "diagnostics/state-graphs.h".
+	* ana-state-to-diagnostic-state.h: Likewise.
+	* checker-event.cc: Likewise.
+	* checker-event.h: Update #include for move of
+	"diagnostic-digraphs.h" to "diagnostics/digraphs.h".
+	* program-state.cc: : Update #include for move of
+	"diagnostic-state-graphs.h" to "diagnostics/state-graphs.h".
+
+2025-07-21  Stefan Schulze Frielinghaus  <stefansf@gcc.gnu.org>
+
+	* region-model-asm.cc (region_model::on_asm_stmt): Pass null
+	pointer to parse_{input,output}_constraint().
+
+2025-07-11  David Malcolm  <dmalcolm@redhat.com>
+
+	* ana-state-to-diagnostic-state.cc: Reimplement, replacing
+	XML-based implementation with one based on state graphs.
+	* ana-state-to-diagnostic-state.h: Likewise.
+	* checker-event.cc: Replace include of "xml.h" with include of
+	"diagnostic-state-graphs.h".
+	(checker_event::maybe_make_xml_state): Replace with...
+	(checker_event::maybe_make_diagnostic_state_graph): ...this.
+	* checker-event.h: Add include of "diagnostic-digraphs.h".
+	(checker_event::maybe_make_xml_state): Replace decl with...
+	(checker_event::maybe_make_diagnostic_state_graph): ...this.
+	* engine.cc (exploded_node::on_stmt_pre): Replace
+	"_analyzer_dump_xml" with "__analyzer_dump_sarif".
+	* program-state.cc: Replace include of "diagnostic-state.h" with
+	"diagnostic-state-graphs.h".
+	(program_state::dump_dot): Port from XML to state graphs.
+	* program-state.h: Drop reduntant forward decl of xml::document.
+	(program_state::make_xml): Replace decl with...
+	(program_state::make_diagnostic_state_graph): ...this.
+	(program_state::dump_xml_to_pp): Drop decl.
+	(program_state::dump_xml_to_file): Drop decl.
+	(program_state::dump_xml): Drop decl.
+	(program_state::dump_dump_sarif): New decl.
+	* sm-malloc.cc (get_dynalloc_state_for_state): New.
+	(malloc_state_machine::add_state_to_xml): Replace with...
+	(malloc_state_machine::add_state_to_state_graph): ...this.
+	* sm.cc (state_machine::add_state_to_xml): Replace with...
+	(state_machine::add_state_to_state_graph): ...this.
+	(state_machine::add_global_state_to_xml): Replace with...
+	(state_machine::add_global_state_to_state_graph): ...this.
+	* sm.h (class xml_state): Drop forward decl.
+	(class analyzer_state_graph): New forward decl.
+	(state_machine::add_state_to_xml): Replace decl with...
+	(state_machine::add_state_to_state_graph): ...this.
+	(state_machine::add_global_state_to_xml): Replace decl with...
+	(state_machine::add_global_state_to_state_graph): ...this.
+
+2025-06-30  David Malcolm  <dmalcolm@redhat.com>
+
+	* access-diagram.cc: Use nullptr rather than NULL where
+	appropriate.
+	* analyzer-language.cc: Likewise.
+	* analyzer-language.h: Likewise.
+	* analyzer-logging.h: Likewise.
+	* analyzer-pass.cc: Likewise.
+	* analyzer.cc: Likewise.
+	* bounds-checking.cc: Likewise.
+	* call-details.cc: Likewise.
+	* call-string.cc: Likewise.
+	* call-string.h: Likewise.
+	* call-summary.cc: Likewise.
+	* checker-event.cc: Likewise.
+	* common.h: Likewise.
+	* constraint-manager.cc: Likewise.
+	* constraint-manager.h: Likewise.
+	* diagnostic-manager.cc: Likewise.
+	* engine.cc: Likewise.
+	* exploded-graph.h: Likewise.
+	* function-set.cc: Likewise
+	* infinite-recursion.cc: Likewise
+	* inlining-iterator.h: Likewise
+	* kf.cc: Likewise
+	* known-function-manager.cc: Likewise
+	* pending-diagnostic.cc: Likewise
+	* program-point.cc: Likewise
+	* program-point.h: Likewise
+	* program-state.cc: Likewise
+	* program-state.h: Likewise
+	* record-layout.cc: Likewise
+	* region-model-asm.cc: Likewise
+	* region-model-manager.cc: Likewise
+	* region-model-manager.h: Likewise
+	* region-model-reachability.cc: Likewise
+	* region-model.cc: Likewise
+	* region-model.h: Likewise
+	* region.cc: Likewise
+	* region.h: Likewise
+	* sm-fd.cc: Likewise
+	* sm-malloc.cc: Likewise
+	* sm-pattern-test.cc: Likewise
+	* sm-signal.cc: Likewise
+	* sm-taint.cc: Likewise
+	* sm.cc: Likewise
+	* sm.h: Likewise
+	* state-purge.cc: Likewise
+	* state-purge.h: Likewise
+	* store.cc: Likewise
+	* store.h: Likewise
+	* supergraph.cc: Likewise
+	* supergraph.h: Likewise
+	* svalue.cc: Likewise
+	* svalue.h: Likewise
+	* varargs.cc: Likewise
+
+2025-06-30  David Malcolm  <dmalcolm@redhat.com>
+
+	* checker-event.cc (function_entry_event::get_meaning): Convert
+	diagnostic_event::meaning enums to enum class.
+	(cfg_edge_event::get_meaning): Likewise.
+	(call_event::get_meaning): Likewise.
+	(return_event::get_meaning): Likewise.
+	(start_consolidated_cfg_edges_event::get_meaning): Likewise.
+	(inlined_call_event::get_meaning): Likewise.
+	(warning_event::get_meaning): Likewise.
+	* sm-fd.cc (fd_diagnostic::get_meaning_for_state_change):
+	Likewise.
+	* sm-file.cc (file_diagnostic::get_meaning_for_state_change):
+	Likewise.
+	* sm-malloc.cc (malloc_diagnostic::get_meaning_for_state_change):
+	Likewise.
+	* sm-sensitive.cc
+	(exposure_through_output_file::get_meaning_for_state_change):
+	Likewise.
+	* sm-taint.cc (taint_diagnostic::get_meaning_for_state_change):
+	Likewise.
+	* varargs.cc
+	(va_list_sm_diagnostic::get_meaning_for_state_change): Likewise.
+
+2025-06-30  Jakub Jelinek  <jakub@redhat.com>
+
+	PR c/120520
+	PR c/117023
+	* sm-malloc.cc (malloc_state_machine::on_stmt): Handle 3 argument
+	nonnull_if_nonzero attribute.
+
+2025-06-23  David Malcolm  <dmalcolm@redhat.com>
+
+	* region-model.cc
+	(exception_thrown_from_unrecognized_call::print): Add
+	"final override" to vfunc.
+
+2025-06-23  David Malcolm  <dmalcolm@redhat.com>
+
+	PR other/116792
+	* ana-state-to-diagnostic-state.cc: New file.
+	* ana-state-to-diagnostic-state.h: New file.
+	* checker-event.cc: Include "xml.h".
+	(checker_event::checker_event): Initialize m_path.
+	(checker_event::prepare_for_emission): Store the path pointer into
+	m_path.
+	(checker_event::maybe_make_xml_state): New.
+	(function_entry_event::function_entry_event): Add "state" param
+	and use it to initialize m_state.
+	(superedge_event::get_program_state): New.
+	(call_event::get_program_state): New.
+	(warning_event::get_program_state): New.
+	* checker-event.h (checker_event::get_program_state): New vfunc.
+	(checker_event::maybe_make_xml_state): New decl.
+	(checker_event::m_path): New field.
+	(statement_event::get_program_state): New vfunc impl.
+	(function_entry_event::function_entry_event): Add "state" param.
+	(function_entry_event::get_program_state): New vfunc impl.
+	(function_entry_event::m_state): New field.
+	(state_change_event::get_program_state): New vfunc impl.
+	(superedge_event::get_program_state): New vfunc decl.
+	(warning_event::warning_event): Add "program_state_" param and
+	copy it.
+	(warning_event::get_program_state): New vfunc decl.
+	(warning_event::m_program_state): New field.
+	* checker-path.h (checker_path::checker_path): Add ext_state param.
+	(checker_path::get_ext_state): New accessor.
+	(checker_path::m_ext_state): New field.
+	* common.h: Define INCLUDE_MAP and INCLUDE_STRING.
+	* diagnostic-manager.cc (saved_diagnostic::operator==): Don't
+	deduplicate dump_path_diagnostic instances.
+	(diagnostic_manager::emit_saved_diagnostic): Pass ext_state to
+	checker_path ctor.
+	* engine.cc:
+	(impl_region_model_context::on_state_leak): Pass old and new state
+	to state_machine::on_leak.
+	(exploded_node::on_stmt_pre): Implement __analyzer_dump_xml and
+	__analyzer_dump_dot.
+	* exploded-graph.h (impl_region_model_context::get_state): New.
+	* infinite-recursion.cc
+	(recursive_function_entry_event::recursive_function_entry_event):
+	Add "dst_state" param and pass to function_entry_event ctor.
+	(infinite_recursion_diagnostic::add_function_entry_event): Pass state
+	to event ctor.
+	* kf-analyzer.cc: Include "analyzer/program-state.h"
+	(dump_path_diagnostic::dump_path_diagnostic): Add "state" param.
+	(dump_path_diagnostic::get_final_state): New.
+	(dump_path_diagnostic::m_state): New field.
+	(kf_analyzer_dump_path::impl_call_pre): Pass state to warning.
+	* pending-diagnostic.cc
+	(pending_diagnostic::add_function_entry_event): Pass state to
+	function_entry_event.
+	(pending_diagnostic::add_final_event): Likewise to warning_event.
+	* pending-diagnostic.h (pending_diagnostic::get_final_state): New
+	vfunc decl.
+	* program-state.cc: Include "diagnostic-state.h", "graphviz.h" and
+	"analyzer/ana-state-to-diagnostic-state.h".
+	(program_state::dump_dot): New.
+	* program-state.h: Include "text-art/tree-widget.h" and
+	"analyzer/store.h".
+	(class xml::document): New forward decl.
+	(make_xml): New.
+	(dump_xml_to_pp): New.
+	(dump_xml_to_file): New.
+	(dump_xml): New.
+	(dump_dot): New.
+	* record-layout.cc (record_layout::record_layout): Make param
+	const_tree.
+	* record-layout.h (item::item): Likewise.
+	(item::m_field): Likewise.
+	(record_layout::record_layout): Likewise.
+	(record_layout::begin): New.
+	(record_layout::end): New.
+	* region-model.cc
+	(exposure_through_uninit_copy::complain_about_fully_uninit_item):
+	Use const_tree.
+	(exposure_through_uninit_copy::complain_about_partially_uninit_item):
+	Likewise.
+	* region-model.h (region_model_context::get_state): New vfunc.
+	(noop_region_model_context::get_state): New.
+	(region_model_context_decorator::get_state): New.
+	* sm-fd.cc (fd_leak::fd_leak): Add "final_state" param and capture
+	it if present.
+	(fd_leak::get_final_state): New.
+	(fd_leak::m_final_state): New.
+	(fd_state_machine::on_open): Pass nullptr for new "final_state"
+	param.
+	(fd_state_machine::on_creat): Likewise.
+	(fd_state_machine::on_socket): Likewise.
+	(fd_state_machine::on_accept): Likewise.
+	(fd_state_machine::on_leak): Add state params and pass new state
+	as final state to fd_leak ctor.
+	* sm-file.cc: Include "analyzer/program-state.h".
+	(file_leak::file_leak): Add "final_state" param and capture it if
+	present.
+	(file_leak::get_final_state): New.
+	(file_leak::m_final_state): New.
+	(fileptr_state_machine::on_leak): Add state params and pass new
+	state as final state to fd_leak ctor.
+	* sm-malloc.cc: Include
+	"analyzer/ana-state-to-diagnostic-state.h".
+	(malloc_leak::malloc_leak): Add "final_state" param and use it.
+	(malloc_leak::get_final_state): New vfunc impl.
+	(malloc_leak::m_final_state): New field.
+	(malloc_state_machine::on_leak): Add state params; capture final
+	state.
+	(malloc_state_machine::add_state_to_xml): New.
+	* sm.cc (state_machine::on_leak): Add "old_state" and "new_state"
+	params.  Use nullptr.
+	(state_machine::add_state_to_xml): New.
+	(state_machine::add_global_state_to_xml): New.
+	* sm.h (class xml_state): New forward decl.
+	(state_machine::on_leak): Add state params.
+	(state_machine::add_state_to_xml): New vfunc decl.
+	(state_machine::add_global_state_to_xml): New vfunc decl.
+	* store.h (bit_range::operator<): New.
+	* varargs.cc (va_list_leak::va_list_leak): Add final_state param
+	and capture it if non-null.
+	(va_list_leak::get_final_state): New.
+	(va_list_leak::m_final_state): New.
+	(va_list_state_machine::on_leak): Add state params and pass final
+	state to va_list_leak ctor.
+
+2025-06-18  David Malcolm  <dmalcolm@redhat.com>
+
+	* checker-event.h (checker_event::get_kind): New accessor.
+	(checker_event::m_kind): Make private.
+	* checker-path.cc (checker_path::maybe_log): Use accessor for
+	checker_event::m_kind.
+	(checker_path::add_event): Likewise.
+	(checker_path::debug): Likewise.
+	(checker_path::cfg_edge_pair_at_p): Likewise.
+	(checker_path::inject_any_inlined_call_events): Likewise.
+	* diagnostic-manager.cc
+	(diagnostic_manager::prune_for_sm_diagnostic): Likewise.
+	(diagnostic_manager::prune_for_sm_diagnostic): Likewise.
+	(diagnostic_manager::consolidate_conditions): Likewise.
+	(diagnostic_manager::consolidate_unwind_events): Likewise.
+	(diagnostic_manager::finish_pruning): Likewise.
+
 2025-05-06  David Malcolm  <dmalcolm@redhat.com>
 
 	* checker-event.cc (checker_event::checker_event): Update

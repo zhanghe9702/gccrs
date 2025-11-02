@@ -80,7 +80,7 @@ package body Sem_Disp is
    --  parameter); otherwise returns empty.
 
    function Find_Hidden_Overridden_Primitive (S : Entity_Id) return Entity_Id;
-   --  [Ada 2012:AI-0125] Find an inherited hidden primitive of the dispatching
+   --  [AI05-0125] Find an inherited hidden primitive of the dispatching
    --  type of S that has the same name of S, a type-conformant profile, an
    --  original corresponding operation O that is a primitive of a visible
    --  ancestor of the dispatching type of S and O is visible at the point of
@@ -91,7 +91,8 @@ package body Sem_Disp is
    --  This routine does not search for non-hidden primitives since they are
    --  covered by the normal Ada 2005 rules. Its name was motivated by an
    --  intermediate version of AI05-0125 where this term was proposed to
-   --  name these entities in the RM.
+   --  name these entities in the RM. FWIW, note that AI05-0125 was
+   --  not approved; it was voted "No Action".
 
    function Is_Inherited_Public_Operation (Op : Entity_Id) return Boolean;
    --  Check whether a primitive operation is inherited from an operation
@@ -586,7 +587,7 @@ package body Sem_Disp is
       Formal                 : Entity_Id;
       Control                : Node_Id := Empty;
       Func                   : Entity_Id;
-      Subp_Entity            : Entity_Id;
+      Subp_Entity            : constant Entity_Id := Entity (Name (N));
 
       Indeterm_Ctrl_Type : Entity_Id := Empty;
       --  Type of a controlling formal whose actual is a tag-indeterminate call
@@ -967,7 +968,6 @@ package body Sem_Disp is
       --  Find a controlling argument, if any
 
       if Present (Parameter_Associations (N)) then
-         Subp_Entity := Entity (Name (N));
 
          Actual := First_Actual (N);
          Formal := First_Formal (Subp_Entity);
@@ -1710,9 +1710,8 @@ package body Sem_Disp is
 
       Ovr_Subp := Old_Subp;
 
-      --  [Ada 2012:AI-0125]: Search for inherited hidden primitive that may be
-      --  overridden by Subp. This only applies to source subprograms, and
-      --  their declaration must carry an explicit overriding indicator.
+      --  Search for inherited hidden primitive that may be
+      --  overridden by Subp. This only applies to source subprograms.
 
       if No (Ovr_Subp)
         and then Ada_Version >= Ada_2012
@@ -1721,16 +1720,6 @@ package body Sem_Disp is
           Nkind (Unit_Declaration_Node (Subp)) = N_Subprogram_Declaration
       then
          Ovr_Subp := Find_Hidden_Overridden_Primitive (Subp);
-
-         --  Warn if the proper overriding indicator has not been supplied.
-
-         if Present (Ovr_Subp)
-           and then
-             not Must_Override (Specification (Unit_Declaration_Node (Subp)))
-           and then not In_Instance
-         then
-            Error_Msg_NE ("missing overriding indicator for&??", Subp, Subp);
-         end if;
       end if;
 
       --  Now it should be a correct primitive operation, put it in the list
@@ -2427,6 +2416,8 @@ package body Sem_Disp is
       Formal    : Entity_Id;
       Ctrl_Type : Entity_Id;
 
+   --  Start of processing for Find_Dispatching_Type
+
    begin
       if Ekind (Subp) in E_Function | E_Procedure
         and then Present (DTC_Entity (Subp))
@@ -3094,6 +3085,52 @@ package body Sem_Disp is
       then
          return Is_Tag_Indeterminate (Prefix (Orig_Node));
 
+      --  An if-expression is tag-indeterminate if all of the dependent
+      --  expressions are tag-indeterminate (RM 4.5.7 (17/3)).
+
+      elsif Nkind (Orig_Node) = N_If_Expression then
+         declare
+            Cond : constant Node_Id := First (Expressions (Orig_Node));
+            Expr : Node_Id := Next (Cond);
+
+         begin
+            if not Is_Tag_Indeterminate (Original_Node (Expr)) then
+               return False;
+            end if;
+
+            Next (Expr);
+
+            if Present (Expr)
+              and then not Is_Tag_Indeterminate (Original_Node (Expr))
+            then
+               return False;
+            end if;
+
+            return True;
+         end;
+
+      --  A case-expression is tag-indeterminate if all of the dependent
+      --  expressions are tag-indeterminate (RM 4.5.7 (17/3)).
+
+      elsif Nkind (Orig_Node) = N_Case_Expression then
+         declare
+            Alt  : Node_Id := First (Alternatives (Orig_Node));
+            Expr : Node_Id;
+
+         begin
+            while Present (Alt) loop
+               Expr := Expression (Alt);
+
+               if not Is_Tag_Indeterminate (Original_Node (Expr)) then
+                  return False;
+               end if;
+
+               Next (Alt);
+            end loop;
+
+            return True;
+         end;
+
       else
          return False;
       end if;
@@ -3254,6 +3291,7 @@ package body Sem_Disp is
       elsif Nkind (Actual) = N_Explicit_Dereference
         and then Nkind (Original_Node (Prefix (Actual))) = N_Function_Call
       then
+         pragma Assert (Is_Expanded_Dispatching_Call (Actual));
          return;
 
       --  When expansion is suppressed, an unexpanded call to 'Input can occur,

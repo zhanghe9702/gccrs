@@ -1608,8 +1608,12 @@ Alphabetical List of All Switches
 
 .. index:: -gnateG  (gcc)
 
-:switch:`-gnateG`
-  Save result of preprocessing in a text file.
+:switch:`-gnateG[bce]`
+  Save result of preprocessing in a text file. An optional character (b, c,
+  or e) can be appended to indicate that filtered lines are to be replaced by
+  blank lines, comment lines that include the filtered line, or empty comment
+  lines ("--!"), respectively. The default is to replace filtered lines with
+  blank lines.
 
 
 .. index:: -gnateH  (gcc)
@@ -1933,13 +1937,13 @@ Alphabetical List of All Switches
   Ignore representation clauses. When this switch is used,
   representation clauses are treated as comments. This is useful
   when initially porting code where you want to ignore rep clause
-  problems, and also for compiling foreign code (particularly
-  for use with ASIS). The representation clauses that are ignored
-  are: enumeration_representation_clause, record_representation_clause,
-  and attribute_definition_clause for the following attributes:
-  Address, Alignment, Bit_Order, Component_Size, Machine_Radix,
-  Object_Size, Scalar_Storage_Order, Size, Small, Stream_Size,
-  and Value_Size. Pragma Default_Scalar_Storage_Order is also ignored.
+  problems, and also for compiling foreign code. The representation
+  clauses that are ignored are: enumeration_representation_clause,
+  record_representation_clause, and attribute_definition_clause for the
+  following attributes: Address, Alignment, Bit_Order, Component_Size,
+  Machine_Radix, Object_Size, Scalar_Storage_Order, Size, Small,
+  Stream_Size, and Value_Size.
+  Pragma Default_Scalar_Storage_Order is also ignored.
   Note that this option should be used only for compiling -- the
   code is likely to malfunction at run time.
 
@@ -2112,7 +2116,7 @@ Alphabetical List of All Switches
 
 .. index:: -gnatR  (gcc)
 
-:switch:`-gnatR[0|1|2|3|4][e][j][m][s]`
+:switch:`-gnatR[0|1|2|3|4][e][h][m][j][s]`
   Output representation information for declared types, objects and
   subprograms. Note that this switch is not allowed if a previous
   :switch:`-gnatD` switch has been given, since these two switches
@@ -2259,15 +2263,16 @@ Alphabetical List of All Switches
   ======= ==================================================================
    *n*     Effect
   ------- ------------------------------------------------------------------
-  *0*      No optimization, the default setting if no :switch:`-O` appears
-  *1*      Normal optimization, the default if you specify :switch:`-O` without an
-           operand. A good compromise between code quality and compilation
-           time.
-  *2*      Extensive optimization, may improve execution time, possibly at
+  *0*      No optimization, the default setting if no :switch:`-O` appears.
+  *1*      Moderate optimization, same as :switch:`-O` without an operand.
+           A good compromise between code quality and compilation time.
+  *2*      Extensive optimization, should improve execution time, possibly at
            the cost of substantially increased compilation time.
-  *3*      Same as :switch:`-O2`, and also includes inline expansion for small
-           subprograms in the same unit.
-  *s*      Optimize space usage
+  *3*      Full optimization, may further improve execution time, possibly at
+           the cost of substantially larger generated code.
+  *s*      Optimize for size (code and data) rather than speed.
+  *z*      Optimize aggressively for size (code and data) rather than speed.
+  *g*      Optimize for debugging experience rather than speed.
   ======= ==================================================================
 
   See also :ref:`Optimization_Levels`.
@@ -3750,7 +3755,7 @@ of the pragma in the :title:`GNAT_Reference_manual`).
 
   * Assignment of an item to itself.
 
-  * Type conversion that converts an expression to its own type.
+  * Type conversion that converts an expression to its own subtype.
 
   * Use of the attribute ``Base`` where ``typ'Base`` is the same
     as ``typ``.
@@ -6088,7 +6093,7 @@ Debugging Control
 
 .. index:: -gnatR  (gcc)
 
-:switch:`-gnatR[0|1|2|3|4][e][j][m][s]`
+:switch:`-gnatR[0|1|2|3|4][e][h][m][j][s]`
   This switch controls output from the compiler of a listing showing
   representation information for declared types, objects and subprograms.
   For :switch:`-gnatR0`, no information is output (equivalent to omitting
@@ -6116,17 +6121,21 @@ Debugging Control
   extended representation information for record sub-components of records
   is included.
 
+  If the switch is followed by a ``h`` (e.g. :switch:`-gnatR3h`), then
+  the components of records are sorted by increasing offsets and holes
+  between consecutive components are flagged.
+
   If the switch is followed by an ``m`` (e.g. :switch:`-gnatRm`), then
   subprogram conventions and parameter passing mechanisms for all the
   subprograms are included.
 
-  If the switch is followed by a ``j`` (e.g., :switch:`-gnatRj`), then
+  If the switch is followed by a ``j`` (e.g. :switch:`-gnatRj`), then
   the output is in the JSON data interchange format specified by the
   ECMA-404 standard. The semantic description of this JSON output is
   available in the specification of the Repinfo unit present in the
   compiler sources.
 
-  If the switch is followed by an ``s`` (e.g., :switch:`-gnatR3s`), then
+  If the switch is followed by an ``s`` (e.g. :switch:`-gnatR3s`), then
   the output is to a file with the name :file:`file.rep` where ``file`` is
   the name of the corresponding source file, except if ``j`` is also
   specified, in which case the file name is :file:`file.json`.
@@ -8111,17 +8120,18 @@ We provide two options that you can use to build code with GNAT LLVM:
 
 * ``gprbuild`` can detect and use GNAT LLVM when it is installed.
 
-  ``gprbuild`` uses the first applicable compiler on the executable
-  search path, including GNAT LLVM.  An easy way to build with GNAT
-  LLVM is to make it available on the operating system's search path
-  before any other Ada compiler (such as the GCC version of GNAT). To
-  avoid accidentally using a different compiler than the one you want
-  to use, we recommend generating an explicit toolchain configuration
-  file with ``gprconfig`` and using it with ``gprbuild``; see the
-  *GPRbuild and GPR Companion Tools User's Guide* for details. You
-  can determine from the first line of the :file:`.ali` file
-  which version of GNAT built that file because it contains either
-  :code:`GNAT` or :code:`GNAT-LLVM`.
+  ``gprbuild`` uses the first applicable compiler on the executable search
+  path, including GNAT LLVM. An easy way to build with GNAT LLVM is to make
+  it available on the operating system's search path before any other Ada
+  compiler (such as the GCC version of GNAT). To avoid accidentally using a
+  different compiler than the one you want to use, we recommend explicitly
+  selecting GNAT LLVM in your existing GPR project file by adding
+  :code:`for Toolchain_Name ("Ada") use "GNAT_LLVM";`. You can also
+  generate an explicit toolchain configuration file with ``gprconfig`` and
+  use it with ``gprbuild``; see the *GPRbuild and GPR Companion Tools
+  User's Guide* for details. You can determine from the first line of the
+  :file:`.ali` file which version of GNAT built that file because it
+  contains either :code:`GNAT` or :code:`GNAT-LLVM`.
 
 .. only:: PRO
 
@@ -8137,5 +8147,4 @@ GNAT.
 
 .. only:: PRO
 
-  It provides the same runtimes with the exception that light runtimes
-  are not currently included with the native compilers.
+  It provides the same runtimes.

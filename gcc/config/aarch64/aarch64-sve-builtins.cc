@@ -47,6 +47,8 @@
 #include "langhooks.h"
 #include "stringpool.h"
 #include "attribs.h"
+#include "value-range.h"
+#include "tree-ssanames.h"
 #include "aarch64-sve-builtins.h"
 #include "aarch64-sve-builtins-base.h"
 #include "aarch64-sve-builtins-sve2.h"
@@ -3630,24 +3632,22 @@ gimple_folder::redirect_pred_x ()
 gimple *
 gimple_folder::fold_pfalse ()
 {
-  if (pred == PRED_none)
+  tree gp = gp_value (call);
+  /* If there isn't a GP then we can't do any folding as the instruction isn't
+     predicated.  */
+  if (!gp)
     return nullptr;
-  tree arg0 = gimple_call_arg (call, 0);
+
   if (pred == PRED_m)
     {
-      /* Unary function shapes with _m predication are folded to the
-	 inactive vector (arg0), while other function shapes are folded
-	 to op1 (arg1).  */
-      tree arg1 = gimple_call_arg (call, 1);
-      if (is_pfalse (arg1))
-	return fold_call_to (arg0);
-      if (is_pfalse (arg0))
-	return fold_call_to (arg1);
+      tree val = inactive_values (call);
+      if (is_pfalse (gp))
+	return fold_call_to (val);
       return nullptr;
     }
-  if ((pred == PRED_x || pred == PRED_z) && is_pfalse (arg0))
+  if ((pred == PRED_x || pred == PRED_z) && is_pfalse (gp))
     return fold_call_to (build_zero_cst (TREE_TYPE (lhs)));
-  if (pred == PRED_implicit && is_pfalse (arg0))
+  if (pred == PRED_implicit && is_pfalse (gp))
     {
       unsigned int flags = call_properties ();
       /* Folding to lhs = {0, ...} is not appropriate for intrinsics with
@@ -3664,7 +3664,8 @@ gimple_folder::fold_pfalse ()
 /* Convert the lhs and all non-boolean vector-type operands to TYPE.
    Pass the converted variables to the callback FP, and finally convert the
    result back to the original type. Add the necessary conversion statements.
-   Return the new call.  */
+   Return the new call. Note the tree argument to the callback FP, can only
+   be set once; it will always be a SSA_NAME.  */
 gimple *
 gimple_folder::convert_and_fold (tree type,
 				 gimple *(*fp) (gimple_folder &,
@@ -3675,7 +3676,7 @@ gimple_folder::convert_and_fold (tree type,
   tree old_ty = TREE_TYPE (lhs);
   gimple_seq stmts = NULL;
   bool convert_lhs_p = !useless_type_conversion_p (type, old_ty);
-  tree lhs_conv = convert_lhs_p ? create_tmp_var (type) : lhs;
+  tree lhs_conv = convert_lhs_p ? make_ssa_name (type) : lhs;
   unsigned int num_args = gimple_call_num_args (call);
   auto_vec<tree, 16> args_conv;
   args_conv.safe_grow (num_args);
@@ -3799,6 +3800,7 @@ gimple_folder::fold_active_lanes_to (tree x)
 
   gimple_seq stmts = NULL;
   tree pred = convert_pred (stmts, vector_type (0), 0);
+  x = force_vector (stmts, TREE_TYPE (lhs), x);
   gsi_insert_seq_before (gsi, stmts, GSI_SAME_STMT);
   return gimple_build_assign (lhs, VEC_COND_EXPR, pred, x, vec_inactive);
 }
@@ -4001,7 +4003,8 @@ rtx
 function_expander::get_reg_target ()
 {
   machine_mode target_mode = result_mode ();
-  if (!possible_target || GET_MODE (possible_target) != target_mode)
+  if (!possible_target
+      || !register_operand (possible_target, target_mode))
     possible_target = gen_reg_rtx (target_mode);
   return possible_target;
 }
@@ -4351,7 +4354,11 @@ function_expander::use_cond_insn (insn_code icode, unsigned int merge_argno)
   add_input_operand (icode, pred);
   for (unsigned int i = 0; i < nops; ++i)
     add_input_operand (icode, args[opno + i]);
-  add_input_operand (icode, fallback_arg);
+  if (fallback_arg == CONST0_RTX (mode)
+      && insn_operand_matches (icode, m_ops.length (), fallback_arg))
+    add_fixed_operand (fallback_arg);
+  else
+    add_input_operand (icode, fallback_arg);
   return generate_insn (icode);
 }
 
@@ -4586,10 +4593,31 @@ function_expander::expand ()
     {
       /* The last element of these functions is always an fpm_t that must be
          written to FPMR before the call to the instruction itself. */
-      gcc_assert (args.last ()->mode == DImode);
-      emit_move_insn (gen_rtx_REG (DImode, FPM_REGNUM), args.last ());
+      rtx fpm = args.last ();
+      gcc_assert (CONST_INT_P (fpm) || GET_MODE (fpm) == DImode);
+      emit_move_insn (gen_rtx_REG (DImode, FPM_REGNUM), fpm);
     }
-  return base->expand (*this);
+  rtx result = base->expand (*this);
+  if (function_returns_void_p ())
+    gcc_assert (result == const0_rtx);
+  else
+    {
+      auto expected_mode = result_mode ();
+      if (GET_MODE_CLASS (expected_mode) == MODE_INT)
+	/* Scalar integer constants don't store a mode.
+
+	   It's OK for a variable result to have a different mode from the
+	   function return type.  In particular, some functions that return int
+	   expand into instructions that have a DImode result, with all 64 bits
+	   of the DImode being well-defined (usually zero).  */
+	gcc_assert (CONST_SCALAR_INT_P (result)
+		    || GET_MODE_CLASS (GET_MODE (result)) == MODE_INT);
+      else
+	/* In other cases, the return value should have the same mode
+	   as the return type.  */
+	gcc_assert (GET_MODE (result) == expected_mode);
+    }
+  return result;
 }
 
 /* Return a structure type that contains a single field of type FIELD_TYPE.

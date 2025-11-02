@@ -1,4 +1,4 @@
-// { dg-additional-options "-frust-compile-until=typecheck" }
+// { dg-additional-options "-w" }
 
 #![feature(intrinsics)]
 

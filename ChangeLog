@@ -1,3 +1,156 @@
+2025-10-24  Thomas Schwinge  <tschwinge@baylibre.com>
+
+	PR driver/81358
+	* Makefile.tpl: Move generation of dependencies for libatomic out
+	of loop over 'target_modules'.
+	* Makefile.in: Regenerate.
+
+2025-10-22  Josef Melcr  <jmelcr02@gmail.com>
+
+	* MAINTAINERS: Update my contact information.
+
+2025-10-20  Tamar Christina  <tamar.christina@arm.com>
+
+	* MAINTAINERS (Various Maintainers): Add myself for the vectorizer.
+
+2025-10-20  Christophe Lyon  <christophe.lyon@linaro.org>
+
+	* .forgejo/workflows/sanity-checks.yaml: New file.
+
+2025-10-20  Richard Biener  <rguenther@suse.de>
+
+	* MAINTAINERS (auto-vectorizer): Change attribution to
+	vectorizer (+ tree-if-conv).
+
+2025-10-15  Basil Milanich  <bmilanich@gmail.com>
+
+	* Makefile.tpl (distclean): Remove extraenous semicolon.
+	* Makefile.in: Rebuilt.
+
+2025-10-11  Ben Boeckel  <ben.boeckel@kitware.com>
+
+	* config-ml.in: Update patch email address.
+	* symlink-tree: Ditto.
+
+2025-10-09  Prathamesh Kulkarni  <prathameshk@nvidia.com>
+	    Matthew Malcolmson  <mmalcolmson@nvidia.com>
+
+	PR driver/81358
+	* Makefile.def: Add no_atomic=true for libraries that don't depend on
+	libatomic.
+	* Makefile.tpl: Export TARGET_CONFIGDIRS and create rule to
+	add dependencies for libatomic.
+	* configure.ac: Add libatomic to bootstrap_target_libs.
+	* Makefile.in: Regenerate.
+	* configure: Regenerate.
+
+2025-10-02  H.J. Lu  <hjl.tools@gmail.com>
+
+	* Makefile.in: Regenerated.
+	* configure: Likewise.
+	* Makefile.tpl: Synced from binutils-gdb.
+	* configure.ac: Likewise.
+	* libtool.m4: Likewise.
+
+2025-10-01  Richard Earnshaw  <rearnsha@arm.com>
+
+	* .editorconfig: Unify the GCC and GDB/binutils root config.
+
+2025-09-23  Richard Earnshaw  <rearnsha@arm.com>
+
+	* .editorconfig: Fix glob patterns.
+
+2025-09-22  Jonathan Wakely  <jwakely@redhat.com>
+
+	* .editorconfig: New file.
+
+2025-09-04  Wilco Dijkstra  <wilco.dijkstra@arm.com>
+
+	* MAINTAINERS (Reviewers): Add myself for the aarch64 port.
+
+2025-09-03  Alice Carlotti  <alice.carlotti@arm.com>
+
+	* MAINTAINERS: Add myself as an aarch64 port reviewer.
+
+2025-08-28  Yuao Ma  <c8ef@outlook.com>
+
+	* MAINTAINERS: add myself to write after approval
+
+2025-08-21  Richard Sandiford  <rdsandiford@googlemail.com>
+
+	* MAINTAINERS: Update my email address and stand down as AArch64
+	maintainer.
+
+2025-08-18  Spencer Abson  <spencer.abson@student.manchester.ac.uk>
+
+	* MAINTAINERS: Update my email address.
+
+2025-08-17  Filip Kastl  <fkastl@suse.cz>
+
+	* MAINTAINERS: Switch around Andrew Pinski's entries in
+	Contributing under DCO.
+
+2025-08-16  Mikael Pettersson  <mikpelinux@gmail.com>
+
+	* MAINTAINERS: Add myself to write after approval.
+
+2025-08-14  Avinash Jayakar  <avinashd@linux.ibm.com>
+
+	* MAINTAINERS: Add myself to write after approval.
+
+2025-08-08  Andrew Pinski  <andrew.pinski@oss.qualcomm.com>
+
+	* MAINTAINERS (Andrew Pinski): Update email address.
+
+2025-08-07  Pengfei Li  <Pengfei.Li2@arm.com>
+
+	* MAINTAINERS: Add myself.
+
+2025-08-05  Thomas Schwinge  <tschwinge@baylibre.com>
+
+	* .gitignore: Remove 'libgrust/*/target/'.
+
+2025-08-01  Luis Machado  <luis.machado.foss@gmail.com>
+
+	* MAINTAINERS: Update my e-mail address.
+
+2025-07-22  Patrick Palka  <ppalka@redhat.com>
+
+	* MAINTAINERS: Add myself as C++ front end reviewer.
+
+2025-07-07  Tamar Christina  <tamar.christina@arm.com>
+
+	* MAINTAINERS: Add myself to AArch64 pot.
+
+2025-07-04  Andrew Pinski  <quic_apinski@quicinc.com>
+
+	* MAINTAINERS: Replace tabs with spaces.
+
+2025-07-04  Alex Coplan  <alex.coplan@arm.com>
+
+	* MAINTAINERS (Reviewers): Add myself for the aarch64 port.
+
+2025-07-03  Andrew Pinski  <quic_apinski@quicinc.com>
+
+	* MAINTAINERS: Add myself as an aarch64 port reviewer.
+
+2025-06-22  Nicolas Boulenguez  <nicolas@debian.org>
+
+	PR ada/120106
+	* Makefile.tpl: Add GNATMAKE_FOR_BUILD to {HOST,BASE_TARGET}_EXPORTS
+	* Makefile.in: Regenerate.
+	* configure.ac: Set the default and substitute the variable.
+	* configure: Regenerate.
+
+2025-06-09  Kugan Vivekanandarajah  <kvivekananda@nvidia.com>
+
+	* configure.ac: Special case cpu_type for x86_64.
+	* configure: Regenerate.
+
+2025-06-09  Peter Bergner  <bergner@tenstorrent.com>
+
+	* MAINTAINERS: Update my email address and add myself to DCO.
+
 2025-05-28  Kugan Vivekanandarajah  <kvivekananda@nvidia.com>
 
 	* Makefile.def: Fix typo in cpu_type

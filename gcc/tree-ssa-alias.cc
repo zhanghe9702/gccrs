@@ -901,7 +901,9 @@ ao_ref_init_from_ptr_and_range (ao_ref *ref, tree ptr,
   if (TREE_CODE (ptr) == ADDR_EXPR)
     {
       ref->base = get_addr_base_and_unit_offset (TREE_OPERAND (ptr, 0), &t);
-      if (ref->base)
+      if (ref->base
+	  && coeffs_in_range_p (t, -HOST_WIDE_INT_MAX / BITS_PER_UNIT,
+				HOST_WIDE_INT_MAX / BITS_PER_UNIT))
 	ref->offset = BITS_PER_UNIT * t;
       else
 	{
@@ -4165,7 +4167,7 @@ attr_fnspec::verify ()
     }
 }
 
-/* Return ture if TYPE1 and TYPE2 will always give the same answer
+/* Return true if TYPE1 and TYPE2 will always give the same answer
    when compared with other types using same_type_for_tbaa.  */
 
 static bool
@@ -4189,7 +4191,7 @@ types_equal_for_same_type_for_tbaa_p (tree type1, tree type2,
     return TYPE_CANONICAL (type1) == TYPE_CANONICAL (type2);
 }
 
-/* Return ture if TYPE1 and TYPE2 will always give the same answer
+/* Return true if TYPE1 and TYPE2 will always give the same answer
    when compared with other types using same_type_for_tbaa.  */
 
 bool
@@ -4376,7 +4378,7 @@ ao_compare::compare_ao_refs (ao_ref *ref1, ao_ref *ref2,
       i++;
     }
 
-  /* For variable accesses we can not rely on offset match bellow.
+  /* For variable accesses we can not rely on offset match below.
      We know that paths are struturally same, so only check that
      starts of TBAA paths did not diverge.  */
   if (!known_eq (ref1->size, ref1->max_size)

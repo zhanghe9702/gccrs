@@ -1,3 +1,47 @@
+2025-10-16  David Faust  <david.faust@oracle.com>
+
+	* dwarf2.def (DW_TAG_GNU_annotation): Add link to wiki page
+	documenting the extension.
+	(DW_AT_GNU_annotation): Likewise.
+
+2025-10-10  Tobias Burnus  <tburnus@baylibre.com>
+
+	* hsa_ext_amd.h (enum hsa_amd_agent_info_s): Add
+	HSA_AMD_AGENT_INFO_MEMORY_PROPERTIES.
+	(enum): Add HSA_AMD_MEMORY_PROPERTY_AGENT_IS_APU.
+
+2025-10-09  David Faust  <david.faust@oracle.com>
+
+	* btf.h (BTF_KIND_DECL_TAG, BTF_KIND_TYPE_TAG) New defines.
+	(struct btf_decl_tag): New.
+
+2025-10-09  David Faust  <david.faust@oracle.com>
+
+	* ctf.h (CTF_K_DECL_TAG, CTF_K_TYPE_TAG): New defines.
+
+2025-10-09  David Faust  <david.faust@oracle.com>
+
+	* dwarf2.def (DW_TAG_GNU_annotation): New DWARF extension.
+	(DW_AT_GNU_annotation): Likewise.
+
+2025-08-17  Nathaniel Shead  <nathanieloshead@gmail.com>
+
+	PR c++/120503
+	PR c++/120824
+	* demangle.h (enum demangle_component_type): Add enumeration
+	DEMANGLE_COMPONENT_UNNAMED_ENUM.
+
+2025-07-09  Matthieu Longo  <matthieu.longo@arm.com>
+
+	* doubly-linked-list.h: New file.
+
+2025-06-20  Sosutha Sethuramapandian  <ssethuramapa@marvell.com>
+
+	PR target/110181
+	* longlong.h  [__riscv] (count_leading_zeros): Define.
+	[__riscv] (count_trailing_zeros): Likewise.
+	[__riscv] (COUNT_LEADING_ZEROS_0): Likewise.
+
 2025-06-02  Tobias Burnus  <tburnus@baylibre.com>
 
 	PR libgomp/120444

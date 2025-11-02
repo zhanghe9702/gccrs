@@ -263,7 +263,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	_M_reset(__ptr);
 
 	if constexpr (__pocma)
-	  _M_alloc = __other._M_alloc;
+	  _M_alloc = std::move(__other._M_alloc);
 
 	return *this;
       }
@@ -286,8 +286,11 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
       constexpr auto&&
       operator*(this _Self&& __self) noexcept
       {
-	__glibcxx_assert(__self._M_objp != nullptr);
-	return std::forward_like<_Self>(*((_Self)__self)._M_objp);
+	// n.b. [allocator.requirements.general] p22 implies
+	// dereferencing const pointer is same as pointer
+	const indirect& __iself = (const indirect&)__self;
+	__glibcxx_assert(__iself._M_objp != nullptr);
+	return std::forward_like<_Self>(*__iself._M_objp);
       }
 
       constexpr const_pointer
@@ -733,7 +736,7 @@ _GLIBCXX_BEGIN_NAMESPACE_VERSION
 	_M_reset(__ptr);
 
 	if constexpr (__pocma)
-	  _M_alloc = __other._M_alloc;
+	  _M_alloc = std::move(__other._M_alloc);
 
 	return *this;
       }

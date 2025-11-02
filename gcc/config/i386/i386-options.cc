@@ -132,6 +132,7 @@ along with GCC; see the file COPYING3.  If not see
 #define m_ARROWLAKE_S (HOST_WIDE_INT_1U<<PROCESSOR_ARROWLAKE_S)
 #define m_PANTHERLAKE (HOST_WIDE_INT_1U<<PROCESSOR_PANTHERLAKE)
 #define m_DIAMONDRAPIDS (HOST_WIDE_INT_1U<<PROCESSOR_DIAMONDRAPIDS)
+#define m_NOVALAKE (HOST_WIDE_INT_1U<<PROCESSOR_NOVALAKE)
 #define m_CORE_AVX512 (m_SKYLAKE_AVX512 | m_CANNONLAKE \
 		       | m_ICELAKE_CLIENT | m_ICELAKE_SERVER | m_CASCADELAKE \
 		       | m_TIGERLAKE | m_COOPERLAKE | m_SAPPHIRERAPIDS \
@@ -140,7 +141,7 @@ along with GCC; see the file COPYING3.  If not see
 #define m_CORE_AVX2 (m_HASWELL | m_SKYLAKE | m_CORE_AVX512)
 #define m_CORE_ALL (m_CORE2 | m_NEHALEM  | m_SANDYBRIDGE | m_CORE_AVX2)
 #define m_CORE_HYBRID (m_ALDERLAKE | m_ARROWLAKE | m_ARROWLAKE_S \
-		       | m_PANTHERLAKE)
+		       | m_PANTHERLAKE | m_NOVALAKE)
 #define m_GOLDMONT (HOST_WIDE_INT_1U<<PROCESSOR_GOLDMONT)
 #define m_GOLDMONT_PLUS (HOST_WIDE_INT_1U<<PROCESSOR_GOLDMONT_PLUS)
 #define m_TREMONT (HOST_WIDE_INT_1U<<PROCESSOR_TREMONT)
@@ -264,7 +265,6 @@ static struct ix86_target_opts isa2_opts[] =
   { "-mavx10.2",	OPTION_MASK_ISA2_AVX10_2 },
   { "-mamx-avx512",	OPTION_MASK_ISA2_AMX_AVX512 },
   { "-mamx-tf32",	OPTION_MASK_ISA2_AMX_TF32 },
-  { "-mamx-transpose",	OPTION_MASK_ISA2_AMX_TRANSPOSE },
   { "-mamx-fp8", 	OPTION_MASK_ISA2_AMX_FP8 },
   { "-mmovrs",		OPTION_MASK_ISA2_MOVRS },
   { "-mamx-movrs",	OPTION_MASK_ISA2_AMX_MOVRS }
@@ -401,7 +401,6 @@ ix86_target_string (HOST_WIDE_INT isa, HOST_WIDE_INT isa2,
 		    enum fpmath_unit fpmath,
 		    enum prefer_vector_width pvw,
 		    enum prefer_vector_width move_max,
-		    enum prefer_vector_width store_max,
 		    bool add_nl_p, bool add_abi_p)
 {
   /* Flag options.  */
@@ -611,10 +610,6 @@ ix86_target_string (HOST_WIDE_INT isa, HOST_WIDE_INT isa2,
   if (move_max)
     add_vector_width (move_max, "-mmove-max=");
 
-  /* Add -mstore-max= option.  */
-  if (store_max)
-    add_vector_width (store_max, "-mstore-max=");
-
   /* Any options?  */
   if (num == 0)
     return NULL;
@@ -680,8 +675,7 @@ ix86_debug_options (void)
 				   target_flags, ix86_target_flags,
 				   ix86_arch_string, ix86_tune_string,
 				   ix86_fpmath, prefer_vector_width_type,
-				   ix86_move_max, ix86_store_max,
-				   true, true);
+				   ix86_move_max, true, true);
 
   if (opts)
     {
@@ -760,63 +754,64 @@ static unsigned HOST_WIDE_INT initial_ix86_arch_features[X86_ARCH_LAST] = {
 /* This table must be in sync with enum processor_type in i386.h.  */
 static const struct processor_costs *processor_cost_table[] =
 {
-  &generic_cost,
-  &i386_cost,
-  &i486_cost,
-  &pentium_cost,
-  &lakemont_cost,
-  &pentiumpro_cost,
-  &pentium4_cost,
-  &nocona_cost,
-  &core_cost,
-  &core_cost,
-  &core_cost,
-  &core_cost,
-  &atom_cost,
-  &slm_cost,
-  &slm_cost,
-  &slm_cost,
-  &tremont_cost,
-  &alderlake_cost,
-  &alderlake_cost,
-  &alderlake_cost,
-  &skylake_cost,
-  &skylake_cost,
-  &icelake_cost,
-  &icelake_cost,
-  &icelake_cost,
-  &skylake_cost,
-  &icelake_cost,
-  &skylake_cost,
-  &icelake_cost,
-  &alderlake_cost,
-  &icelake_cost,
-  &icelake_cost,
-  &icelake_cost,
-  &alderlake_cost,
-  &alderlake_cost,
-  &alderlake_cost,
-  &icelake_cost,
-  &intel_cost,
-  &lujiazui_cost,
-  &yongfeng_cost,
-  &shijidadao_cost,
-  &geode_cost,
-  &k6_cost,
-  &athlon_cost,
-  &k8_cost,
-  &amdfam10_cost,
-  &bdver_cost,
-  &bdver_cost,
-  &bdver_cost,
-  &bdver_cost,
-  &btver1_cost,
-  &btver2_cost,
-  &znver1_cost,
-  &znver2_cost,
-  &znver3_cost,
-  &znver4_cost,
-  &znver5_cost
+  &generic_cost,	/* PROCESSOR_GENERIC.		*/
+  &i386_cost,		/* PROCESSOR_I386.		*/
+  &i486_cost,		/* PROCESSOR_I486.		*/
+  &pentium_cost,	/* PROCESSOR_PENTIUM.		*/
+  &lakemont_cost,	/* PROCESSOR_LAKEMONT.		*/
+  &pentiumpro_cost,	/* PROCESSOR_PENTIUMPRO.	*/
+  &pentium4_cost,	/* PROCESSOR_PENTIUM4.		*/
+  &nocona_cost,		/* PROCESSOR_NOCONA.		*/
+  &core_cost,		/* PROCESSOR_CORE2.		*/
+  &core_cost,		/* PROCESSOR_NEHALEM.		*/
+  &core_cost,		/* PROCESSOR_SANDYBRIDGE.	*/
+  &core_cost,		/* PROCESSOR_HASWELL.		*/
+  &atom_cost,		/* PROCESSOR_BONNELL.		*/
+  &slm_cost,		/* PROCESSOR_SILVERMONT.	*/
+  &slm_cost,		/* PROCESSOR_GOLDMONT.		*/
+  &slm_cost,		/* PROCESSOR_GOLDMONT_PLUS.	*/
+  &tremont_cost,	/* PROCESSOR_TREMONT.		*/
+  &alderlake_cost,	/* PROCESSOR_SIERRAFOREST.	*/
+  &alderlake_cost,	/* PROCESSOR_GRANDRIDGE.	*/
+  &alderlake_cost,	/* PROCESSOR_CLEARWATERFOREST.	*/
+  &skylake_cost,	/* PROCESSOR_SKYLAKE.	*/
+  &skylake_cost,	/* PROCESSOR_SKYLAKE_AVX512.	*/
+  &icelake_cost,	/* PROCESSOR_CANNONLAKE.	*/
+  &icelake_cost,	/* PROCESSOR_ICELAKE_CLIENT.	*/
+  &icelake_cost,	/* PROCESSOR_ICELAKE_SERVER.	*/
+  &skylake_cost,	/* PROCESSOR_CASCADELAKE.	*/
+  &icelake_cost,	/* PROCESSOR_TIGERLAKE.		*/
+  &skylake_cost,	/* PROCESSOR_COOPERLAKE.	*/
+  &icelake_cost,	/* PROCESSOR_SAPPHIRERAPIDS.	*/
+  &alderlake_cost,	/* PROCESSOR_ALDERLAKE.		*/
+  &icelake_cost,	/* PROCESSOR_ROCKETLAKE.	*/
+  &icelake_cost,	/* PROCESSOR_GRANITERAPIDS.	*/
+  &icelake_cost,	/* PROCESSOR_GRANITERAPIDS_D.	*/
+  &alderlake_cost,	/* PROCESSOR_ARROWLAKE.		*/
+  &alderlake_cost,	/* PROCESSOR_ARROWLAKE_S.	*/
+  &alderlake_cost,	/* PROCESSOR_PANTHERLAKE.	*/
+  &icelake_cost,	/* PROCESSOR_DIAMONDRAPIDS.	*/
+  &alderlake_cost,	/* PROCESSOR_NOVALAKE.		*/
+  &alderlake_cost,	/* PROCESSOR_INTEL.		*/
+  &lujiazui_cost,	/* PROCESSOR_LUJIAZUI.		*/
+  &yongfeng_cost,	/* PROCESSOR_YONGFENG.		*/
+  &shijidadao_cost,	/* PROCESSOR_SHIJIDADAO.	*/
+  &geode_cost,		/* PROCESSOR_GEODE.		*/
+  &k6_cost,		/* PROCESSOR_K6.		*/
+  &athlon_cost,		/* PROCESSOR_ATHLON.		*/
+  &k8_cost,		/* PROCESSOR_K8.		*/
+  &amdfam10_cost,	/* PROCESSOR_AMDFAM10.		*/
+  &bdver_cost,		/* PROCESSOR_BDVER1.		*/
+  &bdver_cost,		/* PROCESSOR_BDVER2.		*/
+  &bdver_cost,		/* PROCESSOR_BDVER3.		*/
+  &bdver_cost,		/* PROCESSOR_BDVER4.		*/
+  &btver1_cost,		/* PROCESSOR_BTVER1.		*/
+  &btver2_cost,		/* PROCESSOR_BTVER2.		*/
+  &znver1_cost,		/* PROCESSOR_ZNVER1.		*/
+  &znver2_cost,		/* PROCESSOR_ZNVER2.		*/
+  &znver3_cost,		/* PROCESSOR_ZNVER3.		*/
+  &znver4_cost,		/* PROCESSOR_ZNVER4.		*/
+  &znver5_cost		/* PROCESSOR_ZNVER5.		*/
 };
 
 /* Guarantee that the array is aligned with enum processor_type.  */
@@ -956,8 +951,7 @@ ix86_function_specific_print (FILE *file, int indent,
 			  ptr->x_target_flags, ptr->x_ix86_target_flags,
 			  NULL, NULL, ptr->x_ix86_fpmath,
 			  ptr->x_prefer_vector_width_type,
-			  ptr->x_ix86_move_max, ptr->x_ix86_store_max,
-			  false, true);
+			  ptr->x_ix86_move_max, false, true);
 
   gcc_assert (ptr->arch < PROCESSOR_max);
   fprintf (file, "%*sarch = %d (%s)\n",
@@ -1130,7 +1124,6 @@ ix86_valid_target_attribute_inner_p (tree fndecl, tree args, char *p_strings[],
     IX86_ATTR_ISA ("avx10.2", OPT_mavx10_2),
     IX86_ATTR_ISA ("amx-avx512", OPT_mamx_avx512),
     IX86_ATTR_ISA ("amx-tf32", OPT_mamx_tf32),
-    IX86_ATTR_ISA ("amx-transpose", OPT_mamx_transpose),
     IX86_ATTR_ISA ("amx-fp8", OPT_mamx_fp8),
     IX86_ATTR_ISA ("movrs", OPT_mmovrs),
     IX86_ATTR_ISA ("amx-movrs", OPT_mamx_movrs),
@@ -1171,6 +1164,10 @@ ix86_valid_target_attribute_inner_p (tree fndecl, tree args, char *p_strings[],
     IX86_ATTR_YES ("recip",
 		   OPT_mrecip,
 		   MASK_RECIP),
+
+    IX86_ATTR_YES ("80387",
+		   OPT_m80387,
+		   MASK_80387),
 
     IX86_ATTR_IX86_YES ("general-regs-only",
 			OPT_mgeneral_regs_only,
@@ -1281,6 +1278,8 @@ ix86_valid_target_attribute_inner_p (tree fndecl, tree args, char *p_strings[],
 
       else if (type == ix86_opt_yes || type == ix86_opt_no)
 	{
+	  opts_set->x_target_flags |= mask;
+
 	  if (type == ix86_opt_no)
 	    opt_set_p = !opt_set_p;
 
@@ -1362,7 +1361,9 @@ ix86_valid_target_attribute_inner_p (tree fndecl, tree args, char *p_strings[],
 	  arg_ok = opt_enum_arg_to_value (opt, p + opt_len, &value, CL_TARGET);
 	  if (arg_ok)
 	    set_option (opts, enum_opts_set, opt, value,
-			p + opt_len, DK_UNSPECIFIED, input_location,
+			p + opt_len,
+			static_cast<int> (diagnostics::kind::unspecified),
+			input_location,
 			global_dc);
 	  else
 	    {
@@ -1402,8 +1403,6 @@ ix86_valid_target_attribute_tree (tree fndecl, tree args,
   enum prefer_vector_width orig_pvw_set = opts_set->x_prefer_vector_width_type;
   enum prefer_vector_width orig_ix86_move_max_set
     = opts_set->x_ix86_move_max;
-  enum prefer_vector_width orig_ix86_store_max_set
-    = opts_set->x_ix86_store_max;
   int orig_tune_defaulted = ix86_tune_defaulted;
   int orig_arch_specified = ix86_arch_specified;
   char *option_strings[IX86_FUNCTION_SPECIFIC_MAX] = { NULL, NULL };
@@ -1484,7 +1483,6 @@ ix86_valid_target_attribute_tree (tree fndecl, tree args,
       opts_set->x_ix86_fpmath = orig_fpmath_set;
       opts_set->x_prefer_vector_width_type = orig_pvw_set;
       opts_set->x_ix86_move_max = orig_ix86_move_max_set;
-      opts_set->x_ix86_store_max = orig_ix86_store_max_set;
       opts->x_ix86_excess_precision = orig_ix86_excess_precision;
       opts->x_ix86_unsafe_math_optimizations
 	= orig_ix86_unsafe_math_optimizations;
@@ -2839,7 +2837,9 @@ ix86_option_override_internal (bool main_args_p,
 
   /* Set the default value for -mfentry.  */
   if (!opts_set->x_flag_fentry)
-    opts->x_flag_fentry = TARGET_SEH;
+    opts->x_flag_fentry = (TARGET_SEH
+			   || (TARGET_64BIT_P (opts->x_ix86_isa_flags)
+			       && ENABLE_X86_64_MFENTRY));
   else
     {
       if (!TARGET_64BIT_P (opts->x_ix86_isa_flags) && opts->x_flag_pic
@@ -2849,6 +2849,17 @@ ix86_option_override_internal (bool main_args_p,
       else if (TARGET_SEH && !opts->x_flag_fentry)
 	sorry ("%<-mno-fentry%> isn%'t compatible with SEH");
     }
+
+#ifdef OPTION_GLIBC_P
+  /* -mfentry is supported only on glibc targets.  */
+  if (!opts->x_flag_fentry
+      && OPTION_GLIBC_P (opts)
+      && (TARGET_64BIT_P (opts->x_ix86_isa_flags) || !opts->x_flag_pic)
+      && opts->x_flag_shrink_wrap
+      && opts->x_profile_flag)
+    warning (0, "%<-pg%> without %<-mfentry%> may be unreliable with "
+	     "shrink wrapping");
+#endif
 
   if (TARGET_SEH && TARGET_CALL_MS2SYSV_XLOGUES)
     sorry ("%<-mcall-ms2sysv-xlogues%> isn%'t currently supported with SEH");
@@ -2915,32 +2926,6 @@ ix86_option_override_internal (bool main_args_p,
 		opts->x_ix86_move_max = PVW_AVX256;
 	      else
 		opts->x_ix86_move_max = PVW_AVX128;
-	    }
-	}
-    }
-
-  if (opts_set->x_ix86_store_max == PVW_NONE)
-    {
-      /* Set the maximum number of bits can be stored to memory
-	 efficiently.  */
-      if (opts_set->x_prefer_vector_width_type != PVW_NONE)
-	opts->x_ix86_store_max = opts->x_prefer_vector_width_type;
-      else if (ix86_tune_features[X86_TUNE_AVX512_STORE_BY_PIECES])
-	opts->x_ix86_store_max = PVW_AVX512;
-      else if (ix86_tune_features[X86_TUNE_AVX256_STORE_BY_PIECES])
-	opts->x_ix86_store_max = PVW_AVX256;
-      else
-	{
-	  opts->x_ix86_store_max = opts->x_prefer_vector_width_type;
-	  if (opts_set->x_ix86_store_max == PVW_NONE)
-	    {
-	      if (TARGET_AVX512F_P (opts->x_ix86_isa_flags))
-		opts->x_ix86_store_max = PVW_AVX512;
-	      /* Align with vectorizer to avoid potential STLF issue.  */
-	      else if (TARGET_AVX_P (opts->x_ix86_isa_flags))
-		opts->x_ix86_store_max = PVW_AVX256;
-	      else
-		opts->x_ix86_store_max = PVW_AVX128;
 	    }
 	}
     }
@@ -3277,19 +3262,21 @@ ix86_set_func_type (tree fndecl)
      interrupt function in this case.  */
   enum call_saved_registers_type no_callee_saved_registers
     = TYPE_DEFAULT_CALL_SAVED_REGISTERS;
-  if (lookup_attribute ("no_callee_saved_registers",
-			TYPE_ATTRIBUTES (TREE_TYPE (fndecl))))
+  if (lookup_attribute ("preserve_none",
+			     TYPE_ATTRIBUTES (TREE_TYPE (fndecl))))
+    no_callee_saved_registers = TYPE_PRESERVE_NONE;
+  else if ((lookup_attribute ("no_callee_saved_registers",
+			      TYPE_ATTRIBUTES (TREE_TYPE (fndecl))))
+	   || (ix86_noreturn_no_callee_saved_registers
+	       && TREE_THIS_VOLATILE (fndecl)
+	       && optimize
+	       && !optimize_debug
+	       && (TREE_NOTHROW (fndecl) || !flag_exceptions)
+	       && !lookup_attribute ("interrupt",
+				     TYPE_ATTRIBUTES (TREE_TYPE (fndecl)))
+	       && !lookup_attribute ("no_caller_saved_registers",
+				 TYPE_ATTRIBUTES (TREE_TYPE (fndecl)))))
     no_callee_saved_registers = TYPE_NO_CALLEE_SAVED_REGISTERS;
-  else if (ix86_noreturn_no_callee_saved_registers
-	   && TREE_THIS_VOLATILE (fndecl)
-	   && optimize
-	   && !optimize_debug
-	   && (TREE_NOTHROW (fndecl) || !flag_exceptions)
-	   && !lookup_attribute ("interrupt",
-				 TYPE_ATTRIBUTES (TREE_TYPE (fndecl)))
-	   && !lookup_attribute ("no_caller_saved_registers",
-				 TYPE_ATTRIBUTES (TREE_TYPE (fndecl))))
-    no_callee_saved_registers = TYPE_NO_CALLEE_SAVED_REGISTERS_EXCEPT_BP;
 
   if (cfun->machine->func_type == TYPE_UNKNOWN)
     {
@@ -3301,9 +3288,16 @@ ix86_set_func_type (tree fndecl)
 		      "interrupt and naked attributes are not compatible");
 
 	  if (no_callee_saved_registers)
-	    error_at (DECL_SOURCE_LOCATION (fndecl),
-		      "%qs and %qs attributes are not compatible",
-		      "interrupt", "no_callee_saved_registers");
+	    {
+	      const char *attr;
+	      if (no_callee_saved_registers == TYPE_PRESERVE_NONE)
+		attr = "preserve_none";
+	      else
+		attr = "no_callee_saved_registers";
+	      error_at (DECL_SOURCE_LOCATION (fndecl),
+			"%qs and %qs attributes are not compatible",
+			"interrupt", attr);
+	    }
 
 	  int nargs = 0;
 	  for (tree arg = DECL_ARGUMENTS (fndecl);
@@ -3325,21 +3319,13 @@ ix86_set_func_type (tree fndecl)
       else
 	{
 	  cfun->machine->func_type = TYPE_NORMAL;
-	  if (lookup_attribute ("no_caller_saved_registers",
-				TYPE_ATTRIBUTES (TREE_TYPE (fndecl))))
+	  if (no_callee_saved_registers)
+	    cfun->machine->call_saved_registers
+	      = no_callee_saved_registers;
+	  else if (lookup_attribute ("no_caller_saved_registers",
+				     TYPE_ATTRIBUTES (TREE_TYPE (fndecl))))
 	    cfun->machine->call_saved_registers
 	      = TYPE_NO_CALLER_SAVED_REGISTERS;
-	  if (no_callee_saved_registers)
-	    {
-	      if (cfun->machine->call_saved_registers
-		  == TYPE_NO_CALLER_SAVED_REGISTERS)
-		error_at (DECL_SOURCE_LOCATION (fndecl),
-			  "%qs and %qs attributes are not compatible",
-			  "no_caller_saved_registers",
-			  "no_callee_saved_registers");
-	      cfun->machine->call_saved_registers
-		= no_callee_saved_registers;
-	    }
 	}
     }
 }
@@ -3528,11 +3514,25 @@ ix86_set_current_function (tree fndecl)
       || (cfun->machine->call_saved_registers
 	  == TYPE_NO_CALLER_SAVED_REGISTERS))
     {
-      /* Don't allow SSE, MMX nor x87 instructions since they
-	 may change processor state.  */
+      /* Don't allow AVX, AVX512, MMX nor x87 instructions since they
+	 may change processor state.  Don't allow SSE instructions in
+	 exception/interrupt service routines.  */
       const char *isa;
       if (TARGET_SSE)
-	isa = "SSE";
+	{
+	  if (TARGET_AVX512F)
+	    isa = "AVX512";
+	  else if (TARGET_AVX)
+	    isa = "AVX";
+	  else if (cfun->machine->func_type != TYPE_NORMAL)
+	    isa = "SSE";
+	  else if (TARGET_MMX)
+	    isa = "MMX/3Dnow";
+	  else if (TARGET_80387)
+	    isa = "80387";
+	  else
+	    isa = NULL;
+	}
       else if (TARGET_MMX)
 	isa = "MMX/3Dnow";
       else if (TARGET_80387)
@@ -3589,6 +3589,18 @@ ix86_handle_cconv_attribute (tree *node, tree name, tree args, int,
       return NULL_TREE;
     }
 
+  if (TARGET_64BIT)
+    {
+      /* Do not warn when emulating the MS ABI.  */
+      if ((TREE_CODE (*node) != FUNCTION_TYPE
+	   && TREE_CODE (*node) != METHOD_TYPE)
+	  || ix86_function_type_abi (*node) != MS_ABI)
+	warning (OPT_Wattributes, "%qE attribute ignored",
+		 name);
+      *no_add_attrs = true;
+      return NULL_TREE;
+    }
+
   /* Can combine regparm with all attributes but fastcall, and thiscall.  */
   if (is_attribute_p ("regparm", name))
     {
@@ -3601,7 +3613,7 @@ ix86_handle_cconv_attribute (tree *node, tree name, tree args, int,
 
       if (lookup_attribute ("thiscall", TYPE_ATTRIBUTES (*node)))
 	{
-	  error ("regparam and thiscall attributes are not compatible");
+	  error ("regparm and thiscall attributes are not compatible");
 	}
 
       cst = TREE_VALUE (args);
@@ -3622,19 +3634,7 @@ ix86_handle_cconv_attribute (tree *node, tree name, tree args, int,
       return NULL_TREE;
     }
 
-  if (TARGET_64BIT)
-    {
-      /* Do not warn when emulating the MS ABI.  */
-      if ((TREE_CODE (*node) != FUNCTION_TYPE
-	   && TREE_CODE (*node) != METHOD_TYPE)
-	  || ix86_function_type_abi (*node) != MS_ABI)
-	warning (OPT_Wattributes, "%qE attribute ignored",
-	         name);
-      *no_add_attrs = true;
-      return NULL_TREE;
-    }
-
-  /* Can combine fastcall with stdcall (redundant) and sseregparm.  */
+  /* Can combine fastcall with sseregparm.  */
   if (is_attribute_p ("fastcall", name))
     {
       if (lookup_attribute ("cdecl", TYPE_ATTRIBUTES (*node)))
@@ -3655,8 +3655,7 @@ ix86_handle_cconv_attribute (tree *node, tree name, tree args, int,
 	}
     }
 
-  /* Can combine stdcall with fastcall (redundant), regparm and
-     sseregparm.  */
+  /* Can combine stdcall with regparm and sseregparm.  */
   else if (is_attribute_p ("stdcall", name))
     {
       if (lookup_attribute ("cdecl", TYPE_ATTRIBUTES (*node)))
@@ -3705,6 +3704,10 @@ ix86_handle_cconv_attribute (tree *node, tree name, tree args, int,
       if (lookup_attribute ("cdecl", TYPE_ATTRIBUTES (*node)))
 	{
 	  error ("cdecl and thiscall attributes are not compatible");
+	}
+      if (lookup_attribute ("regparm", TYPE_ATTRIBUTES (*node)))
+	{
+	  error ("regparm and thiscall attributes are not compatible");
 	}
     }
 
@@ -3957,9 +3960,50 @@ ix86_handle_fndecl_attribute (tree *node, tree name, tree args, int,
 }
 
 static tree
-ix86_handle_call_saved_registers_attribute (tree *, tree, tree,
+ix86_handle_call_saved_registers_attribute (tree *node, tree name, tree,
 					    int, bool *)
 {
+  const char *attr1 = nullptr;
+  const char *attr2 = nullptr;
+
+  if (is_attribute_p ("no_callee_saved_registers", name))
+    {
+      /* Disallow preserve_none and no_caller_saved_registers
+	 attributes.  */
+      attr1 = "no_callee_saved_registers";
+      if (lookup_attribute ("preserve_none", TYPE_ATTRIBUTES (*node)))
+	attr2 = "preserve_none";
+      else if (lookup_attribute ("no_caller_saved_registers",
+				 TYPE_ATTRIBUTES (*node)))
+	attr2 = "no_caller_saved_registers";
+    }
+  else if (is_attribute_p ("no_caller_saved_registers", name))
+    {
+      /* Disallow preserve_none and no_callee_saved_registers
+	 attributes.  */
+      attr1 = "no_caller_saved_registers";
+      if (lookup_attribute ("preserve_none", TYPE_ATTRIBUTES (*node)))
+	attr2 = "preserve_none";
+      else if (lookup_attribute ("no_callee_saved_registers",
+				 TYPE_ATTRIBUTES (*node)))
+	attr2 = "no_callee_saved_registers";
+    }
+  else if (is_attribute_p ("preserve_none", name))
+    {
+      /* Disallow no_callee_saved_registers and no_caller_saved_registers
+	 attributes.  */
+      attr1 = "preserve_none";
+      if (lookup_attribute ("no_callee_saved_registers",
+			    TYPE_ATTRIBUTES (*node)))
+	attr2 = "no_caller_saved_registers";
+      else if (lookup_attribute ("no_callee_saved_registers",
+				 TYPE_ATTRIBUTES (*node)))
+	attr2 = "no_callee_saved_registers";
+    }
+
+  if (attr2)
+    error ("%qs and %qs attributes are not compatible", attr1, attr2);
+
   return NULL_TREE;
 }
 
@@ -4120,6 +4164,8 @@ static const attribute_spec ix86_gnu_attributes[] =
   { "interrupt", 0, 0, false, true, true, false,
     ix86_handle_interrupt_attribute, NULL },
   { "no_caller_saved_registers", 0, 0, false, true, true, false,
+    ix86_handle_call_saved_registers_attribute, NULL },
+  { "preserve_none", 0, 0, false, true, true, true,
     ix86_handle_call_saved_registers_attribute, NULL },
   { "no_callee_saved_registers", 0, 0, false, true, true, true,
     ix86_handle_call_saved_registers_attribute, NULL },

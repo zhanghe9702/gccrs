@@ -280,6 +280,12 @@ package body Aspects is
 
    function Get_Aspect_Id (Name : Name_Id) return Aspect_Id is
    begin
+      --  Aspect Unsigned_Base_Range temporarily disabled
+
+      if Name = Name_Unsigned_Base_Range then
+         return No_Aspect;
+      end if;
+
       return Aspect_Id_Hash_Table.Get (Name);
    end Get_Aspect_Id;
 
@@ -572,7 +578,7 @@ package body Aspects is
         return UAD_Pragma_Map_Header
       is (UAD_Pragma_Map_Header (Chars mod UAD_Pragma_Map_Size));
 
-      package UAD_Pragma_Map is new GNAT.Htable.Simple_Htable
+      package UAD_Pragma_Map is new GNAT.HTable.Simple_HTable
         (Header_Num => UAD_Pragma_Map_Header,
          Key        => Name_Id,
          Element    => Opt_N_Pragma_Id,

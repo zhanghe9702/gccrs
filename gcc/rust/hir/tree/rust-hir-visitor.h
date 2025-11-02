@@ -88,6 +88,7 @@ public:
   virtual void visit (AsyncBlockExpr &expr) = 0;
   virtual void visit (InlineAsm &expr) = 0;
   virtual void visit (LlvmInlineAsm &expr) = 0;
+  virtual void visit (OffsetOf &expr) = 0;
   virtual void visit (TypeParam &param) = 0;
   virtual void visit (ConstGenericParam &param) = 0;
   virtual void visit (LifetimeWhereClauseItem &item) = 0;
@@ -131,12 +132,14 @@ public:
   virtual void visit (StructPatternFieldIdentPat &field) = 0;
   virtual void visit (StructPatternFieldIdent &field) = 0;
   virtual void visit (StructPattern &pattern) = 0;
-  virtual void visit (TupleStructItemsNoRange &tuple_items) = 0;
-  virtual void visit (TupleStructItemsRange &tuple_items) = 0;
+  virtual void visit (TupleStructItemsNoRest &tuple_items) = 0;
+  virtual void visit (TupleStructItemsHasRest &tuple_items) = 0;
   virtual void visit (TupleStructPattern &pattern) = 0;
-  virtual void visit (TuplePatternItemsMultiple &tuple_items) = 0;
-  virtual void visit (TuplePatternItemsRanged &tuple_items) = 0;
+  virtual void visit (TuplePatternItemsNoRest &tuple_items) = 0;
+  virtual void visit (TuplePatternItemsHasRest &tuple_items) = 0;
   virtual void visit (TuplePattern &pattern) = 0;
+  virtual void visit (SlicePatternItemsNoRest &items) = 0;
+  virtual void visit (SlicePatternItemsHasRest &items) = 0;
   virtual void visit (SlicePattern &pattern) = 0;
   virtual void visit (AltPattern &pattern) = 0;
   virtual void visit (EmptyStmt &stmt) = 0;
@@ -254,6 +257,7 @@ public:
   virtual void visit (AsyncBlockExpr &node) override { walk (node); }
   virtual void visit (InlineAsm &node) override { walk (node); }
   virtual void visit (LlvmInlineAsm &node) override { walk (node); }
+  virtual void visit (OffsetOf &node) override { walk (node); }
   virtual void visit (TypeParam &node) override { walk (node); }
   virtual void visit (ConstGenericParam &node) override { walk (node); }
   virtual void visit (LifetimeWhereClauseItem &node) override { walk (node); }
@@ -303,12 +307,14 @@ public:
   }
   virtual void visit (StructPatternFieldIdent &node) override { walk (node); }
   virtual void visit (StructPattern &node) override { walk (node); }
-  virtual void visit (TupleStructItemsNoRange &node) override { walk (node); }
-  virtual void visit (TupleStructItemsRange &node) override { walk (node); }
+  virtual void visit (TupleStructItemsNoRest &node) override { walk (node); }
+  virtual void visit (TupleStructItemsHasRest &node) override { walk (node); }
   virtual void visit (TupleStructPattern &node) override { walk (node); }
-  virtual void visit (TuplePatternItemsMultiple &node) override { walk (node); }
-  virtual void visit (TuplePatternItemsRanged &node) override { walk (node); }
+  virtual void visit (TuplePatternItemsNoRest &node) override { walk (node); }
+  virtual void visit (TuplePatternItemsHasRest &node) override { walk (node); }
   virtual void visit (TuplePattern &node) override { walk (node); }
+  virtual void visit (SlicePatternItemsNoRest &node) override { walk (node); }
+  virtual void visit (SlicePatternItemsHasRest &node) override { walk (node); }
   virtual void visit (SlicePattern &node) override { walk (node); }
   virtual void visit (AltPattern &node) override { walk (node); }
   virtual void visit (EmptyStmt &node) override { walk (node); }
@@ -392,6 +398,7 @@ protected:
   virtual void walk (AsyncBlockExpr &) final;
   virtual void walk (InlineAsm &) final;
   virtual void walk (LlvmInlineAsm &) final;
+  virtual void walk (OffsetOf &) final;
   virtual void walk (TypeParam &) final;
   virtual void walk (ConstGenericParam &) final;
   virtual void walk (LifetimeWhereClauseItem &) final;
@@ -435,12 +442,14 @@ protected:
   virtual void walk (StructPatternFieldIdentPat &) final;
   virtual void walk (StructPatternFieldIdent &) final;
   virtual void walk (StructPattern &) final;
-  virtual void walk (TupleStructItemsNoRange &) final;
-  virtual void walk (TupleStructItemsRange &) final;
+  virtual void walk (TupleStructItemsNoRest &) final;
+  virtual void walk (TupleStructItemsHasRest &) final;
   virtual void walk (TupleStructPattern &) final;
-  virtual void walk (TuplePatternItemsMultiple &) final;
-  virtual void walk (TuplePatternItemsRanged &) final;
+  virtual void walk (TuplePatternItemsNoRest &) final;
+  virtual void walk (TuplePatternItemsHasRest &) final;
   virtual void walk (TuplePattern &) final;
+  virtual void walk (SlicePatternItemsNoRest &) final;
+  virtual void walk (SlicePatternItemsHasRest &) final;
   virtual void walk (SlicePattern &) final;
   virtual void walk (AltPattern &) final;
   virtual void walk (EmptyStmt &) final;
@@ -531,6 +540,7 @@ public:
   virtual void visit (AsyncBlockExpr &) override {}
   virtual void visit (InlineAsm &) override {}
   virtual void visit (LlvmInlineAsm &) override {}
+  virtual void visit (OffsetOf &) override {}
 
   virtual void visit (TypeParam &) override {}
   virtual void visit (ConstGenericParam &) override {}
@@ -582,13 +592,16 @@ public:
   virtual void visit (StructPatternFieldIdent &) override {}
   virtual void visit (StructPattern &) override {}
 
-  virtual void visit (TupleStructItemsNoRange &) override {}
-  virtual void visit (TupleStructItemsRange &) override {}
+  virtual void visit (TupleStructItemsNoRest &) override {}
+  virtual void visit (TupleStructItemsHasRest &) override {}
   virtual void visit (TupleStructPattern &) override {}
 
-  virtual void visit (TuplePatternItemsMultiple &) override {}
-  virtual void visit (TuplePatternItemsRanged &) override {}
+  virtual void visit (TuplePatternItemsNoRest &) override {}
+  virtual void visit (TuplePatternItemsHasRest &) override {}
   virtual void visit (TuplePattern &) override {}
+
+  virtual void visit (SlicePatternItemsNoRest &) override {}
+  virtual void visit (SlicePatternItemsHasRest &) override {}
   virtual void visit (SlicePattern &) override {}
   virtual void visit (AltPattern &) override {}
 
@@ -754,6 +767,7 @@ public:
   virtual void visit (IfExpr &expr) = 0;
   virtual void visit (IfExprConseqElse &expr) = 0;
   virtual void visit (InlineAsm &expr) = 0;
+  virtual void visit (OffsetOf &expr) = 0;
   virtual void visit (LlvmInlineAsm &expr) = 0;
   virtual void visit (MatchExpr &expr) = 0;
   virtual void visit (AwaitExpr &expr) = 0;

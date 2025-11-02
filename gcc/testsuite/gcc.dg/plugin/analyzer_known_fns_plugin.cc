@@ -1,12 +1,8 @@
 /* Proof-of-concept of a -fanalyzer plugin to handle known functions.  */
 /* { dg-options "-g" } */
 
-#define INCLUDE_MEMORY
-#define INCLUDE_VECTOR
+#include "analyzer/common.h"
 #include "gcc-plugin.h"
-#include "config.h"
-#include "system.h"
-#include "coretypes.h"
 #include "tree.h"
 #include "function.h"
 #include "basic-block.h"
@@ -22,8 +18,8 @@
 #include "target.h"
 #include "fold-const.h"
 #include "tree-pretty-print.h"
-#include "diagnostic-color.h"
-#include "diagnostic-metadata.h"
+#include "diagnostics/color.h"
+#include "diagnostics/metadata.h"
 #include "tristate.h"
 #include "bitmap.h"
 #include "selftest.h"

@@ -563,35 +563,6 @@ if test $ac_cv_std_swap_in_utility = yes; then
   [Define if <utility> defines std::swap.])
 fi
 
-# Check whether compiler is affected by placement new aliasing bug (PR 29286).
-# If the host compiler is affected by the bug, and we build with optimization
-# enabled (which happens e.g. when cross-compiling), the pool allocator may
-# get miscompiled.  Use -fno-strict-aliasing to work around this problem.
-# Since there is no reliable feature check for the presence of this bug,
-# we simply use a GCC version number check.  (This should never trigger for
-# stages 2 or 3 of a native bootstrap.)
-aliasing_flags=
-if test "$GCC" = yes; then
-  saved_CXXFLAGS="$CXXFLAGS"
-
-  # The following test compilation will succeed if and only if $CXX accepts
-  # -fno-strict-aliasing *and* is older than GCC 4.3.
-  CXXFLAGS="$CXXFLAGS -fno-strict-aliasing"
-  AC_MSG_CHECKING([whether $CXX is affected by placement new aliasing bug])
-  AC_COMPILE_IFELSE([AC_LANG_SOURCE([
-#if (__GNUC__ > 4) || (__GNUC__ == 4 && __GNUC_MINOR__ >= 3)
-#error compiler not affected by placement new aliasing bug
-#endif
-])],
-    [AC_MSG_RESULT([yes]); aliasing_flags='-fno-strict-aliasing'],
-    [AC_MSG_RESULT([no])])
-
-  CXXFLAGS="$saved_CXXFLAGS"
-fi
-AC_SUBST(aliasing_flags)
-
-
-
 # ---------------------
 # Warnings and checking
 # ---------------------
@@ -1397,7 +1368,7 @@ AC_CHECK_HEADERS(ext/hash_map)
 ZW_CREATE_DEPDIR
 AC_CONFIG_COMMANDS([gccdepdir],[
   ${CONFIG_SHELL-/bin/sh} $ac_aux_dir/mkinstalldirs build/$DEPDIR
-  for lang in $subdirs c-family common analyzer text-art rtl-ssa sym-exec
+  for lang in $subdirs c-family common analyzer custom-sarif-properties diagnostics text-art rtl-ssa sym-exec
   do
       ${CONFIG_SHELL-/bin/sh} $ac_aux_dir/mkinstalldirs $lang/$DEPDIR
   done], [subdirs="$subdirs" ac_aux_dir=$ac_aux_dir DEPDIR=$DEPDIR])
@@ -2472,6 +2443,17 @@ for f in $tm_rust_file; do
   esac
 done
 
+tm_jit_file_list=
+tm_jit_include_list=
+for f in $tm_jit_file; do
+  case $f in
+    * )
+       tm_jit_file_list="${tm_jit_file_list} \$(srcdir)/config/$f"
+       tm_jit_include_list="${tm_jit_include_list} config/$f"
+       ;;
+  esac
+done
+
 xm_file_list=
 xm_include_list=
 for f in $xm_file; do
@@ -3336,8 +3318,8 @@ case $target in
 esac
 
 # Check if we have .[us]leb128, and support symbol arithmetic with it.
-# Older versions of GAS and some non-GNU assemblers, have a bugs handling
-# these directives, even when they appear to accept them.
+# Older versions of GAS and some non-GNU assemblers have bugs in handling
+# of these directives, even when they appear to accept them.
 gcc_GAS_CHECK_FEATURE([.sleb128 and .uleb128], gcc_cv_as_leb128,
 [$check_leb128_asflags],
 [	.data
@@ -3357,6 +3339,11 @@ if test "x$gcc_cv_objdump" != x; then
 elif test "x$gcc_cv_otool" != x; then
   if $gcc_cv_otool -d conftest.o 2>/dev/null \
      | grep '04 80 0a 8e 78 80 80 80 80 80 80 80 80 80 01' >/dev/null; then
+    gcc_cv_as_leb128=yes
+  fi
+elif test "x$gcc_cv_readelf" != x; then
+  if $gcc_cv_readelf -x .data conftest.o 2>/dev/null \
+     | grep '04800a8e 78808080 80808080 808001' >/dev/null; then
     gcc_cv_as_leb128=yes
   fi
 else
@@ -3426,6 +3413,12 @@ gcc_GAS_CHECK_FEATURE([cfi directives], gcc_cv_as_cfi_directive,,
 	  ;;
       esac
     fi
+    ;;
+  x86_64-*-darwin* | i?86-*-darwin* | powerpc*-darwin-*)
+    # Darwin has assemblers that support .cfi_ instructions, but that then
+    # triggers emission of compact unwind which has incompatibilities with
+    # current GCC output.
+    gcc_cv_as_cfi_directive=no
     ;;
   *-*-*)
     gcc_cv_as_cfi_directive=yes
@@ -4467,6 +4460,15 @@ case "$target" in
 	ldr     x0, [[x2, #:gotpage_lo15:globalsym]]
     ],,[AC_DEFINE(HAVE_AS_SMALL_PIC_RELOCS, 1,
 	[Define if your assembler supports relocs needed by -fpic.])])
+    # Check if we have binutils support for AEABI build attributes.
+    gcc_GAS_CHECK_FEATURE([support of AEABI build attributes], gcc_cv_as_aarch64_aeabi_build_attributes,,
+    [
+	.aeabi_subsection aeabi_feature_and_bits, optional, ULEB128
+	.aeabi_attribute Tag_Feature_BTI, 1
+	.aeabi_attribute Tag_Feature_PAC, 1
+	.aeabi_attribute Tag_Feature_GCS, 1
+    ],,[AC_DEFINE(HAVE_AS_AEABI_BUILD_ATTRIBUTES, 1,
+	[Define if your assembler supports AEABI build attributes.])])
     # Enable Branch Target Identification Mechanism and Return Address
     # Signing by default.
     AC_ARG_ENABLE(standard-branch-protection,
@@ -6412,6 +6414,7 @@ if test x"$ld64_flag" = x"yes"; then
   gcc_cv_ld64_platform_version=0
   gcc_cv_ld64_macos_version_min=0
   gcc_cv_ld64_demangle=0
+  gcc_cv_ld64_no_deduplicate=0
 
   if test "$build" = "$host"; then
     darwin_try_test=1
@@ -6438,6 +6441,9 @@ if test x"$ld64_flag" = x"yes"; then
     fi
     if test "$gcc_cv_ld64_major" -ge 236; then
       gcc_cv_ld64_export_dynamic=1
+    fi
+    if test "$gcc_cv_ld64_major" -ge 262; then
+      gcc_cv_ld64_no_deduplicate=1
     fi
     if test "$gcc_cv_ld64_major" -ge 512; then
       gcc_cv_ld64_platform_version=1
@@ -6467,6 +6473,13 @@ if test x"$ld64_flag" = x"yes"; then
     fi
     AC_MSG_RESULT($gcc_cv_ld64_export_dynamic)
 
+    AC_MSG_CHECKING(linker for -no_deduplicate support)
+    gcc_cv_ld64_no_deduplicate=1
+    if $gcc_cv_ld -no_deduplicate < /dev/null 2>&1 | grep 'unknown option' > /dev/null; then
+      gcc_cv_ld64_no_deduplicate=0
+    fi
+    AC_MSG_RESULT($gcc_cv_ld64_no_deduplicate)
+
     AC_MSG_CHECKING(linker for -platform_version support)
     gcc_cv_ld64_platform_version=1
     if $gcc_cv_ld -platform_version macos 10.5 0.0 < /dev/null 2>&1 | grep 'unknown option' > /dev/null; then
@@ -6492,6 +6505,9 @@ if test x"$ld64_flag" = x"yes"; then
 
   AC_DEFINE_UNQUOTED(LD64_HAS_EXPORT_DYNAMIC, $gcc_cv_ld64_export_dynamic,
   [Define to 1 if ld64 supports '-export_dynamic'.])
+
+  AC_DEFINE_UNQUOTED(LD64_HAS_NO_DEDUPLICATE, $gcc_cv_ld64_no_deduplicate,
+  [Define to 1 if ld64 supports '-no_deduplicate'.])
 
   AC_DEFINE_UNQUOTED(LD64_HAS_PLATFORM_VERSION, $gcc_cv_ld64_platform_version,
   [Define to 1 if ld64 supports '-platform_version'.])
@@ -6784,7 +6800,7 @@ ie0:	.space 8
 	.global _start
 	.text
 _start:
-	addis 9,13,ie0@got@tprel@ha
+	addis 9,2,ie0@got@tprel@ha
 	ld 9,ie0@got@tprel@l(9)
 EOF
       if $gcc_cv_as -a64 -o conftest.o conftest.s > /dev/null 2>&1 \
@@ -7043,6 +7059,11 @@ if test x$enable_default_ssp = xyes ; then
       [Define if your target supports default stack protector and it is enabled.])
 fi
 AC_SUBST([enable_default_ssp])
+
+if echo " ${TARGET_CONFIGDIRS} " | grep " libatomic " > /dev/null 2>&1 ; then
+  AC_DEFINE(TARGET_PROVIDES_LIBATOMIC, 1,
+	    [Define if libatomic is built for the target.])
+fi
 
 # Test for <sys/sdt.h> on the target.
 GCC_TARGET_TEMPLATE([HAVE_SYS_SDT_H])
@@ -7591,6 +7612,8 @@ AC_SUBST(tm_d_file_list)
 AC_SUBST(tm_d_include_list)
 AC_SUBST(tm_rust_file_list)
 AC_SUBST(tm_rust_include_list)
+AC_SUBST(tm_jit_file_list)
+AC_SUBST(tm_jit_include_list)
 AC_SUBST(xm_file_list)
 AC_SUBST(xm_include_list)
 AC_SUBST(xm_defines)
@@ -7600,6 +7623,7 @@ AC_SUBST(cxx_target_objs)
 AC_SUBST(fortran_target_objs)
 AC_SUBST(d_target_objs)
 AC_SUBST(rust_target_objs)
+AC_SUBST(jit_target_objs)
 AC_SUBST(target_cpu_default)
 
 AC_SUBST_FILE(language_hooks)
@@ -7962,6 +7986,41 @@ standards-compatible mode on s390 targets.])
   fi
   ;;
 esac
+
+# On x86-64, when profiling is enabled with shrink wrapping, the mcount
+# call may not be placed at the function entry after
+#	pushq %rbp
+#	movq %rsp,%rbp
+# As the result, the profile data may be skewed which makes PGO less
+# effective:
+# https://gcc.gnu.org/bugzilla/show_bug.cgi?id=120881
+# Enable -mfentry by default on x86-64 to put the profiling counter call
+# before the prologue.
+AC_ARG_ENABLE(x86-64-mfentry,
+  [AS_HELP_STRING([--enable-x86-64-mfentry],
+		  [enable -mfentry by default on x86-64 targets])],
+  [case "${enableval}" in
+   yes | no | auto)
+     enable_x86_64_mfentry=$enableval
+     ;;
+   *)
+     AC_MSG_ERROR(['$enable_x86_64_mfentry' is an invalid value for --enable-x86-64-mfentry.  Valid choices are 'yes', 'no' and 'auto'.])
+     ;;
+   esac],
+  [enable_x86_64_mfentry=auto])
+
+if test x"$enable_x86_64_mfentry" = xauto; then
+  case "${target}" in
+  i?86-*-*gnu* | x86_64-*-*gnu*)
+    # Enable -mfentry by default with glibc on x86.
+    enable_x86_64_mfentry=yes
+    ;;
+  esac
+fi
+
+gif=`if test x$enable_x86_64_mfentry = xyes; then echo 1; else echo 0; fi`
+AC_DEFINE_UNQUOTED(ENABLE_X86_64_MFENTRY, $gif,
+[Define to enable -mfentry by default on x86-64.])
 
 # Check if the linker supports '-z now'
 ld_now_support=no

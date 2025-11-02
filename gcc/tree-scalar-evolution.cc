@@ -670,6 +670,17 @@ scev_dfs::add_to_evolution_1 (tree chrec_before, tree to_add, gimple *at_stmt)
 	  to_add = chrec_convert (type, to_add, at_stmt);
 	  right = chrec_convert_rhs (type, right, at_stmt);
 	  right = chrec_fold_plus (chrec_type (right), right, to_add);
+	  /* When we have an evolution in a non-wrapping type and
+	     in the process of accumulating CHREC_RIGHT there was
+	     overflow this indicates in the association that happened
+	     in building the CHREC clearly involved UB.  Avoid this.
+	     In building a CHREC we basically turn (a + INCR1) + INCR2
+	     into a + (INCR1 + INCR2) which is not always valid.
+	     Note this check only catches few invalid cases.  */
+	  if ((INTEGRAL_TYPE_P (type) && ! TYPE_OVERFLOW_WRAPS (type))
+	      && TREE_CODE (right) == INTEGER_CST
+	      && TREE_OVERFLOW (right))
+	    return chrec_dont_know;
 	  return build_polynomial_chrec (var, left, right);
 	}
       else
@@ -1343,7 +1354,37 @@ simplify_peeled_chrec (class loop *loop, tree arg, tree init_cond)
   hash_map<tree, name_expansion *> *peeled_chrec_map = NULL;
 
   ev = instantiate_parameters (loop, analyze_scalar_evolution (loop, arg));
-  if (ev == NULL_TREE || TREE_CODE (ev) != POLYNOMIAL_CHREC)
+  if (ev == NULL_TREE)
+    return chrec_dont_know;
+
+  /* Support the case where we can derive the original CHREC from the
+     peeled one if that's a converted other IV.  This can be done
+     when the original unpeeled converted IV does not overflow and
+     has the same initial value.  */
+  if (CONVERT_EXPR_P (ev)
+      && TREE_CODE (init_cond) == INTEGER_CST
+      && TREE_CODE (TREE_OPERAND (ev, 0)) == POLYNOMIAL_CHREC
+      && (TYPE_PRECISION (TREE_TYPE (ev))
+	  > TYPE_PRECISION (TREE_TYPE (TREE_OPERAND (ev, 0))))
+      && (!TYPE_UNSIGNED (TREE_TYPE (ev))
+	  || TYPE_UNSIGNED (TREE_TYPE (TREE_OPERAND (ev, 0)))))
+    {
+      left = CHREC_LEFT (TREE_OPERAND (ev, 0));
+      right = CHREC_RIGHT (TREE_OPERAND (ev, 0));
+      tree left_before = chrec_fold_minus (TREE_TYPE (TREE_OPERAND (ev, 0)),
+					   left, right);
+      if (TREE_CODE (left_before) == INTEGER_CST
+	  && wi::to_widest (init_cond) == wi::to_widest (left_before)
+	  && !scev_probably_wraps_p (NULL_TREE, left_before, right, NULL,
+				     loop, false))
+	return build_polynomial_chrec (loop->num, init_cond,
+				       chrec_convert (TREE_TYPE (ev),
+						      right, NULL,
+						      false, NULL_TREE));
+      return chrec_dont_know;
+    }
+
+  if (TREE_CODE (ev) != POLYNOMIAL_CHREC)
     return chrec_dont_know;
 
   left = CHREC_LEFT (ev);
@@ -3088,7 +3129,7 @@ iv_can_overflow_p (class loop *loop, tree type, tree base, tree step)
   type_max = wi::max_value (type);
 
   /* Just sanity check that we don't see values out of the range of the type.
-     In this case the arithmetics bellow would overflow.  */
+     In this case the arithmetics below would overflow.  */
   gcc_checking_assert (wi::ge_p (base_min, type_min, sgn)
 		       && wi::le_p (base_max, type_max, sgn));
 

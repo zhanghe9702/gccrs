@@ -128,6 +128,7 @@ class InlineAsmRegClass;
 class InlineAsmOperand;
 class InlineAsm;
 class LlvmInlineAsm;
+class OffsetOf;
 
 // rust-stmt.h
 class EmptyStmt;
@@ -198,13 +199,15 @@ class StructPatternFieldIdentPat;
 class StructPatternFieldIdent;
 class StructPattern;
 class TupleStructItems;
-class TupleStructItemsNoRange;
-class TupleStructItemsRange;
+class TupleStructItemsNoRest;
+class TupleStructItemsHasRest;
 class TupleStructPattern;
 class TuplePatternItems;
-class TuplePatternItemsMultiple;
-class TuplePatternItemsRanged;
+class TuplePatternItemsNoRest;
+class TuplePatternItemsHasRest;
 class TuplePattern;
+class SlicePatternItemsNoRest;
+class SlicePatternItemsHasRest;
 class SlicePattern;
 class AltPattern;
 

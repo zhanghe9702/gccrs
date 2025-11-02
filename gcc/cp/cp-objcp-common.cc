@@ -588,6 +588,7 @@ names_builtin_p (const char *name)
     case RID_BUILTIN_BIT_CAST:
     case RID_OFFSETOF:
     case RID_VA_ARG:
+    case RID_C23_VA_START:
       return 1;
     case RID_BUILTIN_OPERATOR_NEW:
     case RID_BUILTIN_OPERATOR_DELETE:
@@ -659,6 +660,7 @@ cp_common_init_ts (void)
   MARK_TS_EXP (IF_STMT);
   MARK_TS_EXP (OMP_DEPOBJ);
   MARK_TS_EXP (RANGE_FOR_STMT);
+  MARK_TS_EXP (TEMPLATE_FOR_STMT);
   MARK_TS_EXP (TRY_BLOCK);
   MARK_TS_EXP (USING_STMT);
 

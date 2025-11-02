@@ -101,32 +101,11 @@ TopLevel::go (AST::Crate &crate)
 void
 TopLevel::visit (AST::Module &module)
 {
-  // Parse the module's items if they haven't been expanded and the file
-  // should be parsed (i.e isn't hidden behind an untrue or impossible cfg
-  // directive
-  // TODO: make sure this is right
-  // TODO: avoid loading items if cfg attributes are present?
-  //       might not be needed if this runs after early resolution?
-  // This was copied from the old early resolver method
-  // 'accumulate_escaped_macros'
-  if (module.get_kind () == AST::Module::UNLOADED)
-    {
-      module.load_items ();
-
-      // If the module was previously unloaded, then we don't want to visit it
-      // this time around as the CfgStrip hasn't run on its inner items yet.
-      // Skip it for now, mark the visitor as dirty and try again
-
-      dirty = true;
-
-      return;
-    }
-
   DefaultResolver::visit (module);
 
-  if (Analysis::Mappings::get ().lookup_ast_module (module.get_node_id ())
+  if (Analysis::Mappings::get ().lookup_glob_container (module.get_node_id ())
       == tl::nullopt)
-    Analysis::Mappings::get ().insert_ast_module (&module);
+    Analysis::Mappings::get ().insert_glob_container (&module);
 }
 
 void
@@ -360,6 +339,13 @@ TopLevel::visit (AST::Enum &enum_item)
 		       Namespace::Types);
 
   DefaultResolver::visit (enum_item);
+
+  // Since enums can be containers for imports, we need to insert them like we
+  // do for modules
+  if (Analysis::Mappings::get ().lookup_glob_container (
+	enum_item.get_node_id ())
+      == tl::nullopt)
+    Analysis::Mappings::get ().insert_glob_container (&enum_item);
 }
 
 void

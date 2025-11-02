@@ -22,6 +22,7 @@ along with GCC; see the file COPYING3.  If not see
 
 #include "tree-core.h"
 #include "options.h"
+#include "vec.h"
 
 /* Convert a target-independent built-in function code to a combined_fn.  */
 
@@ -899,6 +900,19 @@ extern void omp_clause_range_check_failed (const_tree, const char *, int,
 #define UNUSED_LABEL_P(NODE) \
   (LABEL_DECL_CHECK (NODE)->base.default_def_flag)
 
+/* Label used to goto around artificial .DEFERRED_INIT code for
+   C++ -ftrivial-auto-var-init= purposes with a goto around it.
+   VACUOUS_INIT_LABEL_P flag is used on the lab LABEL_DECL in:
+   goto lab;
+   lab1:
+   v1 = .DEFERRED_INIT (...);
+   v2 = .DEFERRED_INIT (...);
+   lab2:
+   v3 = .DEFERRED_INIT (...);
+   lab:  */
+#define VACUOUS_INIT_LABEL_P(NODE) \
+  (LABEL_DECL_CHECK (NODE)->base.nothrow_flag)
+
 /* Nonzero means this expression is volatile in the C sense:
    its address should be of type `volatile WHATEVER *'.
    In other words, the declared item is volatile qualified.
@@ -1077,6 +1091,11 @@ extern void omp_clause_range_check_failed (const_tree, const char *, int,
    aggregate, (as created by anon_aggr_name_format).  */
 #define IDENTIFIER_ANON_P(NODE) \
   (IDENTIFIER_NODE_CHECK (NODE)->base.private_flag)
+
+/* Nonzero indicates an IDENTIFIER_NODE that names an internal label.
+   The prefix used to generate the label can be found on the TREE_CHAIN.  */
+#define IDENTIFIER_INTERNAL_P(NODE) \
+  (IDENTIFIER_NODE_CHECK (NODE)->base.volatile_flag)
 
 /* Nonzero in an IDENTIFIER_NODE if the name is a local alias, whose
    uses are to be substituted for uses of the TREE_CHAINed identifier.  */
@@ -1653,6 +1672,16 @@ class auto_suppress_location_wrappers
   != UNKNOWN_LOCATION)
 #define OMP_CLAUSE_LOCATION(NODE)  (OMP_CLAUSE_CHECK (NODE))->omp_clause.locus
 
+#define OMP_CLAUSE_HAS_ITERATORS(NODE) \
+  ((OMP_CLAUSE_CODE (NODE) == OMP_CLAUSE_FROM				\
+    || OMP_CLAUSE_CODE (NODE) == OMP_CLAUSE_TO				\
+    || OMP_CLAUSE_CODE (NODE) == OMP_CLAUSE_MAP)			\
+   && OMP_CLAUSE_ITERATORS (NODE))
+#define OMP_CLAUSE_ITERATORS(NODE) \
+  OMP_CLAUSE_OPERAND (OMP_CLAUSE_RANGE_CHECK (OMP_CLAUSE_CHECK (NODE),	\
+					      OMP_CLAUSE_FROM,		\
+					      OMP_CLAUSE_MAP), 2)
+
 /* True on OMP_FOR and other OpenMP/OpenACC looping constructs if the loop nest
    is non-rectangular.  */
 #define OMP_FOR_NON_RECTANGULAR(NODE) \
@@ -2226,6 +2255,12 @@ class auto_suppress_location_wrappers
 
 #define OMP_CLAUSE_OPERAND(NODE, I)				\
 	OMP_CLAUSE_ELT_CHECK (NODE, I)
+
+/* True if the clause decl NODE contains an OpenMP iterator.  */
+#define OMP_ITERATOR_DECL_P(NODE) \
+	(TREE_CODE (NODE) == TREE_LIST				\
+	 && TREE_PURPOSE (NODE)					\
+	 && TREE_CODE (TREE_PURPOSE (NODE)) == TREE_VEC)
 
 /* In a BLOCK (scope) node:
    Variables declared in the scope NODE.  */
@@ -4744,6 +4779,8 @@ vector_cst_encoded_nelts (const_tree t)
   return VECTOR_CST_NPATTERNS (t) * VECTOR_CST_NELTS_PER_PATTERN (t);
 }
 
+extern tree generate_internal_label (const char *);
+extern const char *prefix_for_internal_label (tree label);
 extern tree decl_assembler_name (tree);
 extern void overwrite_decl_assembler_name (tree decl, tree name);
 extern tree decl_comdat_group (const_tree);
@@ -5016,6 +5053,8 @@ extern bool tree_fits_shwi_p (const_tree) ATTRIBUTE_PURE;
 extern bool tree_fits_poly_int64_p (const_tree) ATTRIBUTE_PURE;
 extern bool tree_fits_uhwi_p (const_tree) ATTRIBUTE_PURE;
 extern bool tree_fits_poly_uint64_p (const_tree) ATTRIBUTE_PURE;
+extern bool tree_fits_sanitize_code_type_p (const_tree) ATTRIBUTE_PURE;
+
 
 extern HOST_WIDE_INT tree_to_shwi (const_tree)
   ATTRIBUTE_NONNULL (1) ATTRIBUTE_PURE;
@@ -5024,6 +5063,8 @@ extern poly_int64 tree_to_poly_int64 (const_tree)
 extern unsigned HOST_WIDE_INT tree_to_uhwi (const_tree)
   ATTRIBUTE_NONNULL (1) ATTRIBUTE_PURE;
 extern poly_uint64 tree_to_poly_uint64 (const_tree)
+  ATTRIBUTE_NONNULL (1) ATTRIBUTE_PURE;
+extern sanitize_code_type tree_to_sanitize_code_type (const_tree)
   ATTRIBUTE_NONNULL (1) ATTRIBUTE_PURE;
 #if !defined ENABLE_TREE_CHECKING && (GCC_VERSION >= 4003)
 extern inline __attribute__ ((__gnu_inline__)) HOST_WIDE_INT
@@ -5339,6 +5380,10 @@ extern tree staticp (tree);
    and only evaluate EXP once.  */
 
 extern tree save_expr (tree);
+
+/* Return true if T is an object with invariant address.  */
+
+extern bool address_invariant_p (tree);
 
 /* Return true if T is function-invariant.  */
 
@@ -5900,7 +5945,7 @@ extern bool gimple_canonical_types_compatible_p (const_tree, const_tree,
 						 bool trust_type_canonical = true);
 extern bool type_with_interoperable_signedness (const_tree);
 extern bitmap get_nonnull_args (const_tree);
-extern int get_range_pos_neg (tree);
+extern int get_range_pos_neg (tree, gimple * = NULL);
 
 /* Return true for a valid pair of new and delete operators.  */
 extern bool valid_new_delete_pair_p (tree, tree, bool * = NULL);
@@ -5928,7 +5973,7 @@ tree_code_for_canonical_type_merging (enum tree_code code)
   return code;
 }
 
-/* Return ture if get_alias_set care about TYPE_CANONICAL of given type.
+/* Return true if get_alias_set care about TYPE_CANONICAL of given type.
    We don't define the types for pointers, arrays and vectors.  The reason is
    that pointers are handled specially: ptr_type_node accesses conflict with
    accesses to all other pointers.  This is done by alias.cc.
@@ -6973,6 +7018,15 @@ fndecl_built_in_p (const_tree node, built_in_function name1, F... names)
 					name1, names...));
 }
 
+/* Returns true if the function decl NODE is an alloca. */
+inline bool
+fndecl_builtin_alloc_p (const_tree node)
+{
+  if (!fndecl_built_in_p (node, BUILT_IN_NORMAL))
+    return false;
+  return ALLOCA_FUNCTION_CODE_P (DECL_FUNCTION_CODE (node));
+}
+
 /* A struct for encapsulating location information about an operator
    and the operation built from it.
 
@@ -7069,6 +7123,24 @@ extern unsigned fndecl_dealloc_argno (tree);
    object or pointer.  Otherwise return null.  */
 extern tree get_attr_nonstring_decl (tree, tree * = NULL);
 
-extern int get_target_clone_attr_len (tree);
+/* Returns the version string for a decl with target_version attribute.
+   Returns an invalid string_slice if no attribute is present.  */
+extern string_slice get_target_version (const tree);
+/* Returns a vector of the version strings from a target_clones attribute on
+   a decl.  Can also record the number of default versions found.
+   Use bool to control whether or not the results should
+   be filtered with TARGET_CHECK_TARGET_CLONE_VERSION.  */
+extern auto_vec<string_slice> get_clone_versions
+  (const tree,int * = NULL, bool = true);
+/* Returns a vector of the version strings from a target_clones attribute
+   directly.  Additionally takes a bool to control whether or not the results
+   should be filtered with TARGET_CHECK_TARGET_CLONE_VERSION.  */
+extern auto_vec<string_slice> get_clone_attr_versions
+  (const tree, int *, bool = true);
+
+/* Checks if two decls define any overlapping versions.  */
+extern bool disjoint_version_decls (tree, tree);
+/* Checks if two overlapping decls are not mergeable.  */
+extern bool diagnose_versioned_decls (tree, tree);
 
 #endif  /* GCC_TREE_H  */

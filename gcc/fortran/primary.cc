@@ -2071,6 +2071,23 @@ gfc_match_actual_arglist (int sub_flag, gfc_actual_arglist **argp, bool pdt)
 	    }
 	}
 
+    /* PDT kind expressions are acceptable as initialization expressions.
+       However, intrinsics with a KIND argument reject them. Convert the
+       expression now by use of the component initializer.  */
+    if (tail->expr
+	&& tail->expr->expr_type == EXPR_VARIABLE
+	&& gfc_expr_attr (tail->expr).pdt_kind)
+      {
+	gfc_ref *ref;
+	gfc_expr *tmp = NULL;
+	for (ref = tail->expr->ref; ref; ref = ref->next)
+	     if (!ref->next && ref->type == REF_COMPONENT
+		 && ref->u.c.component->attr.pdt_kind
+		 && ref->u.c.component->initializer)
+	  tmp = gfc_copy_expr (ref->u.c.component->initializer);
+	if (tmp)
+	  gfc_replace_expr (tail->expr, tmp);
+      }
 
     next:
       if (gfc_match_char (')') == MATCH_YES)
@@ -3057,12 +3074,14 @@ gfc_variable_attr (gfc_expr *expr, gfc_typespec *ts)
 
 	if (comp->ts.type == BT_CLASS)
 	  {
+	    dimension = CLASS_DATA (comp)->attr.dimension;
 	    codimension = CLASS_DATA (comp)->attr.codimension;
 	    pointer = CLASS_DATA (comp)->attr.class_pointer;
 	    allocatable = CLASS_DATA (comp)->attr.allocatable;
 	  }
 	else
 	  {
+	    dimension = comp->attr.dimension;
 	    codimension = comp->attr.codimension;
 	    if (expr->ts.type == BT_CLASS && strcmp (comp->name, "_data") == 0)
 	      pointer = comp->attr.class_pointer;
@@ -4053,6 +4072,98 @@ gfc_match_rvalue (gfc_expr **result)
 	{
 	  m = MATCH_ERROR;
 	  break;
+	}
+
+      /* Check to see if this is a PDT constructor.  The format of these
+	 constructors is rather unusual:
+		name [(type_params)](component_values)
+	 where, component_values excludes the type_params. With the present
+	 gfortran representation this is rather awkward because the two are not
+	 distinguished, other than by their attributes.  */
+      if (sym->attr.generic)
+	{
+	  gfc_symtree *pdt_st;
+	  gfc_symbol *pdt_sym;
+	  gfc_actual_arglist *ctr_arglist = NULL, *tmp;
+	  gfc_component *c;
+
+	  /* Obtain the template.  */
+	  gfc_find_sym_tree (gfc_dt_upper_string (name), NULL, 1, &pdt_st);
+	  if (pdt_st && pdt_st->n.sym && pdt_st->n.sym->attr.pdt_template)
+	    {
+	      bool type_spec_list = false;
+	      pdt_sym = pdt_st->n.sym;
+	      gfc_gobble_whitespace ();
+	      /* Look for a second actual arglist. If present, try the first
+		 for the type parameters. Otherwise, or if there is no match,
+		 depend on default values by setting the type parameters to
+		 NULL.  */
+	      if (gfc_peek_ascii_char() == '(')
+		type_spec_list = true;
+	      if (!actual_arglist && !type_spec_list)
+		{
+		  gfc_error_now ("F2023 R755: The empty type specification at %C "
+				 "is not allowed");
+		  m = MATCH_ERROR;
+		  break;
+		}
+	      /* Generate this instance using the type parameters from the
+		 first argument list and return the parameter list in
+		 ctr_arglist.  */
+	      m = gfc_get_pdt_instance (actual_arglist, &pdt_sym, &ctr_arglist);
+	      if (m != MATCH_YES || !ctr_arglist)
+		{
+		  if (ctr_arglist)
+		    gfc_free_actual_arglist (ctr_arglist);
+		  /* See if all the type parameters have default values.  */
+		  m = gfc_get_pdt_instance (NULL, &pdt_sym, &ctr_arglist);
+		  if (m != MATCH_YES)
+		    {
+		      m = MATCH_NO;
+		      break;
+		    }
+		}
+
+	      /* Now match the component_values if the type parameters were
+		 present.  */
+	      if (type_spec_list)
+		{
+		  m = gfc_match_actual_arglist (0, &actual_arglist);
+		  if (m != MATCH_YES)
+		    {
+		      m = MATCH_ERROR;
+		      break;
+		    }
+		}
+
+	      /* Make sure that the component names are in place so that this
+		 list can be safely appended to the type parameters.  */
+	      tmp = actual_arglist;
+	      for (c = pdt_sym->components; c && tmp; c = c->next)
+		{
+		  if (c->attr.pdt_kind || c->attr.pdt_len)
+		    continue;
+		  tmp->name = c->name;
+		  tmp = tmp->next;
+		}
+
+	      gfc_find_sym_tree (gfc_dt_lower_string (pdt_sym->name),
+				 NULL, 1, &symtree);
+	      if (!symtree)
+		{
+		  gfc_get_ha_sym_tree (gfc_dt_lower_string (pdt_sym->name) ,
+				       &symtree);
+		  symtree->n.sym = pdt_sym;
+		  symtree->n.sym->ts.u.derived = pdt_sym;
+		  symtree->n.sym->ts.type = BT_DERIVED;
+		}
+
+	      /* Append the type_params and the component_values.  */
+	      for (tmp = ctr_arglist; tmp && tmp->next;)
+		tmp = tmp->next;
+	      tmp->next = actual_arglist;
+	      actual_arglist = ctr_arglist;
+	    }
 	}
 
       gfc_get_ha_sym_tree (name, &symtree);	/* Can't fail */

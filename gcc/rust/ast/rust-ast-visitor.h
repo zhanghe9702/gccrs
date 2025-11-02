@@ -73,7 +73,7 @@ public:
   virtual void visit (AttrInputLiteral &attr_input) = 0;
   virtual void visit (AttrInputMacro &attr_input) = 0;
   virtual void visit (MetaItemLitExpr &meta_item) = 0;
-  virtual void visit (MetaItemPathLit &meta_item) = 0;
+  virtual void visit (MetaItemPathExpr &meta_item) = 0;
   virtual void visit (BorrowExpr &expr) = 0;
   virtual void visit (DereferenceExpr &expr) = 0;
   virtual void visit (ErrorPropagationExpr &expr) = 0;
@@ -164,7 +164,6 @@ public:
   virtual void visit (Union &union_item) = 0;
   virtual void visit (ConstantItem &const_item) = 0;
   virtual void visit (StaticItem &static_item) = 0;
-  virtual void visit (TraitItemConst &item) = 0;
   virtual void visit (TraitItemType &item) = 0;
   virtual void visit (Trait &trait) = 0;
   virtual void visit (InherentImpl &impl) = 0;
@@ -204,14 +203,16 @@ public:
   virtual void visit (StructPatternFieldIdent &field) = 0;
   virtual void visit (StructPattern &pattern) = 0;
   // virtual void visit(TupleStructItems& tuple_items) = 0;
-  virtual void visit (TupleStructItemsNoRange &tuple_items) = 0;
-  virtual void visit (TupleStructItemsRange &tuple_items) = 0;
+  virtual void visit (TupleStructItemsNoRest &tuple_items) = 0;
+  virtual void visit (TupleStructItemsHasRest &tuple_items) = 0;
   virtual void visit (TupleStructPattern &pattern) = 0;
   // virtual void visit(TuplePatternItems& tuple_items) = 0;
-  virtual void visit (TuplePatternItemsMultiple &tuple_items) = 0;
-  virtual void visit (TuplePatternItemsRanged &tuple_items) = 0;
+  virtual void visit (TuplePatternItemsNoRest &tuple_items) = 0;
+  virtual void visit (TuplePatternItemsHasRest &tuple_items) = 0;
   virtual void visit (TuplePattern &pattern) = 0;
   virtual void visit (GroupedPattern &pattern) = 0;
+  virtual void visit (SlicePatternItemsNoRest &items) = 0;
+  virtual void visit (SlicePatternItemsHasRest &items) = 0;
   virtual void visit (SlicePattern &pattern) = 0;
   virtual void visit (AltPattern &pattern) = 0;
 
@@ -238,6 +239,7 @@ public:
 
   // special AST nodes for certain builtin macros such as `asm!()`
   virtual void visit (FormatArgs &fmt) = 0;
+  virtual void visit (OffsetOf &fmt) = 0;
 
   // TODO: rust-cond-compilation.h visiting? not currently used
 };
@@ -267,7 +269,7 @@ public:
   virtual void visit (AST::AttrInputLiteral &attr_input) override;
   virtual void visit (AST::AttrInputMacro &attr_input) override;
   virtual void visit (AST::MetaItemLitExpr &meta_item) override;
-  virtual void visit (AST::MetaItemPathLit &meta_item) override;
+  virtual void visit (AST::MetaItemPathExpr &meta_item) override;
   virtual void visit (AST::BorrowExpr &expr) override;
   virtual void visit (AST::DereferenceExpr &expr) override;
   virtual void visit (AST::ErrorPropagationExpr &expr) override;
@@ -346,7 +348,6 @@ public:
   virtual void visit (AST::Union &union_item) override;
   virtual void visit (AST::ConstantItem &const_item) override;
   virtual void visit (AST::StaticItem &static_item) override;
-  virtual void visit (AST::TraitItemConst &item) override;
   virtual void visit (AST::TraitItemType &item) override;
   virtual void visit (AST::Trait &trait) override;
   virtual void visit (AST::InherentImpl &impl) override;
@@ -378,13 +379,15 @@ public:
   virtual void visit (AST::StructPatternFieldIdentPat &field) override;
   virtual void visit (AST::StructPatternFieldIdent &field) override;
   virtual void visit (AST::StructPattern &pattern) override;
-  virtual void visit (AST::TupleStructItemsNoRange &tuple_items) override;
-  virtual void visit (AST::TupleStructItemsRange &tuple_items) override;
+  virtual void visit (AST::TupleStructItemsNoRest &tuple_items) override;
+  virtual void visit (AST::TupleStructItemsHasRest &tuple_items) override;
   virtual void visit (AST::TupleStructPattern &pattern) override;
-  virtual void visit (AST::TuplePatternItemsMultiple &tuple_items) override;
-  virtual void visit (AST::TuplePatternItemsRanged &tuple_items) override;
+  virtual void visit (AST::TuplePatternItemsNoRest &tuple_items) override;
+  virtual void visit (AST::TuplePatternItemsHasRest &tuple_items) override;
   virtual void visit (AST::TuplePattern &pattern) override;
   virtual void visit (AST::GroupedPattern &pattern) override;
+  virtual void visit (AST::SlicePatternItemsNoRest &items) override;
+  virtual void visit (AST::SlicePatternItemsHasRest &items) override;
   virtual void visit (AST::SlicePattern &pattern) override;
   virtual void visit (AST::AltPattern &pattern) override;
   virtual void visit (AST::EmptyStmt &stmt) override;
@@ -408,6 +411,7 @@ public:
   virtual void visit (AST::FunctionParam &param) override;
   virtual void visit (AST::VariadicParam &param) override;
   virtual void visit (AST::FormatArgs &fmt) override;
+  virtual void visit (AST::OffsetOf &fmt) override;
 
   template <typename T> void visit (T &node) { node.accept_vis (*this); }
 

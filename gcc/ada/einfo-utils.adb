@@ -669,6 +669,8 @@ package body Einfo.Utils is
             Result := Id;
          else
             pragma Assert (Is_Type (Id));
+            --  ...because Is_Base_Type returns True for nontypes
+
             Result := Etype (Id);
             if False then
                pragma Assert (Is_Base_Type (Result));
@@ -679,8 +681,28 @@ package body Einfo.Utils is
                --  expect.
             end if;
          end if;
+
+         --  pragma Assert (Result = Base_Type_If_Set (Id));
+         --  Disabled; too slow
       end return;
    end Base_Type;
+
+   ----------------------
+   -- Base_Type_If_Set --
+   ----------------------
+
+   function Base_Type_If_Set (Id : E) return Opt_N_Entity_Id is
+   begin
+      return Result : Opt_N_Entity_Id do
+         if Is_Base_Type (Id) then
+            Result := Id;
+         elsif Field_Is_Initial_Zero (Id, F_Etype) then
+            Result := Empty;
+         else
+            Result := Etype (Id);
+         end if;
+      end return;
+   end Base_Type_If_Set;
 
    ----------------------
    -- Declaration_Node --
@@ -1037,6 +1059,7 @@ package body Einfo.Utils is
                   Id = Pragma_Contract_Cases            or else
                   Id = Pragma_Exceptional_Cases         or else
                   Id = Pragma_Exit_Cases                or else
+                  Id = Pragma_Program_Exit              or else
                   Id = Pragma_Subprogram_Variant        or else
                   Id = Pragma_Test_Case;
 
@@ -1373,29 +1396,42 @@ package body Einfo.Utils is
    ------------------------------
 
    function Implementation_Base_Type (Id : E) return E is
-      Bastyp : Entity_Id;
       Imptyp : Entity_Id;
-
    begin
-      Bastyp := Base_Type (Id);
+      return Result : E := Base_Type (Id) do
+         if Is_Incomplete_Or_Private_Type (Result) then
+            Imptyp := Underlying_Type (Result);
 
-      if Is_Incomplete_Or_Private_Type (Bastyp) then
-         Imptyp := Underlying_Type (Bastyp);
+            --  If we have an implementation type, return its Base_Type.
 
-         --  If we have an implementation type, then just return it,
-         --  otherwise we return the Base_Type anyway. This can only
-         --  happen in error situations and should avoid some error bombs.
-
-         if Present (Imptyp) then
-            return Base_Type (Imptyp);
-         else
-            return Bastyp;
+            if Present (Imptyp) then
+               Result := Base_Type (Imptyp);
+            end if;
          end if;
 
-      else
-         return Bastyp;
-      end if;
+         --  pragma Assert (Result = Implementation_Base_Type_If_Set (Id));
+         --  Disabled; too slow
+      end return;
    end Implementation_Base_Type;
+
+   -------------------------------------
+   -- Implementation_Base_Type_If_Set --
+   -------------------------------------
+
+   function Implementation_Base_Type_If_Set (Id : E) return Opt_N_Entity_Id is
+      Imptyp : Entity_Id;
+   begin
+      return Result : Opt_N_Entity_Id := Base_Type_If_Set (Id) do
+         if Present (Result) and then Is_Incomplete_Or_Private_Type (Result)
+         then
+            Imptyp := Underlying_Type (Result);
+
+            if Present (Imptyp) then
+               Result := Base_Type_If_Set (Imptyp);
+            end if;
+         end if;
+      end return;
+   end Implementation_Base_Type_If_Set;
 
    -------------------------
    -- Invariant_Procedure --
@@ -2344,6 +2380,25 @@ package body Einfo.Utils is
    begin
       pragma Assert (Is_Type (Id));
 
+      if Nkind (Associated_Node_For_Itype (Id)) = N_Subtype_Declaration then
+         declare
+            Associated_Id : constant Entity_Id :=
+              Defining_Identifier (Associated_Node_For_Itype (Id));
+         begin
+            --  Avoid Itype/predicate problems by looking through Itypes.
+            --  We never introduce new predicates for Itypes, so doing this
+            --  will never cause us to incorrectly overlook a predicate.
+            --  It is not clear whether the FE needs this fix, but
+            --  GNATProve does (note that GNATProve calls Predicate_Function).
+
+            if Id /= Associated_Id
+              and then Base_Type (Id) = Base_Type (Associated_Id)
+            then
+               return Predicate_Function (Associated_Id);
+            end if;
+         end;
+      end if;
+
       --  If type is private and has a completion, predicate may be defined on
       --  the full view.
 
@@ -2375,6 +2430,37 @@ package body Einfo.Utils is
             if Ekind (Subp_Id) = E_Function
               and then Is_Predicate_Function (Subp_Id)
             then
+               --  We may have incorrectly looked through predicate-bearing
+               --  subtypes when going from a private subtype to its full
+               --  view, so compensate for that case. Unfortunately,
+               --  Subp_Id might not be analyzed at this point, so we
+               --  use a crude works-most-of-the-time text-based
+               --  test to detect the case where Id is a subtype (declared by
+               --  a subtype declaration) and no predicate was explicitly
+               --  specified for Id. Ugh. ???
+
+               if Nkind (Parent (Id)) = N_Subtype_Declaration
+                 -- 1st choice ...
+                 --   and then Etype (First_Entity (Subp_Id)) /= Id
+                 -- but that doesn't work if Subp_Id is not analyzed.
+
+                 --  so we settle for 2nd choice, ignoring cases like
+                 --  "subtype Foo is Pkg.Foo;" where distinct subtypes
+                 --  have the same identifier:
+                 --
+                 and then Get_Name_String (Chars (Subp_Id)) /=
+                          Get_Name_String (Chars (Id)) & "Predicate"
+               then
+                  declare
+                     Mark : Node_Id := Subtype_Indication (Parent (Id));
+                  begin
+                     if Nkind (Mark) = N_Subtype_Indication then
+                        Mark := Subtype_Mark (Mark);
+                     end if;
+                     return Predicate_Function (Entity (Mark));
+                  end;
+               end if;
+
                return Subp_Id;
             end if;
 
@@ -2489,51 +2575,74 @@ package body Einfo.Utils is
    ---------------
 
    function Root_Type (Id : E) return E is
-      T, Etyp : Entity_Id;
+      Etyp : Entity_Id;
 
    begin
-      pragma Assert (Nkind (Id) in N_Entity);
+      return T : E := Base_Type (Id) do
+         if Ekind (T) = E_Class_Wide_Type then
+            T := Etype (T);
+         else
+            loop
+               Etyp := Etype (T);
 
-      T := Base_Type (Id);
+               exit when T = Etyp
+                 or else
+                   (Is_Private_Type (T) and then Etyp = Full_View (T))
+                 or else
+                   (Is_Private_Type (Etyp) and then Full_View (Etyp) = T);
 
-      if Ekind (T) = E_Class_Wide_Type then
-         return Etype (T);
+               T := Etyp;
 
-      --  Other cases
+               --  Quit if there is a circularity in the inheritance chain.
+               --  This happens in some error situations and we do not want
+               --  to get stuck in this loop.
 
-      else
-         loop
-            Etyp := Etype (T);
+               if T = Base_Type (Id) then
+                  Check_Error_Detected;
+                  exit;
+               end if;
+            end loop;
+         end if;
 
-            if T = Etyp then
-               return T;
-
-            --  Following test catches some error cases resulting from
-            --  previous errors.
-
-            elsif No (Etyp) then
-               Check_Error_Detected;
-               return T;
-
-            elsif Is_Private_Type (T) and then Etyp = Full_View (T) then
-               return T;
-
-            elsif Is_Private_Type (Etyp) and then Full_View (Etyp) = T then
-               return T;
-            end if;
-
-            T := Etyp;
-
-            --  Return if there is a circularity in the inheritance chain. This
-            --  happens in some error situations and we do not want to get
-            --  stuck in this loop.
-
-            if T = Base_Type (Id) then
-               return T;
-            end if;
-         end loop;
-      end if;
+         --  pragma Assert (T = Root_Type_If_Set (Id));
+         --  Disabled; too slow
+      end return;
    end Root_Type;
+
+   ----------------------
+   -- Root_Type_If_Set --
+   ----------------------
+
+   function Root_Type_If_Set (Id : E) return Opt_N_Entity_Id is
+      Etyp : Entity_Id;
+
+   begin
+      return T : Opt_N_Entity_Id := Base_Type_If_Set (Id) do
+         if Ekind (T) = E_Class_Wide_Type then
+            T := Etype (T);
+         else
+            loop
+               Etyp := Etype (T);
+
+               exit when No (Etyp) or else T = Etyp
+                 or else
+                   (Is_Private_Type (T) and then Etyp = Full_View (T))
+                 or else
+                   (Is_Private_Type (Etyp) and then Full_View (Etyp) = T);
+
+               T := Etyp;
+
+               --  Quit if there is a circularity in the inheritance chain.
+               --  This happens in some error situations and we do not want
+               --  to get stuck in this loop.
+
+               if T = Base_Type_If_Set (Id) then
+                  exit;
+               end if;
+            end loop;
+         end if;
+      end return;
+   end Root_Type_If_Set;
 
    ---------------------
    -- Safe_Emax_Value --
@@ -2638,14 +2747,7 @@ package body Einfo.Utils is
       --  anonymous protected types, since protected types always have the
       --  default convention.
 
-      if Present (Etype (E))
-        and then (Is_Object (E)
-
-                   --  Allow E_Void (happens for pragma Convention appearing
-                   --  in the middle of a record applying to a component)
-
-                   or else Ekind (E) = E_Void)
-      then
+      if Present (Etype (E)) and then Is_Object (E) then
          declare
             Typ : constant Entity_Id := Etype (E);
 
@@ -2809,7 +2911,6 @@ package body Einfo.Utils is
       end if;
 
       Subp_Elmt := First_Elmt (Subps);
-      Prepend_Elmt (V, Subps);
 
       --  Check for a duplicate predication function
 
@@ -2819,11 +2920,17 @@ package body Einfo.Utils is
          if Ekind (Subp_Id) = E_Function
            and then Is_Predicate_Function (Subp_Id)
          then
-            raise Program_Error;
+            if V = Subp_Id then
+               return;
+            else
+               raise Program_Error;
+            end if;
          end if;
 
          Next_Elmt (Subp_Elmt);
       end loop;
+
+      Prepend_Elmt (V, Subps);
    end Set_Predicate_Function;
 
    -----------------
@@ -2961,7 +3068,7 @@ package body Einfo.Utils is
    -- Underlying_Type --
    ---------------------
 
-   function Underlying_Type (Id : E) return Entity_Id is
+   function Underlying_Type (Id : E) return Opt_N_Entity_Id is
    begin
       --  For record_with_private the underlying type is always the direct full
       --  view. Never try to take the full view of the parent it does not make

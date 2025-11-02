@@ -48,7 +48,7 @@ bool is_range_formatter_spec_for(CharT const* spec, Rg&& rg)
 }
 
 #define WIDEN_(C, S) ::std::__format::_Widen<C>(S, L##S)
-#define WIDEN(S) WIDEN_(_CharT, S)
+#define WIDEN(S) WIDEN_(CharT, S)
 
 void
 test_format_string()
@@ -81,14 +81,14 @@ test_format_string()
 template<typename Range>
 void test_output()
 {
-  using _CharT = std::ranges::range_value_t<Range>;
-  auto makeRange = [](std::basic_string<_CharT>& s) {
+  using CharT = std::ranges::range_value_t<Range>;
+  auto makeRange = [](std::basic_string<CharT>& s) {
     return Range(s.data(), s.data() + s.size());
   };
-  std::basic_string<_CharT> res;
+  std::basic_string<CharT> res;
   size_t size = 0;
 
-  std::basic_string<_CharT> s1 = WIDEN("abcd");
+  std::basic_string<CharT> s1 = WIDEN("abcd");
   res = std::format(WIDEN("{}"), makeRange(s1));
   VERIFY( res == WIDEN("['a', 'b', 'c', 'd']") );
 
@@ -122,7 +122,7 @@ void test_output()
   res = std::format(WIDEN("{:=^8s}"), makeRange(s1));
   VERIFY( res == WIDEN("==abcd==") );
 
-  std::basic_string<_CharT> s2(512, static_cast<_CharT>('a'));
+  std::basic_string<CharT> s2(512, static_cast<CharT>('a'));
   res = std::format(WIDEN("{:=^8s}"), makeRange(s2));
   VERIFY( res == s2 );
 
@@ -279,6 +279,93 @@ void test_padding()
   VERIFY( strip_prefix(resv, 46, '*') );
   VERIFY( strip_quotes(resv) );
   VERIFY( resv == in );
+
+  // width is 5, size is 15
+  in = "\u2160\u2161\u2162\u2163\u2164";
+  in += in; // width is 10, size is 30
+  in += in; // width is 20, size is 60
+  in += in; // width is 40, size is 120
+  in += in; // width is 80, size is 240
+  in += in; // width is 160, size is 480
+
+  lc.assign_range(in);
+
+  resv = res = std::format("{:s}", lc);
+  VERIFY( resv == in );
+
+  resv = res = std::format("{:*>10s}", lc);
+  VERIFY( resv == in );
+
+  resv = res = std::format("{:*>200s}", lc);
+  VERIFY( strip_prefix(resv, 40, '*') );
+  VERIFY( resv == in );
+
+  resv = res = std::format("{:?s}", lc);
+  VERIFY( strip_quotes(resv) );
+  VERIFY( resv == in );
+
+  resv = res = std::format("{:*>10?s}", lc);
+  VERIFY( strip_quotes(resv) );
+  VERIFY( resv == in );
+
+  resv = res = std::format("{:*>200?s}", lc);
+  VERIFY( strip_prefix(resv, 38, '*') );
+  VERIFY( strip_quotes(resv) );
+  VERIFY( resv == in );
+}
+
+void test_escaping()
+{
+  std::string res;
+  std::string_view resv;
+
+  const std::string_view input =
+    "\t\n\r\\\""
+    "\u008a"     // Cc, Control,             Line Tabulation Set,
+    "\u00ad"     // Cf, Format,              Soft Hyphen
+    "\u1d3d"     // Lm, Modifier letter,     Modifier Letter Capital Ou
+    "\u00a0"     // Zs, Space Separator,     No-Break Space (NBSP)
+    "\u2029"     // Zp, Paragraph Separator, Paragraph Separator
+    "\U0001f984" // So, Other Symbol,        Unicorn Face
+  ;
+  const std::string_view output =
+   R"(\t\n\r\\\")"
+   R"(\u{8a})"
+   R"(\u{ad})"
+   "\u1d3d"
+   R"(\u{a0})"
+   R"(\u{2029})"
+   "\U0001f984";
+
+  std::forward_list<char> lc(std::from_range, input);
+  resv = res = std::format("{:s}", lc);
+  VERIFY( resv == input );
+  resv = res = std::format("{:?s}", lc);
+  VERIFY( strip_quotes(resv) );
+  VERIFY( resv == output );
+
+  // width is 5, size is 15
+  std::string in = "\u2160\u2161\u2162\u2163\u2164";
+  in += in; // width is 10, size is 30
+  in += in; // width is 20, size is 60
+  in += in; // width is 40, size is 120
+  in += in; // width is 80, size is 240
+  in += in; // width is 160, size is 480
+  std::string_view inv = in;
+
+  // last charcter is incomplete
+  lc.assign_range(inv.substr(0, 479));
+
+  // non-debug format, chars copied as is
+  resv = res = std::format("{:s}", lc);
+  VERIFY( resv == inv.substr(0, 479) );
+
+  // debug-format, incomplete code-point sequence is esaped
+  resv = res = std::format("{:?s}", lc);
+  VERIFY( strip_quotes(resv) );
+  VERIFY( resv.substr(0, 477) == inv.substr(0, 477) );
+  resv.remove_prefix(477);
+  VERIFY( resv == R"(\x{e2}\x{85})" );
 }
 
 int main()
@@ -287,4 +374,6 @@ int main()
   test_outputs<char>();
   test_outputs<wchar_t>();
   test_nested();
+  test_padding();
+  test_escaping();
 }

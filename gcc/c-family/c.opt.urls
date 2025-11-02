@@ -139,6 +139,9 @@ UrlSuffix(gcc/Warning-Options.html#index-Warray-parameter)
 Wassign-intercept
 UrlSuffix(gcc/Objective-C-and-Objective-C_002b_002b-Dialect-Options.html#index-Wassign-intercept)
 
+Wabbreviated-auto-in-template-arg
+UrlSuffix(gcc/C_002b_002b-Dialect-Options.html#index-Wabbreviated-auto-in-template-arg)
+
 Wbad-function-cast
 UrlSuffix(gcc/Warning-Options.html#index-Wbad-function-cast)
 
@@ -186,6 +189,9 @@ UrlSuffix(gcc/Warning-Options.html#index-Wc_002b_002b17-compat)
 
 Wc++20-compat
 UrlSuffix(gcc/Warning-Options.html#index-Wc_002b_002b20-compat)
+
+Wc++26-compat
+UrlSuffix(gcc/Warning-Options.html#index-Wc_002b_002b26-compat)
 
 Wc++11-extensions
 UrlSuffix(gcc/Warning-Options.html#index-Wc_002b_002b11-extensions)
@@ -370,6 +376,9 @@ UrlSuffix(gcc/C_002b_002b-Dialect-Options.html#index-Wexceptions)
 Wexpansion-to-defined
 UrlSuffix(gcc/Warning-Options.html#index-Wexpansion-to-defined)
 
+Wexternal-tu-local
+UrlSuffix(gcc/C_002b_002b-Dialect-Options.html#index-Wexternal-tu-local)
+
 Wextra
 UrlSuffix(gcc/Warning-Options.html#index-Wextra) LangUrlSuffix_D(gdc/Warnings.html#index-Wextra) LangUrlSuffix_Fortran(gfortran/Error-and-Warning-Options.html#index-Wextra)
 
@@ -502,6 +511,9 @@ UrlSuffix(gcc/Warning-Options.html#index-Winvalid-utf8)
 Wjump-misses-init
 UrlSuffix(gcc/Warning-Options.html#index-Wjump-misses-init)
 
+Wkeyword-macro
+UrlSuffix(gcc/Warning-Options.html#index-Wkeyword-macro)
+
 Wleading-whitespace=
 UrlSuffix(gcc/Warning-Options.html#index-Wleading-whitespace_003d)
 
@@ -586,6 +598,9 @@ UrlSuffix(gcc/Warning-Options.html#index-Wmultichar)
 Wmultiple-inheritance
 UrlSuffix(gcc/C_002b_002b-Dialect-Options.html#index-Wmultiple-inheritance)
 
+Wmultiple-parameter-fwd-decl-lists
+UrlSuffix(gcc/Warning-Options.html#index-Wmultiple-parameter-fwd-decl-lists)
+
 Wmultistatement-macros
 UrlSuffix(gcc/Warning-Options.html#index-Wmultistatement-macros)
 
@@ -603,6 +618,9 @@ UrlSuffix(gcc/C_002b_002b-Dialect-Options.html#index-Wno-noexcept)
 
 Wnoexcept-type
 UrlSuffix(gcc/C_002b_002b-Dialect-Options.html#index-Wno-noexcept-type)
+
+Wnon-c-typedef-for-linkage
+UrlSuffix(gcc/C_002b_002b-Dialect-Options.html#index-Wno-non-c-typedef-for-linkage)
 
 Wnon-template-friend
 UrlSuffix(gcc/C_002b_002b-Dialect-Options.html#index-Wno-non-template-friend)
@@ -755,6 +773,12 @@ UrlSuffix(gcc/Warning-Options.html#index-Wno-self-move)
 
 Wsequence-point
 UrlSuffix(gcc/Warning-Options.html#index-Wno-sequence-point)
+
+Wsfinae-incomplete=
+UrlSuffix(gcc/C_002b_002b-Dialect-Options.html#index-Wno-sfinae-incomplete)
+
+Wsfinae-incomplete
+UrlSuffix(gcc/C_002b_002b-Dialect-Options.html#index-Wno-sfinae-incomplete)
 
 Wshadow-ivar
 UrlSuffix(gcc/Warning-Options.html#index-Wno-shadow-ivar)

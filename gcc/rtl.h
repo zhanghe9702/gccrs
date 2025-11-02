@@ -2506,7 +2506,8 @@ extern bool subreg_offset_representable_p (unsigned int, machine_mode,
 					   poly_uint64, machine_mode);
 extern unsigned int subreg_regno (const_rtx);
 extern int simplify_subreg_regno (unsigned int, machine_mode,
-				  poly_uint64, machine_mode);
+				  poly_uint64, machine_mode,
+				  bool allow_stack_regs = false);
 extern int lowpart_subreg_regno (unsigned int, machine_mode,
 				 machine_mode);
 extern unsigned int subreg_nregs (const_rtx);
@@ -3669,6 +3670,7 @@ extern bool contains_symbol_ref_p (const_rtx);
 extern bool contains_symbolic_reference_p (const_rtx);
 extern bool contains_constant_pool_address_p (const_rtx);
 extern void add_auto_inc_notes (rtx_insn *, rtx);
+extern bool single_output_fused_pair_p (rtx_insn *);
 
 /* Handle the cheap and common cases inline for performance.  */
 

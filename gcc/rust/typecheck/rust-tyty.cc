@@ -16,23 +16,23 @@
 // along with GCC; see the file COPYING3.  If not see
 // <http://www.gnu.org/licenses/>.
 
+#include "rust-system.h"
 #include "rust-tyty.h"
-
-#include "optional.h"
+#include "rust-tyty-subst.h"
 #include "rust-tyty-visitor.h"
 #include "rust-hir-map.h"
 #include "rust-location.h"
-#include "rust-linemap.h"
-
+#include "rust-type-util.h"
+#include "rust-hir-type-bounds.h"
 #include "rust-substitution-mapper.h"
 #include "rust-hir-trait-reference.h"
 #include "rust-hir-trait-resolve.h"
-#include "rust-tyty-cmp.h"
-#include "rust-type-util.h"
-#include "rust-hir-type-bounds.h"
+#include "tree-pretty-print.h"
 
+#include "optional.h"
 #include "options.h"
-#include "rust-system.h"
+#include "tree.h"
+#include "fold-const.h"
 
 namespace Rust {
 namespace TyTy {
@@ -113,6 +113,9 @@ TypeKindFormat::to_string (TypeKind kind)
 
     case TypeKind::OPAQUE:
       return "Opaque";
+
+    case TypeKind::CONST:
+      return "Const";
 
     case TypeKind::ERROR:
       return "ERROR";
@@ -229,6 +232,7 @@ BaseType::is_unit () const
     case OPAQUE:
     case STR:
     case DYNAMIC:
+    case CONST:
     case ERROR:
       return false;
 
@@ -291,8 +295,7 @@ BaseType::get_locus () const
 
 // FIXME this is missing locus
 bool
-BaseType::satisfies_bound (const TypeBoundPredicate &predicate,
-			   bool emit_error) const
+BaseType::satisfies_bound (const TypeBoundPredicate &predicate, bool emit_error)
 {
   const Resolver::TraitReference *query = predicate.get ();
   for (const auto &bound : specified_bounds)
@@ -347,41 +350,20 @@ BaseType::satisfies_bound (const TypeBoundPredicate &predicate,
 	    return false;
 
 	  std::string item_name = item->get_impl_item_name ();
-	  TypeBoundPredicateItem lookup
+	  tl::optional<TypeBoundPredicateItem> lookup
 	    = predicate.lookup_associated_item (item_name);
-	  if (lookup.is_error ())
+	  if (!lookup.has_value ())
 	    return false;
 
-	  const auto *item_ref = lookup.get_raw_item ();
+	  const auto *item_ref = lookup->get_raw_item ();
 	  TyTy::BaseType *bound_ty = item_ref->get_tyty ();
 
-	  // compare the types
-	  if (!bound_ty->can_eq (impl_item_ty, false))
-	    {
-	      if (!impl_item_ty->can_eq (bound_ty, false))
-		{
-		  if (emit_error)
-		    {
-		      rich_location r (line_table,
-				       mappings.lookup_location (get_ref ()));
-		      r.add_range (predicate.get_locus ());
-		      r.add_range (mappings.lookup_location (i.get_hirid ()));
-
-		      std::string rich_msg
-			= "expected " + bound_ty->destructure ()->get_name ()
-			  + ", found "
-			  + impl_item_ty->destructure ()->get_name ();
-		      r.add_fixit_replace (rich_msg.c_str ());
-
-		      rust_error_at (
-			r, ErrorCode::E0271,
-			"type mismatch, expected %qs but got %qs",
-			bound_ty->destructure ()->get_name ().c_str (),
-			impl_item_ty->destructure ()->get_name ().c_str ());
-		    }
-		  return false;
-		}
-	    }
+	  if (!Resolver::types_compatable (
+		TyTy::TyWithLocation (bound_ty, predicate.get_locus ()),
+		TyTy::TyWithLocation (impl_item_ty, item->get_locus ()),
+		mappings.lookup_location (get_ref ()), false /*emit-error*/,
+		false /*check-bounds*/))
+	    return false;
 	}
 
       return true;
@@ -391,8 +373,7 @@ BaseType::satisfies_bound (const TypeBoundPredicate &predicate,
 }
 
 bool
-BaseType::bounds_compatible (const BaseType &other, location_t locus,
-			     bool emit_error) const
+BaseType::bounds_compatible (BaseType &other, location_t locus, bool emit_error)
 {
   std::vector<std::reference_wrapper<const TypeBoundPredicate>>
     unsatisfied_bounds;
@@ -446,11 +427,10 @@ BaseType::inherit_bounds (
     }
 }
 
-const BaseType *
-BaseType::get_root () const
+BaseType *
+BaseType::get_root ()
 {
-  // FIXME this needs to be it its own visitor class with a vector adjustments
-  const TyTy::BaseType *root = this;
+  TyTy::BaseType *root = this;
 
   if (const auto r = root->try_as<const ReferenceType> ())
     {
@@ -498,6 +478,23 @@ BaseType::destructure ()
 
 	  x = pr;
 	}
+      else if (x->get_kind () == TypeKind::CONST)
+	{
+	  auto p = x->as_const_type ();
+	  if (p->const_kind () == BaseConstType::ConstKind::Decl)
+	    {
+	      auto decl = static_cast<ConstParamType *> (p);
+	      auto pr = decl->resolve ();
+	      if (pr == x)
+		return pr;
+
+	      x = pr;
+	    }
+	  else
+	    {
+	      return x;
+	    }
+	}
       else if (auto p = x->try_as<PlaceholderType> ())
 	{
 	  if (!p->can_resolve ())
@@ -543,6 +540,23 @@ BaseType::destructure () const
 
 	  x = pr;
 	}
+      else if (x->get_kind () == TypeKind::CONST)
+	{
+	  auto p = x->as_const_type ();
+	  if (p->const_kind () == BaseConstType::ConstKind::Decl)
+	    {
+	      auto decl = static_cast<const ConstParamType *> (p);
+	      auto pr = decl->resolve ();
+	      if (pr == x)
+		return pr;
+
+	      x = pr;
+	    }
+	  else
+	    {
+	      return x;
+	    }
+	}
       else if (auto p = x->try_as<const PlaceholderType> ())
 	{
 	  if (!p->can_resolve ())
@@ -580,7 +594,7 @@ BaseType::monomorphized_clone () const
     {
       TyVar elm = arr->get_var_element_type ().monomorphized_clone ();
       return new ArrayType (arr->get_ref (), arr->get_ty_ref (), ident.locus,
-			    arr->get_capacity_expr (), elm,
+			    arr->get_capacity_var (), elm,
 			    arr->get_combined_refs ());
     }
   else if (auto slice = x->try_as<const SliceType> ())
@@ -634,8 +648,8 @@ BaseType::monomorphized_clone () const
 
       TyVar retty = fn->get_var_return_type ().monomorphized_clone ();
       return new FnPtr (fn->get_ref (), fn->get_ty_ref (), ident.locus,
-			std::move (cloned_params), retty,
-			fn->get_combined_refs ());
+			std::move (cloned_params), retty, fn->get_abi (),
+			fn->get_unsafety (), fn->get_combined_refs ());
     }
   else if (auto adt = x->try_as<const ADTType> ())
     {
@@ -777,7 +791,8 @@ BaseType::is_concrete () const
 {
   const TyTy::BaseType *x = destructure ();
 
-  if (x->is<ParamType> () || x->is<ProjectionType> ())
+  if (x->is<ParamType> () || x->is<ProjectionType> ()
+      || x->is<ConstParamType> ())
     {
       return false;
     }
@@ -829,7 +844,8 @@ BaseType::is_concrete () const
     }
   else if (auto arr = x->try_as<const ArrayType> ())
     {
-      return arr->get_element_type ()->is_concrete ();
+      return arr->get_element_type ()->is_concrete ()
+	     && arr->get_capacity ()->is_concrete ();
     }
   else if (auto slice = x->try_as<const SliceType> ())
     {
@@ -896,6 +912,7 @@ BaseType::has_substitutions_defined () const
     case TUPLE:
     case PARAM:
     case PLACEHOLDER:
+    case CONST:
     case OPAQUE:
       return false;
 
@@ -962,6 +979,7 @@ BaseType::needs_generic_substitutions () const
     case TUPLE:
     case PARAM:
     case PLACEHOLDER:
+    case CONST:
     case OPAQUE:
       return false;
 
@@ -1101,13 +1119,6 @@ InferType::as_string () const
       return "<float>";
     }
   return "<infer::error>";
-}
-
-bool
-InferType::can_eq (const BaseType *other, bool emit_errors) const
-{
-  InferCmp r (this, emit_errors);
-  return r.can_eq (other);
 }
 
 BaseType *
@@ -1398,12 +1409,6 @@ std::string
 ErrorType::as_string () const
 {
   return "<tyty::error>";
-}
-
-bool
-ErrorType::can_eq (const BaseType *other, bool emit_errors) const
-{
-  return get_kind () == other->get_kind ();
 }
 
 BaseType *
@@ -1790,13 +1795,6 @@ ADTType::as_string () const
 }
 
 bool
-ADTType::can_eq (const BaseType *other, bool emit_errors) const
-{
-  ADTCmp r (this, emit_errors);
-  return r.can_eq (other);
-}
-
-bool
 ADTType::is_equal (const BaseType &other) const
 {
   if (get_kind () != other.get_kind ())
@@ -1822,11 +1820,9 @@ ADTType::is_equal (const BaseType &other) const
 	  const SubstitutionParamMapping &a = substitutions.at (i);
 	  const SubstitutionParamMapping &b = other2->substitutions.at (i);
 
-	  const ParamType *aa = a.get_param_ty ();
-	  const ParamType *bb = b.get_param_ty ();
-	  BaseType *aaa = aa->resolve ();
-	  BaseType *bbb = bb->resolve ();
-	  if (!aaa->is_equal (*bbb))
+	  const auto &aa = a.get_param_ty ();
+	  const auto &bb = b.get_param_ty ();
+	  if (!aa->is_equal (*bb))
 	    return false;
 	}
     }
@@ -2029,13 +2025,6 @@ TupleType::get_field (size_t index) const
 }
 
 bool
-TupleType::can_eq (const BaseType *other, bool emit_errors) const
-{
-  TupleCmp r (this, emit_errors);
-  return r.can_eq (other);
-}
-
-bool
 TupleType::is_equal (const BaseType &other) const
 {
   if (get_kind () != other.get_kind ())
@@ -2118,13 +2107,6 @@ FnType::as_string () const
 }
 
 bool
-FnType::can_eq (const BaseType *other, bool emit_errors) const
-{
-  FnCmp r (this, emit_errors);
-  return r.can_eq (other);
-}
-
-bool
 FnType::is_equal (const BaseType &other) const
 {
   if (get_kind () != other.get_kind ())
@@ -2151,9 +2133,8 @@ FnType::is_equal (const BaseType &other) const
 	  const SubstitutionParamMapping &a = get_substs ().at (i);
 	  const SubstitutionParamMapping &b = ofn.get_substs ().at (i);
 
-	  const ParamType *pa = a.get_param_ty ();
-	  const ParamType *pb = b.get_param_ty ();
-
+	  const auto *pa = a.get_param_ty ();
+	  const auto *pb = b.get_param_ty ();
 	  if (!pa->is_equal (*pb))
 	    return false;
 	}
@@ -2324,14 +2305,13 @@ FnPtr::as_string () const
       params_str += p.get_tyty ()->as_string () + " ,";
     }
 
-  return "fnptr (" + params_str + ") -> " + get_return_type ()->as_string ();
-}
+  std::string unsafety = "";
+  if (get_unsafety () == Unsafety::Unsafe)
+    unsafety = "unsafe ";
 
-bool
-FnPtr::can_eq (const BaseType *other, bool emit_errors) const
-{
-  FnptrCmp r (this, emit_errors);
-  return r.can_eq (other);
+  std::string abi = get_string_from_abi (get_abi ());
+  return unsafety + "abi:" + abi + " " + "fnptr (" + params_str + ") -> "
+	 + get_return_type ()->as_string ();
 }
 
 bool
@@ -2361,12 +2341,48 @@ BaseType *
 FnPtr::clone () const
 {
   std::vector<TyVar> cloned_params;
+  cloned_params.reserve (params.size ());
+
   for (auto &p : params)
-    cloned_params.push_back (TyVar (p.get_ref ()));
+    cloned_params.emplace_back (p.get_ref ());
 
   return new FnPtr (get_ref (), get_ty_ref (), ident.locus,
-		    std::move (cloned_params), result_type,
-		    get_combined_refs ());
+		    std::move (cloned_params), result_type, get_abi (),
+		    get_unsafety (), get_combined_refs ());
+}
+
+FnPtr *
+FnPtr::handle_substitions (SubstitutionArgumentMappings &mappings)
+{
+  auto &mappings_table = Analysis::Mappings::get ();
+
+  auto fn = clone ()->as<FnPtr> ();
+  fn->set_ref (mappings_table.get_next_hir_id ());
+  fn->set_ty_ref (mappings_table.get_next_hir_id ());
+
+  if (!fn->result_type.get_tyty ()->is_concrete ())
+    {
+      BaseType *concrete
+	= Resolver::SubstMapperInternal::Resolve (fn->result_type.get_tyty (),
+						  mappings);
+      fn->result_type
+	= TyVar::subst_covariant_var (fn->result_type.get_tyty (), concrete);
+    }
+
+  for (size_t i = 0; i < fn->params.size (); i++)
+    {
+      TyVar &field = fn->params.at (i);
+      if (!field.get_tyty ()->is_concrete ())
+	{
+	  BaseType *concrete
+	    = Resolver::SubstMapperInternal::Resolve (field.get_tyty (),
+						      mappings);
+	  fn->params[i]
+	    = TyVar::subst_covariant_var (field.get_tyty (), concrete);
+	}
+    }
+
+  return fn;
 }
 
 void
@@ -2386,13 +2402,6 @@ ClosureType::as_string () const
 {
   std::string params_buf = parameters->as_string ();
   return "|" + params_buf + "| {" + result_type.get_tyty ()->as_string () + "}";
-}
-
-bool
-ClosureType::can_eq (const BaseType *other, bool emit_errors) const
-{
-  ClosureCmp r (this, emit_errors);
-  return r.can_eq (other);
 }
 
 bool
@@ -2492,14 +2501,10 @@ ArrayType::accept_vis (TyConstVisitor &vis) const
 std::string
 ArrayType::as_string () const
 {
-  return "[" + get_element_type ()->as_string () + ":" + "CAPACITY" + "]";
-}
+  auto cap = get_capacity ();
+  std::string capacity_str = cap->as_string ();
 
-bool
-ArrayType::can_eq (const BaseType *other, bool emit_errors) const
-{
-  ArrayCmp r (this, emit_errors);
-  return r.can_eq (other);
+  return "[" + get_element_type ()->as_string () + "; " + capacity_str + "]";
 }
 
 bool
@@ -2529,9 +2534,15 @@ ArrayType::get_var_element_type () const
 }
 
 BaseType *
+ArrayType::get_capacity () const
+{
+  return capacity.get_tyty ();
+}
+
+BaseType *
 ArrayType::clone () const
 {
-  return new ArrayType (get_ref (), get_ty_ref (), ident.locus, capacity_expr,
+  return new ArrayType (get_ref (), get_ty_ref (), ident.locus, capacity,
 			element_type, get_combined_refs ());
 }
 
@@ -2547,6 +2558,13 @@ ArrayType::handle_substitions (SubstitutionArgumentMappings &mappings)
   auto base = ref->get_element_type ();
   BaseType *concrete = Resolver::SubstMapperInternal::Resolve (base, mappings);
   ref->element_type = TyVar::subst_covariant_var (base, concrete);
+
+  // handle capacity type
+  auto cap = ref->get_capacity ();
+  BaseType *concrete_cap
+    = Resolver::SubstMapperInternal::Resolve (cap, mappings);
+  rust_assert (concrete_cap->get_kind () == TyTy::TypeKind::CONST);
+  ref->capacity = TyVar::subst_covariant_var (cap, concrete_cap);
 
   return ref;
 }
@@ -2567,13 +2585,6 @@ std::string
 SliceType::as_string () const
 {
   return "[" + get_element_type ()->as_string () + "]";
-}
-
-bool
-SliceType::can_eq (const BaseType *other, bool emit_errors) const
-{
-  SliceCmp r (this, emit_errors);
-  return r.can_eq (other);
 }
 
 bool
@@ -2663,13 +2674,6 @@ BoolType::as_string () const
   return "bool";
 }
 
-bool
-BoolType::can_eq (const BaseType *other, bool emit_errors) const
-{
-  BoolCmp r (this, emit_errors);
-  return r.can_eq (other);
-}
-
 BaseType *
 BoolType::clone () const
 {
@@ -2734,13 +2738,6 @@ IntType::as_string () const
     }
   rust_unreachable ();
   return "__unknown_int_type";
-}
-
-bool
-IntType::can_eq (const BaseType *other, bool emit_errors) const
-{
-  IntCmp r (this, emit_errors);
-  return r.can_eq (other);
 }
 
 BaseType *
@@ -2821,13 +2818,6 @@ UintType::as_string () const
   return "__unknown_uint_type";
 }
 
-bool
-UintType::can_eq (const BaseType *other, bool emit_errors) const
-{
-  UintCmp r (this, emit_errors);
-  return r.can_eq (other);
-}
-
 BaseType *
 UintType::clone () const
 {
@@ -2900,13 +2890,6 @@ FloatType::as_string () const
   return "__unknown_float_type";
 }
 
-bool
-FloatType::can_eq (const BaseType *other, bool emit_errors) const
-{
-  FloatCmp r (this, emit_errors);
-  return r.can_eq (other);
-}
-
 BaseType *
 FloatType::clone () const
 {
@@ -2962,13 +2945,6 @@ USizeType::as_string () const
   return "usize";
 }
 
-bool
-USizeType::can_eq (const BaseType *other, bool emit_errors) const
-{
-  USizeCmp r (this, emit_errors);
-  return r.can_eq (other);
-}
-
 BaseType *
 USizeType::clone () const
 {
@@ -3013,13 +2989,6 @@ ISizeType::as_string () const
   return "isize";
 }
 
-bool
-ISizeType::can_eq (const BaseType *other, bool emit_errors) const
-{
-  ISizeCmp r (this, emit_errors);
-  return r.can_eq (other);
-}
-
 BaseType *
 ISizeType::clone () const
 {
@@ -3062,13 +3031,6 @@ std::string
 CharType::as_string () const
 {
   return "char";
-}
-
-bool
-CharType::can_eq (const BaseType *other, bool emit_errors) const
-{
-  CharCmp r (this, emit_errors);
-  return r.can_eq (other);
 }
 
 BaseType *
@@ -3182,13 +3144,6 @@ ReferenceType::get_name () const
 {
   return std::string ("&") + (is_mutable () ? "mut" : "") + " "
 	 + get_base ()->get_name ();
-}
-
-bool
-ReferenceType::can_eq (const BaseType *other, bool emit_errors) const
-{
-  ReferenceCmp r (this, emit_errors);
-  return r.can_eq (other);
 }
 
 bool
@@ -3347,13 +3302,6 @@ PointerType::get_name () const
 }
 
 bool
-PointerType::can_eq (const BaseType *other, bool emit_errors) const
-{
-  PointerCmp r (this, emit_errors);
-  return r.can_eq (other);
-}
-
-bool
 PointerType::is_equal (const BaseType &other) const
 {
   if (get_kind () != other.get_kind ())
@@ -3404,32 +3352,25 @@ PointerType::handle_substitions (SubstitutionArgumentMappings &mappings)
 // PARAM Type
 
 ParamType::ParamType (std::string symbol, location_t locus, HirId ref,
-		      HIR::GenericParam &param,
 		      std::vector<TypeBoundPredicate> specified_bounds,
 		      std::set<HirId> refs)
-  : BaseType (ref, ref, KIND,
-	      {Resolver::CanonicalPath::new_seg (UNKNOWN_NODEID, symbol),
-	       locus},
-	      specified_bounds, refs),
-    is_trait_self (false), symbol (symbol), param (param)
+  : BaseGeneric (ref, ref, KIND,
+		 {Resolver::CanonicalPath::new_seg (UNKNOWN_NODEID, symbol),
+		  locus},
+		 specified_bounds, refs),
+    is_trait_self (false), symbol (symbol)
 {}
 
 ParamType::ParamType (bool is_trait_self, std::string symbol, location_t locus,
-		      HirId ref, HirId ty_ref, HIR::GenericParam &param,
+		      HirId ref, HirId ty_ref,
 		      std::vector<TypeBoundPredicate> specified_bounds,
 		      std::set<HirId> refs)
-  : BaseType (ref, ty_ref, KIND,
-	      {Resolver::CanonicalPath::new_seg (UNKNOWN_NODEID, symbol),
-	       locus},
-	      specified_bounds, refs),
-    is_trait_self (is_trait_self), symbol (symbol), param (param)
+  : BaseGeneric (ref, ty_ref, KIND,
+		 {Resolver::CanonicalPath::new_seg (UNKNOWN_NODEID, symbol),
+		  locus},
+		 specified_bounds, refs),
+    is_trait_self (is_trait_self), symbol (symbol)
 {}
-
-HIR::GenericParam &
-ParamType::get_generic_param ()
-{
-  return param;
-}
 
 bool
 ParamType::can_resolve () const
@@ -3470,18 +3411,11 @@ ParamType::get_name () const
   return destructure ()->get_name ();
 }
 
-bool
-ParamType::can_eq (const BaseType *other, bool emit_errors) const
-{
-  ParamCmp r (this, emit_errors);
-  return r.can_eq (other);
-}
-
 BaseType *
 ParamType::clone () const
 {
   return new ParamType (is_trait_self, get_symbol (), ident.locus, get_ref (),
-			get_ty_ref (), param, get_specified_bounds (),
+			get_ty_ref (), get_specified_bounds (),
 			get_combined_refs ());
 }
 
@@ -3535,7 +3469,9 @@ ParamType::is_equal (const BaseType &other) const
     return false;
 
   if (can_resolve ())
-    return resolve ()->can_eq (other2.resolve (), false);
+    return Resolver::types_compatable (TyTy::TyWithLocation (resolve ()),
+				       TyTy::TyWithLocation (other2.resolve ()),
+				       UNKNOWN_LOCATION, false, false);
 
   return get_symbol ().compare (other2.get_symbol ()) == 0;
 }
@@ -3556,7 +3492,7 @@ ParamType::handle_substitions (SubstitutionArgumentMappings &subst_mappings)
     {
       const ParamType &pp = *static_cast<const ParamType *> (resolved);
       if (pp.can_resolve ())
-	resolved = pp.resolve ();
+	pp.resolve ();
     }
 
   // this is the new subst that this needs to pass
@@ -3576,6 +3512,384 @@ bool
 ParamType::is_implicit_self_trait () const
 {
   return is_trait_self;
+}
+
+static std::string
+generate_tree_str (tree value)
+{
+  char *buf = nullptr;
+  size_t size = 0;
+
+  FILE *stream = open_memstream (&buf, &size);
+  if (!stream)
+    return "<error>";
+
+  print_generic_stmt (stream, value, TDF_NONE);
+  fclose (stream);
+
+  std::string result = (buf ? std::string (buf, size) : "<error>");
+  free (buf);
+
+  if (!result.empty () && result.back () == '\n')
+    result.pop_back ();
+
+  return result;
+}
+
+// ---
+
+ConstParamType::ConstParamType (std::string symbol, location_t locus,
+				BaseType *type, HirId ref, HirId ty_ref,
+				std::set<HirId> refs)
+  : BaseConstType (type),
+    BaseGeneric (ref, ty_ref, KIND,
+		 {Resolver::CanonicalPath::new_seg (UNKNOWN_NODEID, symbol),
+		  locus},
+		 {}, refs),
+    symbol (symbol)
+{}
+
+BaseConstType::ConstKind
+ConstParamType::const_kind () const
+{
+  return BaseConstType::ConstKind::Decl;
+}
+
+std::string
+ConstParamType::get_symbol () const
+{
+  return symbol;
+}
+
+bool
+ConstParamType::can_resolve () const
+{
+  return get_ref () != get_ty_ref ();
+}
+
+BaseType *
+ConstParamType::resolve () const
+{
+  TyVar var (get_ty_ref ());
+  BaseType *r = var.get_tyty ();
+
+  while (r->get_kind () == TypeKind::CONST)
+    {
+      TyVar v (r->get_ty_ref ());
+      BaseType *n = v.get_tyty ();
+
+      // fix infinite loop
+      if (r == n)
+	break;
+
+      r = n;
+    }
+
+  if (r->get_kind () == TypeKind::CONST && (r->get_ref () == r->get_ty_ref ()))
+    {
+      auto *const_type = r->as_const_type ();
+      if (const_type->const_kind () != BaseConstType::ConstKind::Value)
+	return TyVar (r->get_ty_ref ()).get_tyty ();
+    }
+
+  return r;
+}
+
+void
+ConstParamType::accept_vis (TyVisitor &vis)
+{
+  vis.visit (*this);
+}
+
+void
+ConstParamType::accept_vis (TyConstVisitor &vis) const
+{
+  vis.visit (*this);
+}
+
+std::string
+ConstParamType::as_string () const
+{
+  if (!can_resolve ())
+    {
+      return get_symbol () + " CONST_REF: " + std::to_string (get_ref ());
+    }
+
+  BaseType *lookup = resolve ();
+  // Avoid infinite recursion if resolve() returns this same type
+  if (lookup == this->as_base_type ())
+    {
+      return get_symbol () + " CONST_REF: " + std::to_string (get_ref ());
+    }
+
+  return get_symbol () + "=" + lookup->as_string ();
+}
+
+BaseType *
+ConstParamType::clone () const
+{
+  return new ConstParamType (get_symbol (), ident.locus, specified_type,
+			     get_ref (), get_ty_ref (), get_combined_refs ());
+}
+
+std::string
+ConstParamType::get_name () const
+{
+  if (!can_resolve ())
+    return get_symbol ();
+
+  BaseType *lookup = resolve ();
+  // Avoid infinite recursion if resolve() returns this same type
+  if (lookup == this->as_base_type ())
+    return get_symbol ();
+
+  return lookup->get_name ();
+}
+
+bool
+ConstParamType::is_equal (const BaseType &other) const
+{
+  if (get_kind () != other.get_kind ())
+    {
+      if (!can_resolve ())
+	return false;
+
+      return resolve ()->is_equal (other);
+    }
+
+  auto other_const = other.as_const_type ();
+  if (other_const->const_kind () != BaseConstType::ConstKind::Decl)
+    return false;
+
+  auto &other2 = static_cast<const ConstParamType &> (*other_const);
+  if (can_resolve () != other2.can_resolve ())
+    return false;
+
+  if (can_resolve ())
+    return Resolver::types_compatable (TyTy::TyWithLocation (resolve ()),
+				       TyTy::TyWithLocation (other2.resolve ()),
+				       ident.locus, false);
+
+  return get_symbol ().compare (other2.get_symbol ()) == 0;
+}
+
+BaseType *
+ConstParamType::handle_substitions (
+  SubstitutionArgumentMappings &subst_mappings)
+{
+  SubstitutionArg arg = SubstitutionArg::error ();
+  bool ok = subst_mappings.get_argument_for_symbol (this, &arg);
+  if (!ok || arg.is_error ())
+    return this;
+
+  ConstParamType *p = static_cast<ConstParamType *> (clone ());
+  const BaseType *resolved = arg.get_tyty ();
+
+  // this is the new subst that this needs to pass
+  p->set_ref (mappings.get_next_hir_id ());
+  p->set_ty_ref (resolved->get_ref ());
+
+  return p;
+}
+
+// --- ConstValueType
+
+ConstValueType::ConstValueType (tree value, BaseType *type, HirId ref,
+				HirId ty_ref, std::set<HirId> refs)
+  : BaseType (ref, ty_ref, KIND,
+	      {Resolver::CanonicalPath::create_empty (), UNKNOWN_LOCATION},
+	      refs),
+    BaseConstType (type), folded_val (value)
+{}
+
+BaseConstType::ConstKind
+ConstValueType::const_kind () const
+{
+  return BaseConstType::ConstKind::Value;
+}
+
+void
+ConstValueType::accept_vis (TyVisitor &vis)
+{
+  vis.visit (*this);
+}
+
+void
+ConstValueType::accept_vis (TyConstVisitor &vis) const
+{
+  vis.visit (*this);
+}
+
+std::string
+ConstValueType::as_string () const
+{
+  return generate_tree_str (folded_val);
+}
+
+BaseType *
+ConstValueType::clone () const
+{
+  return new ConstValueType (folded_val, specified_type, get_ref (),
+			     get_ty_ref (), get_combined_refs ());
+}
+
+std::string
+ConstValueType::get_name () const
+{
+  return as_string ();
+}
+
+bool
+ConstValueType::is_equal (const BaseType &other) const
+{
+  if (get_kind () != other.get_kind ())
+    return false;
+
+  auto other_const = other.as_const_type ();
+  if (other_const->const_kind () != BaseConstType::ConstKind::Value)
+    return false;
+
+  auto &other2 = static_cast<const ConstValueType &> (*other_const);
+  return folded_val == other2.folded_val;
+}
+
+tree
+ConstValueType::get_value () const
+{
+  return folded_val;
+}
+
+// --- ConstInferType
+
+ConstInferType::ConstInferType (BaseType *type, HirId ref, HirId ty_ref,
+				std::set<HirId> refs)
+  : BaseType (ref, ty_ref, KIND,
+	      {Resolver::CanonicalPath::create_empty (), UNKNOWN_LOCATION},
+	      refs),
+    BaseConstType (type)
+{}
+
+BaseConstType::ConstKind
+ConstInferType::const_kind () const
+{
+  return BaseConstType::ConstKind::Infer;
+}
+
+void
+ConstInferType::accept_vis (TyVisitor &vis)
+{
+  vis.visit (*this);
+}
+
+void
+ConstInferType::accept_vis (TyConstVisitor &vis) const
+{
+  vis.visit (*this);
+}
+
+std::string
+ConstInferType::as_string () const
+{
+  return specified_type->get_name () + "-?";
+}
+
+BaseType *
+ConstInferType::clone () const
+{
+  auto &mappings = Analysis::Mappings::get ();
+  auto context = Resolver::TypeCheckContext::get ();
+
+  ConstInferType *clone
+    = new ConstInferType (specified_type, mappings.get_next_hir_id (),
+			  get_ty_ref (), get_combined_refs ());
+
+  context->insert_type (Analysis::NodeMapping (mappings.get_current_crate (),
+					       UNKNOWN_NODEID,
+					       clone->get_ref (),
+					       UNKNOWN_LOCAL_DEFID),
+			clone);
+  mappings.insert_location (clone->get_ref (),
+			    mappings.lookup_location (get_ref ()));
+
+  clone->append_reference (get_ref ());
+
+  return clone;
+}
+
+std::string
+ConstInferType::get_name () const
+{
+  return as_string ();
+}
+
+bool
+ConstInferType::is_equal (const BaseType &other) const
+{
+  if (get_kind () != other.get_kind ())
+    return false;
+
+  auto other_const = other.as_const_type ();
+  if (other_const->const_kind () != BaseConstType::ConstKind::Infer)
+    return false;
+
+  return get_ref () == other.get_ref ();
+}
+
+// --- ConstErrorType
+
+ConstErrorType::ConstErrorType (BaseType *type, HirId ref, HirId ty_ref,
+				std::set<HirId> refs)
+  : BaseType (ref, ty_ref, KIND,
+	      {Resolver::CanonicalPath::create_empty (), UNKNOWN_LOCATION},
+	      refs),
+    BaseConstType (type)
+{}
+
+BaseConstType::ConstKind
+ConstErrorType::const_kind () const
+{
+  return BaseConstType::ConstKind::Error;
+}
+
+void
+ConstErrorType::accept_vis (TyVisitor &vis)
+{
+  vis.visit (*this);
+}
+
+void
+ConstErrorType::accept_vis (TyConstVisitor &vis) const
+{
+  vis.visit (*this);
+}
+
+std::string
+ConstErrorType::as_string () const
+{
+  return "<const_error>";
+}
+
+BaseType *
+ConstErrorType::clone () const
+{
+  return new ConstErrorType (specified_type, get_ref (), get_ty_ref (),
+			     get_combined_refs ());
+}
+
+std::string
+ConstErrorType::get_name () const
+{
+  return as_string ();
+}
+
+bool
+ConstErrorType::is_equal (const BaseType &other) const
+{
+  if (get_kind () != other.get_kind ())
+    return false;
+
+  auto other_const = other.as_const_type ();
+  return other_const->const_kind () == BaseConstType::ConstKind::Error;
 }
 
 // OpaqueType
@@ -3628,13 +3942,6 @@ OpaqueType::get_name () const
   return "impl " + raw_bounds_as_name ();
 }
 
-bool
-OpaqueType::can_eq (const BaseType *other, bool emit_errors) const
-{
-  OpaqueCmp r (this, emit_errors);
-  return r.can_eq (other);
-}
-
 BaseType *
 OpaqueType::clone () const
 {
@@ -3656,7 +3963,24 @@ OpaqueType::is_equal (const BaseType &other) const
   if (can_resolve () != other2.can_resolve ())
     return false;
 
-  return bounds_compatible (other, UNDEF_LOCATION, false);
+  if (num_specified_bounds () != other.num_specified_bounds ())
+    return false;
+
+  for (const auto &pred : specified_bounds)
+    {
+      bool found = false;
+      for (const auto &opred : other.get_specified_bounds ())
+	{
+	  found = pred.is_equal (opred);
+	  if (found)
+	    break;
+	}
+
+      if (!found)
+	return false;
+    }
+
+  return true;
 }
 
 // StrType
@@ -3704,13 +4028,6 @@ StrType::as_string () const
 }
 
 bool
-StrType::can_eq (const BaseType *other, bool emit_errors) const
-{
-  StrCmp r (this, emit_errors);
-  return r.can_eq (other);
-}
-
-bool
 StrType::is_equal (const BaseType &other) const
 {
   return get_kind () == other.get_kind ();
@@ -3752,13 +4069,6 @@ std::string
 NeverType::as_string () const
 {
   return "!";
-}
-
-bool
-NeverType::can_eq (const BaseType *other, bool emit_errors) const
-{
-  NeverCmp r (this, emit_errors);
-  return r.can_eq (other);
 }
 
 BaseType *
@@ -3814,13 +4124,6 @@ PlaceholderType::as_string () const
 {
   return "<placeholder:" + (can_resolve () ? resolve ()->as_string () : "")
 	 + ">";
-}
-
-bool
-PlaceholderType::can_eq (const BaseType *other, bool emit_errors) const
-{
-  PlaceholderCmp r (this, emit_errors);
-  return r.can_eq (other);
 }
 
 BaseType *
@@ -3959,12 +4262,6 @@ ProjectionType::as_string () const
   return "<Projection=" + subst_as_string () + "::" + base->as_string () + ">";
 }
 
-bool
-ProjectionType::can_eq (const BaseType *other, bool emit_errors) const
-{
-  return base->can_eq (other, emit_errors);
-}
-
 BaseType *
 ProjectionType::clone () const
 {
@@ -4078,13 +4375,6 @@ DynamicObjectType::as_string () const
   return "dyn [" + raw_bounds_as_string () + "]";
 }
 
-bool
-DynamicObjectType::can_eq (const BaseType *other, bool emit_errors) const
-{
-  DynamicCmp r (this, emit_errors);
-  return r.can_eq (other);
-}
-
 BaseType *
 DynamicObjectType::clone () const
 {
@@ -4107,7 +4397,21 @@ DynamicObjectType::is_equal (const BaseType &other) const
   if (num_specified_bounds () != other.num_specified_bounds ())
     return false;
 
-  return bounds_compatible (other, UNDEF_LOCATION, false);
+  for (const auto &pred : specified_bounds)
+    {
+      bool found = false;
+      for (const auto &opred : other.get_specified_bounds ())
+	{
+	  found = pred.is_equal (opred);
+	  if (found)
+	    break;
+	}
+
+      if (!found)
+	return false;
+    }
+
+  return true;
 }
 
 const std::vector<
@@ -4128,7 +4432,7 @@ DynamicObjectType::get_object_items () const
 	  if (item->get_trait_item_type ()
 		== Resolver::TraitItemReference::TraitItemType::FN
 	      && item->is_object_safe ())
-	    items.push_back ({item, &bound});
+	    items.emplace_back (item, &bound);
 	}
     }
   return items;

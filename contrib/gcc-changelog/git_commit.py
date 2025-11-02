@@ -97,6 +97,7 @@ bug_components = {
     'd',
     'debug',
     'demangler',
+    'diagnostics',
     'driver',
     'fastjar',
     'fortran',
@@ -149,9 +150,12 @@ ignored_prefixes = {
     'gcc/testsuite/go.test/test/',
     'libffi/',
     'libgo/',
+    'libgrust/rustc-lib/core/',
+    'libgrust/rustc-lib/stdarch/',
     'libphobos/libdruntime/',
     'libphobos/src/',
     'libsanitizer/',
+    'zlib/',
     }
 
 wildcard_prefixes = {

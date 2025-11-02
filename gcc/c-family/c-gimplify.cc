@@ -66,6 +66,19 @@ along with GCC; see the file COPYING3.  If not see
     walk back up, we check that they fit our constraints, and copy them
     into temporaries if not.  */
 
+
+/* Check whether TP is an address computation whose base is a call to
+   .ACCESS_WITH_SIZE.  */
+
+static bool
+is_address_with_access_with_size (tree tp)
+{
+  if (TREE_CODE (tp) == POINTER_PLUS_EXPR
+      && is_access_with_size_p (TREE_OPERAND (tp, 0)))
+	return true;
+  return false;
+}
+
 /* Callback for c_genericize.  */
 
 static tree
@@ -121,6 +134,20 @@ ubsan_walk_array_refs_r (tree *tp, int *walk_subtrees, void *data)
       walk_tree (&TREE_OPERAND (*tp, 1), ubsan_walk_array_refs_r, pset, pset);
       walk_tree (&TREE_OPERAND (*tp, 0), ubsan_walk_array_refs_r, pset, pset);
     }
+  else if (TREE_CODE (*tp) == INDIRECT_REF
+	   && is_address_with_access_with_size (TREE_OPERAND (*tp, 0)))
+    {
+      ubsan_maybe_instrument_array_ref (&TREE_OPERAND (*tp, 0), false);
+      /* Make sure ubsan_maybe_instrument_array_ref is not called again on
+	 the POINTER_PLUS_EXPR, so ensure it is not walked again and walk
+	 its subtrees manually.  */
+      tree aref = TREE_OPERAND (*tp, 0);
+      pset->add (aref);
+      *walk_subtrees = 0;
+      walk_tree (&TREE_OPERAND (aref, 0), ubsan_walk_array_refs_r, pset, pset);
+    }
+  else if (is_address_with_access_with_size (*tp))
+    ubsan_maybe_instrument_array_ref (tp, true);
   return NULL_TREE;
 }
 
@@ -1009,7 +1036,14 @@ c_gimplify_expr (tree *expr_p, gimple_seq *pre_p ATTRIBUTE_UNUSED,
 	    && call_expr_nargs (*expr_p) == 2
 	    && TREE_CODE (CALL_EXPR_ARG (*expr_p, 1)) != INTEGER_CST)
 	  {
-	    tree a = save_expr (CALL_EXPR_ARG (*expr_p, 0));
+	    tree a = CALL_EXPR_ARG (*expr_p, 0);
+	    if (gimplify_expr (&a, pre_p, post_p, is_gimple_val, fb_rvalue)
+		== GS_ERROR)
+	      return GS_ERROR;
+	    tree b = CALL_EXPR_ARG (*expr_p, 1);
+	    if (gimplify_expr (&b, pre_p, post_p, is_gimple_val, fb_rvalue)
+		== GS_ERROR)
+	      return GS_ERROR;
 	    tree c = build_call_expr_loc (EXPR_LOCATION (*expr_p),
 					  fndecl, 1, a);
 	    *expr_p = build3_loc (EXPR_LOCATION (*expr_p), COND_EXPR,
@@ -1017,7 +1051,7 @@ c_gimplify_expr (tree *expr_p, gimple_seq *pre_p ATTRIBUTE_UNUSED,
 				  build2_loc (EXPR_LOCATION (*expr_p),
 					      NE_EXPR, boolean_type_node, a,
 					      build_zero_cst (TREE_TYPE (a))),
-				  c, CALL_EXPR_ARG (*expr_p, 1));
+				  c, b);
 	    return GS_OK;
 	  }
 	break;

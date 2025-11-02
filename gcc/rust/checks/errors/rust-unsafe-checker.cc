@@ -694,6 +694,12 @@ UnsafeChecker::visit (LlvmInlineAsm &expr)
 }
 
 void
+UnsafeChecker::visit (OffsetOf &expr)
+{
+  // nothing to do, offset_of!() is safe
+}
+
+void
 UnsafeChecker::visit (TypeParam &)
 {}
 
@@ -920,11 +926,11 @@ UnsafeChecker::visit (StructPattern &)
 {}
 
 void
-UnsafeChecker::visit (TupleStructItemsNoRange &)
+UnsafeChecker::visit (TupleStructItemsNoRest &)
 {}
 
 void
-UnsafeChecker::visit (TupleStructItemsRange &)
+UnsafeChecker::visit (TupleStructItemsHasRest &)
 {}
 
 void
@@ -932,15 +938,23 @@ UnsafeChecker::visit (TupleStructPattern &)
 {}
 
 void
-UnsafeChecker::visit (TuplePatternItemsMultiple &)
+UnsafeChecker::visit (TuplePatternItemsNoRest &)
 {}
 
 void
-UnsafeChecker::visit (TuplePatternItemsRanged &)
+UnsafeChecker::visit (TuplePatternItemsHasRest &)
 {}
 
 void
 UnsafeChecker::visit (TuplePattern &)
+{}
+
+void
+UnsafeChecker::visit (SlicePatternItemsNoRest &)
+{}
+
+void
+UnsafeChecker::visit (SlicePatternItemsHasRest &)
 {}
 
 void

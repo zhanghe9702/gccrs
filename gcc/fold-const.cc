@@ -25,7 +25,7 @@ along with GCC; see the file COPYING3.  If not see
   @@ This would also make life easier when this technology is used
   @@ for cross-compilers.  */
 
-/* The entry points in this file are fold, size_int_wide and size_binop.
+/* The entry points in this file are fold, size_int and size_binop.
 
    fold takes a tree as argument and returns a simplified tree.
 
@@ -151,74 +151,89 @@ static tree fold_view_convert_expr (tree, tree);
 static tree fold_negate_expr (location_t, tree);
 
 /* This is a helper function to detect min/max for some operands of COND_EXPR.
+   The form is "(exp0 CMP cst1) ? exp0 : cst2". */
+tree_code
+minmax_from_comparison (tree_code cmp, tree exp0,
+			const widest_int cst1,
+			const widest_int cst2)
+{
+  if (cst1 == cst2)
+    {
+      if (cmp == LE_EXPR || cmp == LT_EXPR)
+	return MIN_EXPR;
+      if (cmp == GT_EXPR || cmp == GE_EXPR)
+	return MAX_EXPR;
+    }
+  if (cst1 == cst2 - 1)
+    {
+      /* X <= Y - 1 equals to X < Y.  */
+      if (cmp == LE_EXPR)
+	return MIN_EXPR;
+      /* X > Y - 1 equals to X >= Y.  */
+      if (cmp == GT_EXPR)
+	return MAX_EXPR;
+      /* a != MIN_RANGE<a> ? a : MIN_RANGE<a>+1 -> MAX_EXPR<MIN_RANGE<a>+1, a> */
+      if (cmp == NE_EXPR && TREE_CODE (exp0) == SSA_NAME)
+	{
+	  int_range_max r;
+	  get_range_query (cfun)->range_of_expr (r, exp0);
+	  if (r.undefined_p ())
+	    r.set_varying (TREE_TYPE (exp0));
+
+	  widest_int min = widest_int::from (r.lower_bound (),
+					     TYPE_SIGN (TREE_TYPE (exp0)));
+	  if (min == cst1)
+	    return MAX_EXPR;
+	}
+  }
+  if (cst1 == cst2 + 1)
+    {
+      /* X < Y + 1 equals to X <= Y.  */
+      if (cmp == LT_EXPR)
+        return MIN_EXPR;
+      /* X >= Y + 1 equals to X > Y.  */
+      if (cmp == GE_EXPR)
+	return MAX_EXPR;
+      /* a != MAX_RANGE<a> ? a : MAX_RANGE<a>-1 -> MIN_EXPR<MIN_RANGE<a>-1, a> */
+      if (cmp == NE_EXPR && TREE_CODE (exp0) == SSA_NAME)
+	{
+	  int_range_max r;
+	  get_range_query (cfun)->range_of_expr (r, exp0);
+	  if (r.undefined_p ())
+	    r.set_varying (TREE_TYPE (exp0));
+
+	  widest_int max = widest_int::from (r.upper_bound (),
+					     TYPE_SIGN (TREE_TYPE (exp0)));
+	  if (max == cst1)
+	    return MIN_EXPR;
+	}
+    }
+  return ERROR_MARK;
+}
+	
+	
+/* This is a helper function to detect min/max for some operands of COND_EXPR.
    The form is "(EXP0 CMP EXP1) ? EXP2 : EXP3". */
 tree_code
 minmax_from_comparison (tree_code cmp, tree exp0, tree exp1, tree exp2, tree exp3)
 {
-  enum tree_code code = ERROR_MARK;
-
   if (HONOR_NANS (exp0) || HONOR_SIGNED_ZEROS (exp0))
     return ERROR_MARK;
 
   if (!operand_equal_p (exp0, exp2))
     return ERROR_MARK;
 
-  if (TREE_CODE (exp3) == INTEGER_CST && TREE_CODE (exp1) == INTEGER_CST)
-    {
-      if (wi::to_widest (exp1) == (wi::to_widest (exp3) - 1))
-	{
-	  /* X <= Y - 1 equals to X < Y.  */
-	  if (cmp == LE_EXPR)
-	    code = LT_EXPR;
-	  /* X > Y - 1 equals to X >= Y.  */
-	  if (cmp == GT_EXPR)
-	    code = GE_EXPR;
-	  /* a != MIN_RANGE<a> ? a : MIN_RANGE<a>+1 -> MAX_EXPR<MIN_RANGE<a>+1, a> */
-	  if (cmp == NE_EXPR && TREE_CODE (exp0) == SSA_NAME)
-	    {
-	      int_range_max r;
-	      get_range_query (cfun)->range_of_expr (r, exp0);
-	      if (r.undefined_p ())
-		r.set_varying (TREE_TYPE (exp0));
-
-	      widest_int min = widest_int::from (r.lower_bound (),
-						 TYPE_SIGN (TREE_TYPE (exp0)));
-	      if (min == wi::to_widest (exp1))
-		code = MAX_EXPR;
-	    }
-	}
-      if (wi::to_widest (exp1) == (wi::to_widest (exp3) + 1))
-	{
-	  /* X < Y + 1 equals to X <= Y.  */
-	  if (cmp == LT_EXPR)
-	    code = LE_EXPR;
-	  /* X >= Y + 1 equals to X > Y.  */
-	  if (cmp == GE_EXPR)
-	  code = GT_EXPR;
-	  /* a != MAX_RANGE<a> ? a : MAX_RANGE<a>-1 -> MIN_EXPR<MIN_RANGE<a>-1, a> */
-	  if (cmp == NE_EXPR && TREE_CODE (exp0) == SSA_NAME)
-	    {
-	      int_range_max r;
-	      get_range_query (cfun)->range_of_expr (r, exp0);
-	      if (r.undefined_p ())
-		r.set_varying (TREE_TYPE (exp0));
-
-	      widest_int max = widest_int::from (r.upper_bound (),
-						 TYPE_SIGN (TREE_TYPE (exp0)));
-	      if (max == wi::to_widest (exp1))
-		code = MIN_EXPR;
-	    }
-	}
-    }
-  if (code != ERROR_MARK
-      || operand_equal_p (exp1, exp3))
+  if (operand_equal_p (exp1, exp3))
     {
       if (cmp == LT_EXPR || cmp == LE_EXPR)
-	code = MIN_EXPR;
+	return MIN_EXPR;
       if (cmp == GT_EXPR || cmp == GE_EXPR)
-	code = MAX_EXPR;
+	return MAX_EXPR;
     }
-  return code;
+  if (TREE_CODE (exp3) == INTEGER_CST
+      && TREE_CODE (exp1) == INTEGER_CST)
+    return minmax_from_comparison (cmp, exp0, wi::to_widest (exp1), wi::to_widest (exp3));
+  return ERROR_MARK;
 }
 
 /* Return EXPR_LOCATION of T if it is not UNKNOWN_LOCATION.
@@ -395,10 +410,14 @@ negate_mathfn_p (combined_fn fn)
     CASE_CFN_ASIN_FN:
     CASE_CFN_ASINH:
     CASE_CFN_ASINH_FN:
+    CASE_CFN_ASINPI:
+    CASE_CFN_ASINPI_FN:
     CASE_CFN_ATAN:
     CASE_CFN_ATAN_FN:
     CASE_CFN_ATANH:
     CASE_CFN_ATANH_FN:
+    CASE_CFN_ATANPI:
+    CASE_CFN_ATANPI_FN:
     CASE_CFN_CASIN:
     CASE_CFN_CASIN_FN:
     CASE_CFN_CASINH:
@@ -432,10 +451,14 @@ negate_mathfn_p (combined_fn fn)
     CASE_CFN_SIN_FN:
     CASE_CFN_SINH:
     CASE_CFN_SINH_FN:
+    CASE_CFN_SINPI:
+    CASE_CFN_SINPI_FN:
     CASE_CFN_TAN:
     CASE_CFN_TAN_FN:
     CASE_CFN_TANH:
     CASE_CFN_TANH_FN:
+    CASE_CFN_TANPI:
+    CASE_CFN_TANPI_FN:
     CASE_CFN_TRUNC:
     CASE_CFN_TRUNC_FN:
       return true;
@@ -14962,6 +14985,8 @@ tree_call_nonnegative_warnv_p (tree type, combined_fn fn, tree arg0, tree arg1,
     CASE_CFN_ACOS_FN:
     CASE_CFN_ACOSH:
     CASE_CFN_ACOSH_FN:
+    CASE_CFN_ACOSPI:
+    CASE_CFN_ACOSPI_FN:
     CASE_CFN_CABS:
     CASE_CFN_CABS_FN:
     CASE_CFN_COSH:
@@ -15006,10 +15031,14 @@ tree_call_nonnegative_warnv_p (tree type, combined_fn fn, tree arg0, tree arg1,
 
     CASE_CFN_ASINH:
     CASE_CFN_ASINH_FN:
+    CASE_CFN_ASINPI:
+    CASE_CFN_ASINPI_FN:
     CASE_CFN_ATAN:
     CASE_CFN_ATAN_FN:
     CASE_CFN_ATANH:
     CASE_CFN_ATANH_FN:
+    CASE_CFN_ATANPI:
+    CASE_CFN_ATANPI_FN:
     CASE_CFN_CBRT:
     CASE_CFN_CBRT_FN:
     CASE_CFN_CEIL:
@@ -15210,7 +15239,7 @@ bool
 tree_expr_nonnegative_warnv_p (tree t, bool *strict_overflow_p, int depth)
 {
   enum tree_code code;
-  if (t == error_mark_node)
+  if (error_operand_p (t))
     return false;
 
   code = TREE_CODE (t);
@@ -16500,6 +16529,17 @@ split_address_to_core_and_offset (tree exp,
       core = get_inner_reference (TREE_OPERAND (exp, 0), &bitsize, pbitpos,
 				  poffset, &mode, &unsignedp, &reversep,
 				  &volatilep);
+      /* If we are left with MEM[a + CST] strip that and add it to the
+	 pbitpos and return a. */
+      if (TREE_CODE (core) == MEM_REF)
+	{
+	  poly_offset_int tem;
+	  tem = wi::to_poly_offset (TREE_OPERAND (core, 1));
+	  tem <<= LOG2_BITS_PER_UNIT;
+	  tem += *pbitpos;
+	  if (tem.to_shwi (pbitpos))
+	    return TREE_OPERAND (core, 0);
+	}
       core = build_fold_addr_expr_loc (loc, core);
     }
   else if (TREE_CODE (exp) == POINTER_PLUS_EXPR)

@@ -397,6 +397,10 @@ Wassign-intercept
 ObjC ObjC++ Var(warn_assign_intercept) Warning
 Warn whenever an Objective-C assignment is being intercepted by the garbage collector.
 
+Wabbreviated-auto-in-template-arg
+C++ ObjC++ Warning Var(warn_abbev_auto_targ) Init(1)
+Diagnose a placeholder type in a template argument in a function parameter type.
+
 Wbad-function-cast
 C ObjC Var(warn_bad_function_cast) Warning
 Warn about casting functions to incompatible types.
@@ -492,6 +496,10 @@ C++ ObjC++ Warning Alias(Wc++20-compat) Undocumented
 Wc++20-compat
 C++ ObjC++ Var(warn_cxx20_compat) Warning LangEnabledBy(C++ ObjC++,Wall) Init(0) CPP(cpp_warn_cxx20_compat) CppReason(CPP_W_CXX20_COMPAT)
 Warn about C++ constructs whose meaning differs between ISO C++ 2017 and ISO C++ 2020.
+
+Wc++26-compat
+C++ ObjC++ Var(warn_cxx26_compat) Warning LangEnabledBy(C++ ObjC++,Wall) Init(0)
+Warn about C++ constructs whose meaning differs between ISO C++ 2023 and ISO C++ 2026.
 
 Wc++11-extensions
 C++ ObjC++ Var(warn_cxx11_extensions) Warning Init(1)
@@ -753,6 +761,10 @@ Wexpansion-to-defined
 C ObjC C++ ObjC++ CPP(warn_expansion_to_defined) CppReason(CPP_W_EXPANSION_TO_DEFINED) Var(cpp_warn_expansion_to_defined) Init(0) Warning EnabledBy(Wextra || Wpedantic)
 Warn if \"defined\" is used outside #if.
 
+Wexternal-tu-local
+C++ ObjC++ Var(warn_tu_local) Warning Init(1)
+Warn about naming a TU-local entity declared in another translation unit.
+
 Wextra
 C ObjC C++ ObjC++ Warning
 ; in common.opt
@@ -762,7 +774,7 @@ C++ ObjC++ Var(warn_extra_semi) Init(-1) Warning
 Warn about semicolon after in-class function definition.
 
 Wflex-array-member-not-at-end
-C C++ Var(warn_flex_array_member_not_at_end) Warning
+C ObjC C++ ObjC++ Var(warn_flex_array_member_not_at_end) Warning
 Warn when a structure containing a C99 flexible array member as the last
 field is not at the end of another structure.
 
@@ -854,11 +866,11 @@ C ObjC C++ ObjC++ Var(warn_if_not_aligned) Init(1) Warning
 Warn when the field in a struct is not aligned.
 
 Wignored-qualifiers
-C C++ Var(warn_ignored_qualifiers) Warning EnabledBy(Wextra)
+C ObjC C++ ObjC++ Var(warn_ignored_qualifiers) Warning EnabledBy(Wextra)
 Warn whenever type qualifiers are ignored.
 
 Wignored-attributes
-C C++ Var(warn_ignored_attributes) Init(1) Warning
+C ObjC C++ ObjC++ Var(warn_ignored_attributes) Init(1) Warning
 Warn whenever attributes are ignored.
 
 Wimplicit
@@ -956,6 +968,10 @@ Enum(warn_leading_whitespace_kind) String(tabs) Value(2)
 EnumValue
 Enum(warn_leading_whitespace_kind) String(blanks) Value(3)
 
+Wkeyword-macro
+C ObjC C++ ObjC++ CPP(cpp_warn_keyword_macro) CppReason(CPP_W_KEYWORD_MACRO) Var(warn_keyword_macro) Init(0) Warning
+Warn about defining or undefining macros with identifiers equal to keywords (or for C++ conditional keywords or standard attribute names).
+
 Wleading-whitespace=
 C ObjC C++ ObjC++ CPP(cpp_warn_leading_whitespace) CppReason(CPP_W_LEADING_WHITESPACE) Enum(warn_leading_whitespace_kind) Joined RejectNegative Var(warn_leading_whitespace) Init(0) Warning
 Warn about leading whitespace style issues on lines except when in raw string literals.
@@ -997,7 +1013,7 @@ C ObjC C++ ObjC++ Var(warn_memset_transposed_args) Warning LangEnabledBy(C ObjC 
 Warn about suspicious calls to memset where the third argument is constant literal zero and the second is not.
 
 Wmisleading-indentation
-C C++ Common Var(warn_misleading_indentation) Warning LangEnabledBy(C C++,Wall)
+C ObjC C++ ObjC++ Common Var(warn_misleading_indentation) Warning LangEnabledBy(C ObjC C++ ObjC++,Wall)
 Warn when the indentation of the code does not reflect the block structure.
 
 Wmismatched-dealloc
@@ -1074,6 +1090,10 @@ Wmultiple-inheritance
 C++ ObjC++ Var(warn_multiple_inheritance) Warning
 Warn on direct multiple inheritance.
 
+Wmultiple-parameter-fwd-decl-lists
+C ObjC Var(warn_multiple_parameter_fwd_decl_lists) Warning EnabledBy(Wextra)
+Warn for multiple lists of forward declarations of function parameters.
+
 Wmultistatement-macros
 C ObjC C++ ObjC++ Var(warn_multistatement_macros) Warning LangEnabledBy(C ObjC C++ ObjC++,Wall)
 Warn about unsafe macros expanding to multiple statements used as a body of a clause such as if, else, while, switch, or for.
@@ -1097,6 +1117,10 @@ Warn when a noexcept expression evaluates to false even though the expression ca
 Wnoexcept-type
 C++ ObjC++ Warning Var(warn_noexcept_type) LangEnabledBy(C++ ObjC++,Wabi || Wc++17-compat)
 Warn if C++17 noexcept function type will change the mangled name of a symbol.
+
+Wnon-c-typedef-for-linkage
+C++ ObjC++ Var(warn_non_c_typedef_for_linkage) Init(1) Warning
+Warn for non-C compatible unnamed classes with a typedef name for linkage purposes.
 
 Wnon-template-friend
 C++ ObjC++ Var(warn_nontemplate_friend) Init(1) Warning
@@ -1163,7 +1187,7 @@ C ObjC Var(warn_old_style_definition) Init(-1) Warning
 Warn if an old-style parameter definition is used.
 
 Wopenacc-parallelism
-C C++ Var(warn_openacc_parallelism) Warning
+C ObjC C++ ObjC++ Var(warn_openacc_parallelism) Warning
 Warn about potentially suboptimal choices related to OpenACC parallelism.
 
 Wopenmp
@@ -1171,7 +1195,7 @@ C ObjC C++ ObjC++ Warning Var(warn_openmp) Init(1)
 Warn about suspicious OpenMP code.
 
 Wopenmp-simd
-C C++ Var(warn_openmp_simd) Warning LangEnabledBy(C C++,Wall)
+C ObjC C++ ObjC++ Var(warn_openmp_simd) Warning LangEnabledBy(C ObjC C++ ObjC++,Wall)
 Warn if a simd directive is overridden by the vectorizer cost model.
 
 Woverlength-strings
@@ -1219,11 +1243,11 @@ C++ ObjC++ Var(warn_pessimizing_move) Warning LangEnabledBy(C++ ObjC++, Wall)
 Warn about calling std::move on a local object in a return statement preventing copy elision.
 
 Wplacement-new
-C++ Warning Alias(Wplacement-new=, 1, 0)
+C++ ObjC++ Warning Alias(Wplacement-new=, 1, 0)
 Warn for placement new expressions with undefined behavior.
 
 Wplacement-new=
-C++ Joined RejectNegative UInteger Var(warn_placement_new) Init(-1) Warning IntegerRange(0, 2)
+C++ ObjC++ Joined RejectNegative UInteger Var(warn_placement_new) Init(-1) Warning IntegerRange(0, 2)
 Warn for placement new expressions with undefined behavior.
 
 Wpmf-conversions
@@ -1319,6 +1343,14 @@ Wsequence-point
 C ObjC C++ ObjC++ Var(warn_sequence_point) Warning LangEnabledBy(C ObjC C++ ObjC++,Wall)
 Warn about possible violations of sequence point rules.
 
+Wsfinae-incomplete=
+C++ ObjC++ Var(warn_sfinae_incomplete) Warning Init(1) Joined RejectNegative UInteger IntegerRange(0, 2)
+Warn about an incomplete type affecting semantics in a non-error context.
+
+Wsfinae-incomplete
+C++ ObjC++ Warning Alias(Wsfinae-incomplete=, 1, 0)
+Warn about an incomplete type affecting semantics in a non-error context.
+
 Wshadow-ivar
 ObjC ObjC++ Var(warn_shadow_ivar) EnabledBy(Wshadow) Init(1) Warning
 Warn if a local declaration hides an instance variable.
@@ -1385,7 +1417,7 @@ C ObjC C++ ObjC++ LangEnabledBy(C ObjC C++ ObjC++,Wall, 3, 0) IntegerRange(0, 3)
 ;
 
 Wstrict-flex-arrays
-C C++ Var(warn_strict_flex_arrays) Warning
+C ObjC C++ ObjC++ Var(warn_strict_flex_arrays) Warning
 Warn about improper usages of flexible array members
 according to the level of -fstrict-flex-arrays.
 
@@ -1463,7 +1495,7 @@ C ObjC C++ ObjC++ Var(warn_switch_outside_range) Warning Init(1)
 Warn about switch values that are outside of the switch's type range.
 
 Wsync-nand
-C C++ Var(warn_sync_nand) Init(1) Warning
+C ObjC C++ ObjC++ Var(warn_sync_nand) Init(1) Warning
 Warn when __sync_fetch_and_nand and __sync_nand_and_fetch built-in functions are used.
 
 Wsynth
@@ -1868,35 +1900,35 @@ EnumValue
 Enum(on_off) String(on) Value(1)
 
 fcontract-assumption-mode=
-C++ Joined RejectNegative
+C++ ObjC++ Joined RejectNegative
 -fcontract-assumption-mode=[on|off]	Enable or disable treating axiom level contracts as assumptions (default on).
 
 fcontract-build-level=
-C++ Joined RejectNegative
+C++ ObjC++ Joined RejectNegative
 -fcontract-build-level=[off|default|audit]	Specify max contract level to generate runtime checks for.
 
 fcontract-strict-declarations=
-C++ Var(flag_contract_strict_declarations) Enum(on_off) Joined Init(0) RejectNegative
+C++ ObjC++ Var(flag_contract_strict_declarations) Enum(on_off) Joined Init(0) RejectNegative
 -fcontract-strict-declarations=[on|off]	Enable or disable warnings on generalized redeclaration of functions with contracts (default off).
 
 fcontract-mode=
-C++ Var(flag_contract_mode) Enum(on_off) Joined Init(1) RejectNegative
+C++ ObjC++ Var(flag_contract_mode) Enum(on_off) Joined Init(1) RejectNegative
 -fcontract-mode=[on|off]	Enable or disable all contract facilities (default on).
 
 fcontract-continuation-mode=
-C++ Joined RejectNegative
+C++ ObjC++ Joined RejectNegative
 -fcontract-continuation-mode=[on|off]	Enable or disable contract continuation mode (default off).
 
 fcontract-role=
-C++ Joined RejectNegative
+C++ ObjC++ Joined RejectNegative
 -fcontract-role=<name>:<semantics>	Specify the semantics for all levels in a role (default, review), or a custom contract role with given semantics (ex: opt:assume,assume,assume).
 
 fcontract-semantic=
-C++ Joined RejectNegative
+C++ ObjC++ Joined RejectNegative
 -fcontract-semantic=<level>:<semantic>	Specify the concrete semantics for level.
 
 fcoroutines
-C++ LTO Var(flag_coroutines)
+C++ ObjC++ LTO Var(flag_coroutines)
 Enable C++ coroutines (experimental).
 
 fdebug-cpp
@@ -2098,23 +2130,23 @@ C ObjC Var(warn_compare_distinct_pointer_types) Warning Init(1)
 Warn if pointers of distinct types are compared without a cast.
 
 flang-info-include-translate
-C++ Var(note_include_translate_yes)
+C++ ObjC++ Var(note_include_translate_yes)
 Note #include directives translated to import declarations.
 
 flang-info-include-translate-not
-C++ Var(note_include_translate_no)
+C++ ObjC++ Var(note_include_translate_no)
 Note #include directives not translated to import declarations, and not known to be textual.
 
 flang-info-include-translate=
-C++ Joined RejectNegative MissingArgError(missing header name)
+C++ ObjC++ Joined RejectNegative MissingArgError(missing header name)
 Note a #include translation of a specific header.
 
 flang-info-module-cmi
-C++ Var(note_module_cmi_yes)
+C++ ObjC++ Var(note_module_cmi_yes)
 Note Compiled Module Interface pathnames.
 
 flang-info-module-cmi=
-C++ Joined RejectNegative MissingArgError(missing module name)
+C++ ObjC++ Joined RejectNegative MissingArgError(missing module name)
 Note Compiled Module Interface pathname of a specific module or header-unit.
 
 fmax-include-depth=
@@ -2325,10 +2357,10 @@ C++ ObjC++ Var(flag_sized_deallocation) Init(-1)
 Enable C++14 sized deallocation support.
 
 fstrict-flex-arrays
-C C++ Common Alias(fstrict-flex-arrays=,3,0)
+C ObjC C++ ObjC++ Common Alias(fstrict-flex-arrays=,3,0)
 
 fstrict-flex-arrays=
-C C++ Common Joined RejectNegative UInteger Var(flag_strict_flex_arrays) Init(0) IntegerRange(0,3)
+C ObjC C++ ObjC++ Common Joined RejectNegative UInteger Var(flag_strict_flex_arrays) Init(0) IntegerRange(0,3)
 -fstrict-flex-arrays=<level>    Control when to treat the trailing array of a structure as a flexible array member for the purposes of accessing the elements of such an array. The default is treating all trailing arrays of structures as flexible array members.
 
 fsquangle

@@ -175,7 +175,7 @@ typedef fibonacci_node <inline_badness, cgraph_edge> edge_heap_node_t;
 
 /* Statistics we collect about inlining algorithm.  */
 static int overall_size;
-static profile_count max_count;
+static bool has_nonzero_ipa_profile;
 static profile_count spec_rem;
 
 /* Return false when inlining edge E would lead to violating
@@ -781,14 +781,6 @@ want_early_inline_function_p (struct cgraph_edge *e)
   struct cgraph_node *callee = e->callee->ultimate_alias_target ();
 
   if (DECL_DISREGARD_INLINE_LIMITS (callee->decl))
-    ;
-  /* For AutoFDO, we need to make sure that before profile summary, all
-     hot paths' IR look exactly the same as profiled binary. As a result,
-     in einliner, we will disregard size limit and inline those callsites
-     that are:
-       * inlined in the profiled binary, and
-       * the cloned callee has enough samples to be considered "hot".  */
-  else if (flag_auto_profile && afdo_callsite_hot_enough_for_early_inline (e))
     ;
   else if (!DECL_DECLARED_INLINE_P (callee->decl)
 	   && !opt_for_fn (e->caller->decl, flag_inline_small_functions))
@@ -1868,7 +1860,7 @@ recursive_inlining (struct cgraph_edge *edge,
 	    false, vNULL, true, NULL, NULL, NULL);
 	  for (e = master_clone->callees; e; e = e->next_callee)
 	    if (!e->inline_failed)
-	      clone_inlined_nodes (e, true, false, NULL);
+	      clone_inlined_nodes (e, true, true, false, NULL);
 	  curr->redirect_callee (master_clone);
 	  if (edge_growth_cache != NULL)
 	    edge_growth_cache->remove (curr);
@@ -2113,7 +2105,7 @@ inline_small_functions (void)
   /* Compute overall unit size and other global parameters used by badness
      metrics.  */
 
-  max_count = profile_count::uninitialized ();
+  has_nonzero_ipa_profile = false;
   ipa_reduced_postorder (order, true, ignore_edge_p);
   free (order);
 
@@ -2156,7 +2148,9 @@ inline_small_functions (void)
 	  }
 
 	for (edge = node->callers; edge; edge = edge->next_caller)
-	  max_count = max_count.max (edge->count.ipa ());
+	  if (edge->count.ipa ().initialized_p ()
+	      && edge->count.ipa ().nonzero_p ())
+	  has_nonzero_ipa_profile = true;
       }
   ipa_free_postorder_info ();
   initialize_growth_caches ();
@@ -2229,7 +2223,8 @@ inline_small_functions (void)
     }
 
   gcc_assert (in_lto_p
-	      || !(max_count > 0)
+	      || !has_nonzero_ipa_profile
+	      || flag_auto_profile
 	      || (profile_info && flag_branch_probabilities));
 
   while (!edge_heap.empty ())
@@ -2250,7 +2245,7 @@ inline_small_functions (void)
 	 This check is affected by scaling roundoff errors when compiling for
 	 IPA this we skip it in that case.  */
       if (flag_checking && !edge->callee->count.ipa_p ()
-	  && (!max_count.initialized_p () || !max_count.nonzero_p ()))
+	  && !has_nonzero_ipa_profile)
 	{
 	  sreal cached_badness = edge_badness (edge, false);
 
@@ -2769,7 +2764,7 @@ dump_inline_stats (void)
       else if (e->count.ipa ().initialized_p ())
 	indirect_cnt += e->count.ipa ().to_gcov_type ();
   }
-  if (max_count.initialized_p ())
+  if (has_nonzero_ipa_profile)
     {
       fprintf (dump_file,
 	       "Inlined %" PRId64 " + speculative "
@@ -3117,6 +3112,99 @@ early_inline_small_functions (struct cgraph_node *node)
   return inlined;
 }
 
+/* With auto-fdo inline all functions that was inlined in the train run
+   and inlining seems useful.  That is there are enough samples in the callee
+   function.
+
+   Unlike early inlining, we inline recursively.  Profile data is also used
+   to produce speculative calls which we then inline.  In the case some
+   speculatin was introduced, set SPECULATIVE_CALLS.  */
+
+static bool
+inline_functions_by_afdo (struct cgraph_node *node, bool *speculative_calls)
+{
+  if (!flag_auto_profile || !flag_auto_profile_inlining)
+    return false;
+  struct cgraph_edge *e;
+  bool inlined = false;
+
+  *speculative_calls |= afdo_vpt_for_early_inline (node);
+
+  cgraph_edge *next;
+  for (e = node->callees; e; e = next)
+    {
+      next = e->next_callee;
+
+      if (!e->inline_failed)
+	{
+	  inlined |= inline_functions_by_afdo (e->callee, speculative_calls);
+	  continue;
+	}
+      if (!afdo_callsite_hot_enough_for_early_inline (e))
+	{
+	  /* If we do not want to inline, remove the speculation.  */
+	  if (e->speculative)
+	    cgraph_edge::resolve_speculation (e);
+	  continue;
+	}
+
+      struct cgraph_node *callee = e->callee->ultimate_alias_target ();
+      if (callee->definition
+	  && !ipa_fn_summaries->get (callee))
+	compute_fn_summary (callee, true);
+
+      if (!can_early_inline_edge_p (e))
+	{
+	  if (dump_enabled_p ())
+	    dump_printf_loc (MSG_MISSED_OPTIMIZATION, e->call_stmt,
+			     "Not inlining %C -> %C using auto-profile, %s.",
+			     e->caller, e->callee,
+			     cgraph_inline_failed_string (e->inline_failed));
+	  /* If we do not want to inline, remove the speculation.  */
+	  if (e->speculative)
+	    cgraph_edge::resolve_speculation (e);
+	  continue;
+	}
+      /* We can handle recursive inlining by first producing
+	 inline clone.  */
+      if (e->recursive_p ())
+	{
+	  if (dump_enabled_p ())
+	    dump_printf_loc (MSG_MISSED_OPTIMIZATION, e->call_stmt,
+			     "Not inlining %C recursively"
+			     " using auto-profile.\n",
+			     e->callee);
+	  /* If we do not want to inline, remove the speculation.  */
+	  if (e->speculative)
+	    cgraph_edge::resolve_speculation (e);
+	  continue;
+	}
+
+      if (dump_enabled_p ())
+	{
+	  if (e->caller->inlined_to)
+	    dump_printf_loc (MSG_OPTIMIZED_LOCATIONS, e->call_stmt,
+			     "Inlining using auto-profile %C into %C "
+			     "which is transitively inlined to %C.\n",
+			     callee, e->caller, e->caller->inlined_to);
+	  else
+	    dump_printf_loc (MSG_OPTIMIZED_LOCATIONS, e->call_stmt,
+			     "Inlining using auto-profile %C into %C.\n",
+			     callee, e->caller);
+	}
+      if (e->speculative)
+	remove_afdo_speculative_target (e);
+      inline_call (e, true, NULL, NULL, false);
+      inlined |= inline_functions_by_afdo (e->callee, speculative_calls);
+      inlined = true;
+    }
+
+  if (inlined && !node->inlined_to)
+    ipa_update_overall_fn_summary (node);
+
+  return inlined;
+}
+
 unsigned int
 early_inliner (function *fun)
 {
@@ -3192,10 +3280,23 @@ early_inliner (function *fun)
       /* We iterate incremental inlining to get trivial cases of indirect
 	 inlining.  */
       while (iterations < opt_for_fn (node->decl,
-				      param_early_inliner_max_iterations)
-	     && early_inline_small_functions (node))
+				      param_early_inliner_max_iterations))
 	{
+	  bool inlined = early_inline_small_functions (node);
+	  bool speculative_calls = false;
+	  inlined |= inline_functions_by_afdo (node, &speculative_calls);
+	  if (!inlined)
+	    break;
 	  timevar_push (TV_INTEGRATION);
+	  if (speculative_calls)
+	    {
+	      cgraph_edge *next;
+	      for (cgraph_edge *e = node->callees; e; e = next)
+		{
+		  next = e->next_callee;
+		  cgraph_edge::redirect_call_stmt_to_callee (e);
+		}
+	    }
 	  todo |= optimize_inline_calls (current_function_decl);
 
 	  /* Technically we ought to recompute inline parameters so the new
@@ -3220,6 +3321,25 @@ early_inliner (function *fun)
 	}
       if (dump_file)
 	fprintf (dump_file, "Iterations: %i\n", iterations);
+    }
+
+  /* do AFDO inlining in case it was not done as part of early inlining.  */
+  if (optimize
+      && !flag_no_inline
+      && !flag_early_inlining
+      && flag_auto_profile_inlining)
+    {
+      bool speculative_calls = false;
+      inlined |= inline_functions_by_afdo (node, &speculative_calls);
+      if (speculative_calls)
+	{
+	  cgraph_edge *next;
+	  for (cgraph_edge *e = node->callees; e; e = next)
+	    {
+	      next = e->next_callee;
+	      cgraph_edge::redirect_call_stmt_to_callee (e);
+	    }
+	}
     }
 
   if (inlined)

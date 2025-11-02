@@ -402,16 +402,17 @@ package Sinfo is
    --       Has_Secondary_Private_View  set in generic units
 
    --    "plus fields for expression"
-   --       Paren_Count               number of parentheses levels
-   --       Etype                     type of the expression
-   --       Is_Overloaded             >1 type interpretation exists
-   --       Is_Static_Expression      set for static expression
-   --       Raises_Constraint_Error   evaluation raises CE
-   --       Must_Not_Freeze           set if must not freeze
-   --       Do_Range_Check            set if a range check needed
-   --       Has_Dynamic_Length_Check  set if length check inserted
-   --       Assignment_OK             set if modification is OK
-   --       Is_Controlling_Actual     set for controlling argument
+   --       Paren_Count                  number of parentheses levels
+   --       Etype                        type of the expression
+   --       Is_Overloaded                >1 type interpretation exists
+   --       Is_Static_Expression         set for static expression
+   --       Raises_Constraint_Error      evaluation raises CE
+   --       Must_Not_Freeze              set if must not freeze
+   --       Do_Range_Check               set if a range check needed
+   --       Has_Dynamic_Length_Check     set if length check inserted
+   --       Assignment_OK                set if modification is OK
+   --       Is_Controlling_Actual        set for controlling argument
+   --       Is_Expanded_Dispatching_Call set for expanded dispatching calls
 
    --  Note: see under (EXPRESSION) for further details on the use of
    --  the Paren_Count field to record the number of parentheses levels.
@@ -737,14 +738,6 @@ package Sinfo is
    --  section describes the usage of the semantic fields, which are used to
    --  contain additional information determined during semantic analysis.
 
-   --  Accept_Handler_Records
-   --    This field is present only in an N_Accept_Alternative node. It is used
-   --    to temporarily hold the exception handler records from an accept
-   --    statement in a selective accept. These exception handlers will
-   --    eventually be placed in the Handler_Records list of the procedure
-   --    built for this accept (see Expand_N_Selective_Accept procedure in
-   --    Exp_Ch9 for further details).
-
    --  Access_Types_To_Process
    --    Present in N_Freeze_Entity nodes for Incomplete or private types.
    --    Contains the list of access types which may require specific treatment
@@ -804,6 +797,12 @@ package Sinfo is
    --    Present in record N_Aggregate nodes. Used to store the first global
    --    ancestor of the type of the aggregate in a generic context, if any,
    --    when the type is a derived tagged type. Otherwise Empty.
+
+   --  Aspect_Ghost_Assertion_Level
+   --     Assertion_Level that was originally used in the assertion level
+   --     associations of its arguments. These aspects are transformed to new
+   --     aspects with the associated arguments and the original assertion
+   --     level is stored in this attribute.
 
    --  Aspect_On_Partial_View
    --    Present on an N_Aspect_Specification node. For an aspect that applies
@@ -1477,7 +1476,7 @@ package Sinfo is
 
    --  Has_Target_Names
    --    Present in assignment statements. Indicates that the RHS contains
-   --    target names (see AI12-0125-3) and must be expanded accordingly.
+   --    target names ("@" -- see AI12-0125-3).
 
    --  Has_Wide_Character
    --    Present in string literals, set if any wide character (i.e. character
@@ -1514,11 +1513,6 @@ package Sinfo is
    --    values. This flag is false for any float type for which an explicit
    --    range is given by the programmer, even if that range is identical to
    --    the range for Float.
-
-   --  Incomplete_View
-   --    Present in full type declarations that are completions of incomplete
-   --    type declarations. Denotes the corresponding incomplete view declared
-   --    by the incomplete declaration.
 
    --  Inherited_Discriminant
    --    This flag is present in N_Component_Association nodes. It indicates
@@ -1677,6 +1671,10 @@ package Sinfo is
    --    actuals to support a build-in-place style of call have been added to
    --    the call.
 
+   --  Is_Expanded_Dispatching_Call
+   --    This flag is set in N_Block_Statement, and expression nodes to
+   --    indicate that it is an expanded dispatching call.
+
    --  Is_Expanded_Prefixed_Call
    --    This flag is set in N_Function_Call and N_Procedure_Call_Statement
    --    nodes to indicate that it is an expanded prefixed call.
@@ -1701,6 +1699,7 @@ package Sinfo is
    --      Pre
    --      Pre_Class
    --      Precondition
+   --      Program_Exit
    --      Refined_Depends
    --      Refined_Global
    --      Refined_Post
@@ -1878,6 +1877,12 @@ package Sinfo is
    --  Is_Static_Expression
    --    Indicates that an expression is a static expression according to the
    --    rules in RM-4.9. See Sem_Eval for details.
+
+   --  Is_Structural
+   --    Present in N_Generic_Instantiation nodes. Set if the instantiation is
+   --    structural, that is to say, is the unique anonymous instantiation of
+   --    the generic unit on the actual parameters done in the outermost scope
+   --    where it would be legal to declare an identical named instantiation.
 
    --  Is_Subprogram_Descriptor
    --    Present in N_Object_Declaration, and set only for the object
@@ -2129,6 +2134,12 @@ package Sinfo is
    --    indication carries a null-exclusion indicator, which is distinct from
    --    the null-exclusion indicator that may precede the access keyword.
 
+   --  Original_Pragma
+   --    When aspects with assertion level associations are transformed in to
+   --    individual aspects without the assertion level we store the original
+   --    aspect in this attribute. This is used to avoid duplicate detection on
+   --    these aspects.
+
    --  Original_Discriminant
    --    Present in identifiers. Used in references to discriminants that
    --    appear in generic units. Because the names of the discriminants may be
@@ -2144,6 +2155,12 @@ package Sinfo is
    --    named numbers in generic units, where the Associated_Node field
    --    interferes with the Entity field, making it impossible to preserve the
    --    original entity at the point of instantiation.
+
+   --  Original_Pragma
+   --    When pragmas with assertion level associations are transformed in to
+   --    individual pragmas without the assertion level we store the original
+   --    prama in this attribute. This is used to avoid duplicate detection on
+   --    these pragmas.
 
    --  Others_Discrete_Choices
    --    When a case statement or variant is analyzed, the semantic checks
@@ -2172,6 +2189,12 @@ package Sinfo is
    --    error diagnostics: if there is a premature usage of an incomplete
    --    type, a subsequently generated error message indicates the position
    --    of its full declaration.
+
+   --  Pragma_Ghost_Assertion_Level
+   --     Assertion_Level that was originally used in the assertion level
+   --     associations of its arguments. These pragmas are transformed to new
+   --     pragmas with the associated arguments and the original assertion
+   --     level is stored in this attribute.
 
    --  Present_Expr
    --    Present in an N_Variant node. This has a meaningful value only after
@@ -2323,6 +2346,22 @@ package Sinfo is
    --    Present in call and variable reference marker nodes. References the
    --    entity of the original entity, operator, or subprogram being invoked,
    --    or the original variable being read or written.
+
+   --  Call_Or_Target_Loop
+   --    Present in continue statements. Set by Analyze_Continue_Statement and
+   --    used by Expand_Continue_Statement. If Analyze_Continue_Statement
+   --    concluded that its input node was in fact a call to a procedure named
+   --    "Continue", it contains the corresponding N_Procedure_Call_Statement
+   --    node. Otherwise it contains the E_Loop_Id of the loop the continue
+   --    statement applies to. Finally, if Analyze_Continue_Statement detects
+   --    an error, this field is set to Empty.
+
+   --  Tag_Propagated
+   --    This flag is set in N_Identifier, N_Explicit_Dereference, and N_Type_
+   --    Conversion nodes that are the LHS of an assignment statement. Used to
+   --    remember that the RHS of the assignment has tag indeterminate function
+   --    calls and the tag has been propagated to the calls (as part of the
+   --    bottom-up analysis of the RHS of the assignment statement).
 
    --  Target_Type
    --    Used in an N_Validate_Unchecked_Conversion node to point to the target
@@ -2510,6 +2549,7 @@ package Sinfo is
       --  Has_Private_View (set in generic units)
       --  Has_Secondary_Private_View (set in generic units)
       --  Redundant_Use
+      --  Tag_Propagated
       --  Atomic_Sync_Required
       --  plus fields for expression
 
@@ -2695,6 +2735,8 @@ package Sinfo is
       --  Is_Delayed_Aspect
       --  Is_Disabled
       --  Import_Interface_Present
+      --  Original_Pragma
+      --  Pragma_Ghost_Assertion_Level
       --  Uneval_Old_Warn
 
       --  Note: we should have a section on what pragmas are passed on to
@@ -3823,6 +3865,7 @@ package Sinfo is
       --  Prefix
       --  Actual_Designated_Subtype
       --  Has_Dereference_Action
+      --  Tag_Propagated
       --  Atomic_Sync_Required
       --  plus fields for expression
 
@@ -4758,6 +4801,7 @@ package Sinfo is
       --  Conversion_OK
       --  Do_Overflow_Check
       --  Rounded_Result
+      --  Tag_Propagated
       --  plus fields for expression
 
       --  Note: if a range check is required, then the Do_Range_Check flag
@@ -5199,6 +5243,7 @@ package Sinfo is
       --  Has_Created_Identifier
       --  Is_Abort_Block
       --  Is_Asynchronous_Call_Block
+      --  Is_Expanded_Dispatching_Call
       --  Is_Initialization_Block
       --  Is_Task_Allocation_Block
       --  Is_Task_Master
@@ -5218,6 +5263,23 @@ package Sinfo is
       --  Name (set to Empty if no loop name present)
       --  Condition (set to Empty if no WHEN part present)
       --  Next_Exit_Statement : Next exit on chain
+
+      ------------------------
+      -- Continue Statement --
+      ------------------------
+
+      --  This is a GNAT extension
+
+      --  CONTINUE_STATEMENT ::= continue [loop_NAME] [when CONDITION];
+
+      --  Gigi restriction: The expander ensures that the type of the Condition
+      --  field is always Standard.Boolean, even if the type in the source is
+      --  some non-standard boolean type.
+
+      --  N_Continue_Statement
+      --  Sloc points to CONTINUE
+      --  Name (set to Empty if no loop name present)
+      --  Condition (set to Empty if no WHEN part present)
 
       -------------------------
       -- 5.9  Goto Statement --
@@ -6381,7 +6443,6 @@ package Sinfo is
       --  Condition from the guard (set to Empty if no guard present)
       --  Statements (set to Empty_List if no statements)
       --  Pragmas_Before pragmas before alt (set to No_List if none)
-      --  Accept_Handler_Records
 
       ------------------------------
       -- 9.7.1  Delay Alternative --
@@ -7064,6 +7125,7 @@ package Sinfo is
       --  Is_Elaboration_Warnings_OK_Node
       --  Is_Declaration_Level_Node
       --  Is_Known_Guaranteed_ABE
+      --  Is_Structural
 
       --  N_Procedure_Instantiation
       --  Sloc points to PROCEDURE
@@ -7080,6 +7142,7 @@ package Sinfo is
       --  Must_Override set if overriding indicator present
       --  Must_Not_Override set if not_overriding indicator present
       --  Is_Known_Guaranteed_ABE
+      --  Is_Structural
 
       --  N_Function_Instantiation
       --  Sloc points to FUNCTION
@@ -7096,6 +7159,7 @@ package Sinfo is
       --  Must_Override set if overriding indicator present
       --  Must_Not_Override set if not_overriding indicator present
       --  Is_Known_Guaranteed_ABE
+      --  Is_Structural
 
       --  Note: overriding indicator is an Ada 2005 feature
 
@@ -7598,7 +7662,9 @@ package Sinfo is
       --  Is_Delayed_Aspect
       --  Is_Disabled
       --  Is_Boolean_Aspect
+      --  Aspect_Ghost_Assertion_Level
       --  Aspect_On_Partial_View
+      --  Original_Aspect
 
       --  Note: Aspect_Specification is an Ada 2012 feature
 
@@ -7966,8 +8032,9 @@ package Sinfo is
       --  operation) are also in this list.
 
       --  Contract_Test_Cases contains a collection of pragmas that correspond
-      --  to aspects/pragmas Contract_Cases, Exceptional_Cases, Test_Case and
-      --  Subprogram_Variant. The ordering in the list is in LIFO fashion.
+      --  to aspects/pragmas Contract_Cases, Exceptional_Cases, Program_Exit,
+      --  Test_Case and Subprogram_Variant. The ordering in the list is in LIFO
+      --  fashion.
 
       --  Classifications contains pragmas that either declare, categorize, or
       --  establish dependencies between subprogram or package inputs and
@@ -8184,7 +8251,7 @@ package Sinfo is
       --  An implicit label declaration is created for every occurrence of a
       --  label on a statement or a label on a block or loop. It is chained
       --  in the declarations of the innermost enclosing block as specified
-      --  in RM section 5.1 (3).
+      --  in RM section 5.1 (12).
 
       --  The Defining_Identifier is the actual identifier for the statement
       --  identifier. Note that the occurrence of the label is a reference, NOT

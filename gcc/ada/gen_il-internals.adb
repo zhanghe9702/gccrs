@@ -277,6 +277,8 @@ package body Gen_IL.Internals is
             return "DT_Offset_To_Top_Func";
          when DT_Position =>
             return "DT_Position";
+         when Extra_Formals_Known =>
+            return "Extra_Formals_Known";
          when Forwards_OK =>
             return "Forwards_OK";
          when Has_First_Controlling_Parameter_Aspect =>
@@ -289,6 +291,8 @@ package body Gen_IL.Internals is
             return "Has_RACW";
          when Has_SP_Choice =>
             return "Has_SP_Choice";
+         when Has_Unsigned_Base_Range_Aspect =>
+            return "Has_Unsigned_Base_Range_Aspect";
          when Ignore_SPARK_Mode_Pragmas =>
             return "Ignore_SPARK_Mode_Pragmas";
          when Is_CPP_Class =>

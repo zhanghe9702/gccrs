@@ -19,6 +19,7 @@
 #ifndef RUST_TYTY
 #define RUST_TYTY
 
+#include "optional.h"
 #include "rust-hir-map.h"
 #include "rust-common.h"
 #include "rust-identifier.h"
@@ -29,6 +30,7 @@
 #include "rust-tyty-region.h"
 #include "rust-system.h"
 #include "rust-hir.h"
+#include "tree.h"
 
 namespace Rust {
 
@@ -56,6 +58,7 @@ enum TypeKind
   REF,
   POINTER,
   PARAM,
+  CONST,
   ARRAY,
   SLICE,
   FNDEF,
@@ -88,6 +91,7 @@ public:
 
 class TyVisitor;
 class TyConstVisitor;
+class BaseConstType;
 class BaseType : public TypeBoundsMappings
 {
 public:
@@ -107,29 +111,15 @@ public:
   virtual std::string as_string () const = 0;
   virtual std::string get_name () const = 0;
 
-  // similar to unify but does not actually perform type unification but
-  // determines whether they are compatible. Consider the following
-  //
-  // fn foo<T>() -> T { ... }
-  // fn foo() -> i32 { ... }
-  //
-  // when the function has been substituted they can be considered equal.
-  //
-  // It can also be used to optional emit errors for trait item compatibility
-  // checks
-  virtual bool can_eq (const BaseType *other, bool emit_errors) const = 0;
-
   // Check value equality between two ty. Type inference rules are ignored. Two
   //   ty are considered equal if they're of the same kind, and
   //     1. (For ADTs, arrays, tuples, refs) have the same underlying ty
   //     2. (For functions) have the same signature
   virtual bool is_equal (const BaseType &other) const;
 
-  bool satisfies_bound (const TypeBoundPredicate &predicate,
-			bool emit_error) const;
+  bool satisfies_bound (const TypeBoundPredicate &predicate, bool emit_error);
 
-  bool bounds_compatible (const BaseType &other, location_t locus,
-			  bool emit_error) const;
+  bool bounds_compatible (BaseType &other, location_t locus, bool emit_error);
 
   void inherit_bounds (const BaseType &other);
 
@@ -164,8 +154,7 @@ public:
 
   void debug () const;
 
-  // FIXME this will eventually go away
-  const BaseType *get_root () const;
+  BaseType *get_root ();
 
   // This will get the monomorphized type from Params, Placeholders or
   // Projections if available or error
@@ -237,6 +226,11 @@ public:
 
     return static_cast<T *> (this);
   }
+
+  // Helper to get BaseConstType interface for CONST types
+  // Overridden by const types that also inherit from BaseConstType
+  virtual BaseConstType *as_const_type () { return nullptr; }
+  virtual const BaseConstType *as_const_type () const { return nullptr; }
 
 protected:
   BaseType (HirId ref, HirId ty_ref, TypeKind kind, RustIdent ident,
@@ -325,8 +319,6 @@ public:
 
   std::string as_string () const override;
 
-  bool can_eq (const BaseType *other, bool emit_errors) const override final;
-
   BaseType *clone () const final override;
 
   InferTypeKind get_infer_kind () const;
@@ -357,25 +349,39 @@ public:
 
   std::string as_string () const override;
 
-  bool can_eq (const BaseType *other, bool emit_errors) const override final;
-
   BaseType *clone () const final override;
 
   std::string get_name () const override final;
 };
 
-class ParamType : public BaseType
+class BaseGeneric : public BaseType
+{
+public:
+  virtual std::string get_symbol () const = 0;
+
+  virtual bool can_resolve () const = 0;
+
+  virtual BaseType *resolve () const = 0;
+
+protected:
+  BaseGeneric (HirId ref, HirId ty_ref, TypeKind kind, RustIdent ident,
+	       std::vector<TypeBoundPredicate> specified_bounds,
+	       std::set<HirId> refs = std::set<HirId> ())
+    : BaseType (ref, ty_ref, kind, ident, specified_bounds, refs)
+  {}
+};
+
+class ParamType : public BaseGeneric
 {
 public:
   static constexpr auto KIND = TypeKind::PARAM;
 
   ParamType (std::string symbol, location_t locus, HirId ref,
-	     HIR::GenericParam &param,
 	     std::vector<TypeBoundPredicate> specified_bounds,
 	     std::set<HirId> refs = std::set<HirId> ());
 
   ParamType (bool is_trait_self, std::string symbol, location_t locus,
-	     HirId ref, HirId ty_ref, HIR::GenericParam &param,
+	     HirId ref, HirId ty_ref,
 	     std::vector<TypeBoundPredicate> specified_bounds,
 	     std::set<HirId> refs = std::set<HirId> ());
 
@@ -384,17 +390,13 @@ public:
 
   std::string as_string () const override;
 
-  bool can_eq (const BaseType *other, bool emit_errors) const override final;
-
   BaseType *clone () const final override;
 
-  std::string get_symbol () const;
+  std::string get_symbol () const override final;
 
-  HIR::GenericParam &get_generic_param ();
+  bool can_resolve () const override final;
 
-  bool can_resolve () const;
-
-  BaseType *resolve () const;
+  BaseType *resolve () const override final;
 
   std::string get_name () const override final;
 
@@ -408,7 +410,170 @@ public:
 private:
   bool is_trait_self;
   std::string symbol;
-  HIR::GenericParam &param;
+};
+
+class BaseConstType
+{
+public:
+  static constexpr auto KIND = TypeKind::CONST;
+
+  enum ConstKind
+  {
+    Decl,
+    Value,
+    Infer,
+    Error
+  };
+
+  virtual ConstKind const_kind () const = 0;
+
+  BaseType *get_specified_type () const { return specified_type; }
+
+  // Helper to get BaseType interface (all const types also inherit BaseType)
+  // This must be implemented by concrete classes since BaseConstType doesn't
+  // inherit from BaseType, but all concrete const types do.
+  virtual BaseType *as_base_type () = 0;
+  virtual const BaseType *as_base_type () const = 0;
+
+protected:
+  BaseConstType (BaseType *type) : specified_type (type) {}
+
+  BaseType *specified_type;
+};
+
+class ConstParamType : public BaseConstType, public BaseGeneric
+{
+public:
+  ConstParamType (std::string symbol, location_t locus, BaseType *type,
+		  HirId ref, HirId ty_ref,
+		  std::set<HirId> refs = std::set<HirId> ());
+
+  ConstKind const_kind () const override final;
+
+  std::string get_symbol () const override final;
+
+  bool can_resolve () const override final;
+
+  BaseType *resolve () const override final;
+
+  void accept_vis (TyVisitor &vis) override;
+  void accept_vis (TyConstVisitor &vis) const override;
+
+  std::string as_string () const override;
+
+  BaseType *clone () const final override;
+  std::string get_name () const override final;
+
+  bool is_equal (const BaseType &other) const override;
+
+  BaseType *handle_substitions (SubstitutionArgumentMappings &mappings);
+
+  BaseType *as_base_type () override { return static_cast<BaseType *> (this); }
+  const BaseType *as_base_type () const override
+  {
+    return static_cast<const BaseType *> (this);
+  }
+
+  BaseConstType *as_const_type () override { return this; }
+  const BaseConstType *as_const_type () const override { return this; }
+
+private:
+  std::string symbol;
+};
+
+class ConstValueType : public BaseType, public BaseConstType
+{
+public:
+  static constexpr auto KIND = TypeKind::CONST;
+
+  ConstValueType (tree value, BaseType *type, HirId ref, HirId ty_ref,
+		  std::set<HirId> refs = std::set<HirId> ());
+
+  ConstKind const_kind () const override final;
+
+  void accept_vis (TyVisitor &vis) override;
+  void accept_vis (TyConstVisitor &vis) const override;
+
+  std::string as_string () const override;
+
+  BaseType *clone () const final override;
+  std::string get_name () const override final;
+
+  bool is_equal (const BaseType &other) const override;
+
+  tree get_value () const;
+
+  BaseType *as_base_type () override { return static_cast<BaseType *> (this); }
+  const BaseType *as_base_type () const override
+  {
+    return static_cast<const BaseType *> (this);
+  }
+
+  BaseConstType *as_const_type () override { return this; }
+  const BaseConstType *as_const_type () const override { return this; }
+
+private:
+  tree folded_val;
+};
+
+class ConstInferType : public BaseType, public BaseConstType
+{
+public:
+  static constexpr auto KIND = TypeKind::CONST;
+
+  ConstInferType (BaseType *type, HirId ref, HirId ty_ref,
+		  std::set<HirId> refs = std::set<HirId> ());
+
+  ConstKind const_kind () const override final;
+
+  void accept_vis (TyVisitor &vis) override;
+  void accept_vis (TyConstVisitor &vis) const override;
+
+  std::string as_string () const override;
+
+  BaseType *clone () const final override;
+  std::string get_name () const override final;
+
+  bool is_equal (const BaseType &other) const override;
+
+  BaseType *as_base_type () override { return static_cast<BaseType *> (this); }
+  const BaseType *as_base_type () const override
+  {
+    return static_cast<const BaseType *> (this);
+  }
+
+  BaseConstType *as_const_type () override { return this; }
+  const BaseConstType *as_const_type () const override { return this; }
+};
+
+class ConstErrorType : public BaseType, public BaseConstType
+{
+public:
+  static constexpr auto KIND = TypeKind::CONST;
+
+  ConstErrorType (BaseType *type, HirId ref, HirId ty_ref,
+		  std::set<HirId> refs = std::set<HirId> ());
+
+  ConstKind const_kind () const override final;
+
+  void accept_vis (TyVisitor &vis) override;
+  void accept_vis (TyConstVisitor &vis) const override;
+
+  std::string as_string () const override;
+
+  BaseType *clone () const final override;
+  std::string get_name () const override final;
+
+  bool is_equal (const BaseType &other) const override;
+
+  BaseType *as_base_type () override { return static_cast<BaseType *> (this); }
+  const BaseType *as_base_type () const override
+  {
+    return static_cast<const BaseType *> (this);
+  }
+
+  BaseConstType *as_const_type () override { return this; }
+  const BaseConstType *as_const_type () const override { return this; }
 };
 
 class OpaqueType : public BaseType
@@ -428,8 +593,6 @@ public:
   void accept_vis (TyConstVisitor &vis) const override;
 
   std::string as_string () const override;
-
-  bool can_eq (const BaseType *other, bool emit_errors) const override final;
 
   BaseType *clone () const final override;
 
@@ -490,8 +653,6 @@ public:
 
   std::string as_string () const override;
 
-  bool can_eq (const BaseType *other, bool emit_errors) const override final;
-
   bool is_equal (const BaseType &other) const override;
 
   size_t num_fields () const;
@@ -522,7 +683,7 @@ public:
 
   TypeBoundPredicate (const TypeBoundPredicate &other);
 
-  virtual ~TypeBoundPredicate (){};
+  virtual ~TypeBoundPredicate () {}
 
   TypeBoundPredicate &operator= (const TypeBoundPredicate &other);
 
@@ -538,21 +699,22 @@ public:
 
   std::string get_name () const;
 
-  // check that this predicate is object-safe see:
+  // check that this  is object-safe see:
   // https://doc.rust-lang.org/reference/items/traits.html#object-safety
   bool is_object_safe (bool emit_error, location_t locus) const;
 
   void apply_generic_arguments (HIR::GenericArgs *generic_args,
-				bool has_associated_self);
+				bool has_associated_self, bool is_super_trait);
 
-  void apply_argument_mappings (SubstitutionArgumentMappings &arguments);
+  void apply_argument_mappings (SubstitutionArgumentMappings &arguments,
+				bool is_super_trait);
 
   bool contains_item (const std::string &search) const;
 
-  TypeBoundPredicateItem
+  tl::optional<TypeBoundPredicateItem>
   lookup_associated_item (const std::string &search) const;
 
-  TypeBoundPredicateItem
+  tl::optional<TypeBoundPredicateItem>
   lookup_associated_item (const Resolver::TraitItemReference *ref) const;
 
   // WARNING THIS WILL ALWAYS RETURN NULLPTR
@@ -783,8 +945,6 @@ public:
 
   std::string as_string () const override;
 
-  bool can_eq (const BaseType *other, bool emit_errors) const override final;
-
   bool is_equal (const BaseType &other) const override;
 
   std::string get_identifier () const { return identifier; }
@@ -935,8 +1095,6 @@ public:
 
   std::string get_identifier () const { return identifier; }
 
-  bool can_eq (const BaseType *other, bool emit_errors) const override final;
-
   bool is_equal (const BaseType &other) const override;
 
   size_t num_params () const { return params.size (); }
@@ -1008,19 +1166,22 @@ public:
   static constexpr auto KIND = TypeKind::FNPTR;
 
   FnPtr (HirId ref, location_t locus, std::vector<TyVar> params,
-	 TyVar result_type, std::set<HirId> refs = std::set<HirId> ())
+	 TyVar result_type, ABI abi, Unsafety unsafety,
+	 std::set<HirId> refs = std::set<HirId> ())
     : CallableTypeInterface (ref, ref, TypeKind::FNPTR,
 			     {Resolver::CanonicalPath::create_empty (), locus},
 			     refs),
-      params (std::move (params)), result_type (result_type)
+      params (std::move (params)), result_type (result_type), abi (abi),
+      unsafety (unsafety)
   {}
 
   FnPtr (HirId ref, HirId ty_ref, location_t locus, std::vector<TyVar> params,
-	 TyVar result_type, std::set<HirId> refs = std::set<HirId> ())
+	 TyVar result_type, ABI abi, Unsafety unsafety,
+	 std::set<HirId> refs = std::set<HirId> ())
     : CallableTypeInterface (ref, ty_ref, TypeKind::FNPTR,
 			     {Resolver::CanonicalPath::create_empty (), locus},
 			     refs),
-      params (params), result_type (result_type)
+      params (params), result_type (result_type), abi (abi), unsafety (unsafety)
   {}
 
   std::string get_name () const override final { return as_string (); }
@@ -1049,8 +1210,6 @@ public:
 
   std::string as_string () const override;
 
-  bool can_eq (const BaseType *other, bool emit_errors) const override final;
-
   bool is_equal (const BaseType &other) const override;
 
   BaseType *clone () const final override;
@@ -1058,9 +1217,17 @@ public:
   std::vector<TyVar> &get_params () { return params; }
   const std::vector<TyVar> &get_params () const { return params; }
 
+  ABI get_abi () const { return abi; }
+
+  Unsafety get_unsafety () const { return unsafety; }
+
+  FnPtr *handle_substitions (SubstitutionArgumentMappings &mappings);
+
 private:
   std::vector<TyVar> params;
   TyVar result_type;
+  ABI abi;
+  Unsafety unsafety;
 };
 
 class ClosureType : public CallableTypeInterface, public SubstitutionRef
@@ -1126,8 +1293,6 @@ public:
   std::string as_string () const override;
   std::string get_name () const override final { return as_string (); }
 
-  bool can_eq (const BaseType *other, bool emit_errors) const override final;
-
   bool is_equal (const BaseType &other) const override;
 
   BaseType *clone () const final override;
@@ -1156,19 +1321,18 @@ class ArrayType : public BaseType
 public:
   static constexpr auto KIND = TypeKind::ARRAY;
 
-  ArrayType (HirId ref, location_t locus, HIR::Expr &capacity_expr, TyVar base,
+  ArrayType (HirId ref, location_t locus, TyVar capacity, TyVar base,
 	     std::set<HirId> refs = std::set<HirId> ())
     : BaseType (ref, ref, TypeKind::ARRAY,
 		{Resolver::CanonicalPath::create_empty (), locus}, refs),
-      element_type (base), capacity_expr (capacity_expr)
+      element_type (base), capacity (capacity)
   {}
 
-  ArrayType (HirId ref, HirId ty_ref, location_t locus,
-	     HIR::Expr &capacity_expr, TyVar base,
-	     std::set<HirId> refs = std::set<HirId> ())
+  ArrayType (HirId ref, HirId ty_ref, location_t locus, TyVar capacity,
+	     TyVar base, std::set<HirId> refs = std::set<HirId> ())
     : BaseType (ref, ty_ref, TypeKind::ARRAY,
 		{Resolver::CanonicalPath::create_empty (), locus}, refs),
-      element_type (base), capacity_expr (capacity_expr)
+      element_type (base), capacity (capacity)
   {}
 
   void accept_vis (TyVisitor &vis) override;
@@ -1178,8 +1342,6 @@ public:
 
   std::string get_name () const override final { return as_string (); }
 
-  bool can_eq (const BaseType *other, bool emit_errors) const override final;
-
   bool is_equal (const BaseType &other) const override;
 
   BaseType *get_element_type () const;
@@ -1187,15 +1349,14 @@ public:
 
   BaseType *clone () const final override;
 
-  HIR::Expr &get_capacity_expr () const { return capacity_expr; }
+  BaseType *get_capacity () const;
+  const TyVar &get_capacity_var () const { return capacity; }
 
   ArrayType *handle_substitions (SubstitutionArgumentMappings &mappings);
 
 private:
   TyVar element_type;
-  // FIXME: I dont think this should be in tyty - tyty should already be const
-  // evaluated
-  HIR::Expr &capacity_expr;
+  TyVar capacity;
 };
 
 class SliceType : public BaseType
@@ -1223,8 +1384,6 @@ public:
   std::string as_string () const override;
 
   std::string get_name () const override final { return as_string (); }
-
-  bool can_eq (const BaseType *other, bool emit_errors) const override final;
 
   bool is_equal (const BaseType &other) const override;
 
@@ -1254,8 +1413,6 @@ public:
 
   std::string get_name () const override final;
 
-  bool can_eq (const BaseType *other, bool emit_errors) const override final;
-
   BaseType *clone () const final override;
 };
 
@@ -1283,8 +1440,6 @@ public:
   std::string as_string () const override;
 
   std::string get_name () const override final;
-
-  bool can_eq (const BaseType *other, bool emit_errors) const override final;
 
   IntKind get_int_kind () const;
 
@@ -1322,8 +1477,6 @@ public:
 
   std::string get_name () const override final;
 
-  bool can_eq (const BaseType *other, bool emit_errors) const override final;
-
   UintKind get_uint_kind () const;
 
   BaseType *clone () const final override;
@@ -1356,8 +1509,6 @@ public:
   std::string as_string () const override;
   std::string get_name () const override final;
 
-  bool can_eq (const BaseType *other, bool emit_errors) const override final;
-
   FloatKind get_float_kind () const;
 
   BaseType *clone () const final override;
@@ -1383,8 +1534,6 @@ public:
   std::string as_string () const override;
   std::string get_name () const override final;
 
-  bool can_eq (const BaseType *other, bool emit_errors) const override final;
-
   BaseType *clone () const final override;
 };
 
@@ -1403,8 +1552,6 @@ public:
   std::string as_string () const override;
   std::string get_name () const override final;
 
-  bool can_eq (const BaseType *other, bool emit_errors) const override final;
-
   BaseType *clone () const final override;
 };
 
@@ -1421,8 +1568,6 @@ public:
 
   std::string as_string () const override;
   std::string get_name () const override final;
-
-  bool can_eq (const BaseType *other, bool emit_errors) const override final;
 
   BaseType *clone () const final override;
 };
@@ -1441,8 +1586,6 @@ public:
   void accept_vis (TyConstVisitor &vis) const override;
 
   std::string as_string () const override;
-
-  bool can_eq (const BaseType *other, bool emit_errors) const override final;
 
   bool is_equal (const BaseType &other) const override;
 
@@ -1466,8 +1609,6 @@ public:
   void accept_vis (TyConstVisitor &vis) const override;
 
   std::string as_string () const override;
-
-  bool can_eq (const BaseType *other, bool emit_errors) const override final;
 
   bool is_equal (const BaseType &other) const override;
 
@@ -1502,8 +1643,6 @@ public:
   std::string as_string () const override;
 
   std::string get_name () const override final;
-
-  bool can_eq (const BaseType *other, bool emit_errors) const override final;
 
   bool is_equal (const BaseType &other) const override;
 
@@ -1546,8 +1685,6 @@ public:
 
   std::string as_string () const override;
   std::string get_name () const override final;
-
-  bool can_eq (const BaseType *other, bool emit_errors) const override final;
 
   bool is_equal (const BaseType &other) const override;
 
@@ -1594,8 +1731,6 @@ public:
 
   std::string as_string () const override;
 
-  bool can_eq (const BaseType *other, bool emit_errors) const override final;
-
   BaseType *clone () const final override;
 
   std::string get_name () const override final;
@@ -1617,8 +1752,6 @@ public:
   void accept_vis (TyConstVisitor &vis) const override;
 
   std::string as_string () const override;
-
-  bool can_eq (const BaseType *other, bool emit_errors) const override final;
 
   BaseType *clone () const final override;
 
@@ -1668,8 +1801,6 @@ public:
   void accept_vis (TyConstVisitor &vis) const override;
 
   std::string as_string () const override;
-
-  bool can_eq (const BaseType *other, bool emit_errors) const override final;
 
   BaseType *clone () const final override;
 

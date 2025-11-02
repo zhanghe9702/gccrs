@@ -943,6 +943,22 @@
   (RVVMF2SF "TARGET_VECTOR_ELEN_FP_32 && TARGET_VECTOR_ELEN_64")
 ])
 
+(define_mode_iterator VWEXTI_D [
+  (RVVM8DI "TARGET_VECTOR_ELEN_64") (RVVM4DI "TARGET_VECTOR_ELEN_64")
+  (RVVM2DI "TARGET_VECTOR_ELEN_64") (RVVM1DI "TARGET_VECTOR_ELEN_64")
+
+  (V1DI "riscv_vector::vls_mode_valid_p (V1DImode) && TARGET_VECTOR_ELEN_64")
+  (V2DI "riscv_vector::vls_mode_valid_p (V2DImode) && TARGET_VECTOR_ELEN_64")
+  (V4DI "riscv_vector::vls_mode_valid_p (V4DImode) && TARGET_VECTOR_ELEN_64")
+  (V8DI "riscv_vector::vls_mode_valid_p (V8DImode) && TARGET_VECTOR_ELEN_64 && TARGET_MIN_VLEN >= 64")
+  (V16DI "riscv_vector::vls_mode_valid_p (V16DImode) && TARGET_VECTOR_ELEN_64 && TARGET_MIN_VLEN >= 128")
+  (V32DI "riscv_vector::vls_mode_valid_p (V32DImode) && TARGET_VECTOR_ELEN_64 && TARGET_MIN_VLEN >= 256")
+  (V64DI "riscv_vector::vls_mode_valid_p (V64DImode) && TARGET_VECTOR_ELEN_64 && TARGET_MIN_VLEN >= 512")
+  (V128DI "riscv_vector::vls_mode_valid_p (V128DImode) && TARGET_VECTOR_ELEN_64 && TARGET_MIN_VLEN >= 1024")
+  (V256DI "riscv_vector::vls_mode_valid_p (V256DImode) && TARGET_VECTOR_ELEN_64 && TARGET_MIN_VLEN >= 2048")
+  (V512DI "riscv_vector::vls_mode_valid_p (V512DImode) && TARGET_VECTOR_ELEN_64 && TARGET_MIN_VLEN >= 4096")
+])
+
 (define_mode_iterator VWEXTI [
   RVVM8HI RVVM4HI RVVM2HI RVVM1HI RVVMF2HI (RVVMF4HI "TARGET_VECTOR_ELEN_64")
 
@@ -2416,6 +2432,47 @@
   (RVVM4x2DF "rvvm4df")
   (RVVM2x2DF "rvvm2df")
   (RVVM1x2DF "rvvm1df")
+])
+
+(define_mode_attr vsubel [
+  (RVVM8HI "qi") (RVVM4HI "qi") (RVVM2HI "qi") (RVVM1HI "qi") (RVVMF2HI "qi") (RVVMF4HI "qi")
+
+  (RVVM8SI "hi") (RVVM4SI "hi") (RVVM2SI "hi") (RVVM1SI "hi") (RVVMF2SI "hi")
+
+  (RVVM8SF "hf") (RVVM4SF "hf") (RVVM2SF "hf") (RVVM1SF "hf") (RVVMF2SF "hf")
+
+  (RVVM8DI "si") (RVVM4DI "si") (RVVM2DI "si") (RVVM1DI "si")
+
+  (RVVM8DF "sf") (RVVM4DF "sf") (RVVM2DF "sf") (RVVM1DF "sf")
+
+  ;; VLS modes.
+  (V1HI "qi") (V2HI "qi") (V4HI "qi") (V8HI "qi") (V16HI "qi") (V32HI "qi") (V64HI "qi") (V128HI "qi") (V256HI "qi")
+  (V512HI "qi") (V1024HI "qi") (V2048HI "qi")
+  (V1SI "hi") (V2SI "hi") (V4SI "hi") (V8SI "hi") (V16SI "hi") (V32SI "hi") (V64SI "hi") (V128SI "hi") (V256SI "hi")
+  (V512SI "hi") (V1024SI "hi")
+  (V1DI "si") (V2DI "si") (V4DI "si") (V8DI "si") (V16DI "si") (V32DI "si") (V64DI "si") (V128DI "si") (V256DI "si") (V512DI "si")
+
+  (V1SF "hf")
+  (V2SF "hf")
+  (V4SF "hf")
+  (V8SF "hf")
+  (V16SF "hf")
+  (V32SF "hf")
+  (V64SF "hf")
+  (V128SF "hf")
+  (V256SF "hf")
+  (V512SF "hf")
+  (V1024SF "hf")
+  (V1DF "sf")
+  (V2DF "sf")
+  (V4DF "sf")
+  (V8DF "sf")
+  (V16DF "sf")
+  (V32DF "sf")
+  (V64DF "sf")
+  (V128DF "sf")
+  (V256DF "sf")
+  (V512DF "sf")
 ])
 
 (define_mode_attr VSUBEL [
@@ -3972,6 +4029,14 @@
 			      UNSPEC_VASUBU UNSPEC_VASUB UNSPEC_VSMUL
 			      UNSPEC_VSSRL UNSPEC_VSSRA])
 
+(define_int_iterator VSAT_VX_OP_V_VDUP [
+  UNSPEC_VAADDU UNSPEC_VAADD
+])
+
+(define_int_iterator VSAT_VX_OP_VDUP_V [
+  UNSPEC_VAADDU UNSPEC_VAADD
+])
+
 (define_int_iterator VSAT_ARITH_OP [UNSPEC_VAADDU UNSPEC_VAADD
 			      	    UNSPEC_VASUBU UNSPEC_VASUB UNSPEC_VSMUL])
 (define_int_iterator VSAT_SHIFT_OP [UNSPEC_VSSRL UNSPEC_VSSRA])
@@ -4005,6 +4070,14 @@
 			 	(UNSPEC_VSMUL "vsmul") (UNSPEC_VSSRL "vsshift")
 			 	(UNSPEC_VSSRA "vsshift") (UNSPEC_VNCLIP "vnclip")
 				(UNSPEC_VNCLIPU "vnclip")])
+
+(define_int_attr sat_op_v_vdup [
+  (UNSPEC_VAADDU "aaddu") (UNSPEC_VAADD "aadd")
+])
+
+(define_int_attr sat_op_vdup_v [
+  (UNSPEC_VAADDU "aaddu") (UNSPEC_VAADD "aadd")
+])
 
 (define_int_attr misc_op [(UNSPEC_VMSBF "sbf") (UNSPEC_VMSIF "sif") (UNSPEC_VMSOF "sof")
 			  (UNSPEC_VFRSQRT7 "rsqrt7")])
@@ -4041,8 +4114,13 @@
   smax umax smin umin mult div udiv mod umod
 ])
 
-(define_code_iterator any_int_binop_no_shift_vx [
-  plus minus and ior xor mult div
+(define_code_iterator any_int_binop_no_shift_v_vdup [
+  plus minus and ior xor mult div udiv mod umod smax umax smin umin us_plus
+  us_minus ss_plus ss_minus
+])
+
+(define_code_iterator any_int_binop_no_shift_vdup_v [
+  plus minus and ior xor mult smax umax smin umin us_plus ss_plus
 ])
 
 (define_code_iterator any_int_unop [neg not])
@@ -4302,7 +4380,7 @@
 			      (umax "%3,%4")
 			      (mult "%3,%4")])
 
-(define_code_attr sz [(sign_extend "s") (zero_extend "z")])
+(define_code_attr sz [(sign_extend "s") (zero_extend "z") (sign_extract "s") (zero_extract "z")])
 
 ;; VLS modes that has NUNITS < 32.
 (define_mode_iterator VLS_AVL_IMM [
@@ -4924,4 +5002,40 @@
 (define_mode_attr SF_XFW [
   (RVVM4HI "HF") (RVVM2HI "HF") (RVVM1HI "HF") (RVVMF2HI "HF") (RVVMF4HI "HF")
   (RVVM4SI "SF") (RVVM2SI "SF") (RVVM1SI "SF") (RVVMF2SI "SF")
+])
+
+(define_mode_iterator NDS_VWEXTBF [
+  (RVVM8SF "TARGET_VECTOR_ELEN_FP_32")
+  (RVVM4SF "TARGET_VECTOR_ELEN_FP_32")
+  (RVVM2SF "TARGET_VECTOR_ELEN_FP_32")
+  (RVVM1SF "TARGET_VECTOR_ELEN_FP_32")
+  (RVVMF2SF "TARGET_VECTOR_ELEN_FP_32 && TARGET_MIN_VLEN > 32")
+])
+
+(define_mode_attr NDS_V_DOUBLE_TRUNC_BF [
+  (RVVM8SF "RVVM4BF") (RVVM4SF "RVVM2BF") (RVVM2SF "RVVM1BF")
+  (RVVM1SF "RVVMF2BF") (RVVMF2SF "RVVMF4BF")
+])
+
+(define_mode_iterator NDS_QVI [
+  RVVM8QI RVVM4QI RVVM2QI RVVM1QI
+  RVVMF2QI RVVMF4QI (RVVMF8QI "TARGET_MIN_VLEN > 32")
+])
+
+(define_mode_iterator VHF [
+  RVVM8HF RVVM4HF RVVM2HF RVVM1HF RVVMF2HF
+  (RVVMF4HF "TARGET_MIN_VLEN > 32")
+])
+
+(define_mode_attr NDS_QUAD_FIX [
+  (RVVM8SI "RVVM8QI") (RVVM4SI "RVVM4QI") (RVVM2SI "RVVM2QI")
+  (RVVM1SI "RVVM1QI") (RVVMF2SI "RVVMF2QI") (RVVM8DI "RVVM8HI")
+  (RVVM4DI "RVVM4HI") (RVVM2DI "RVVM2HI") (RVVM1DI "RVVM1HI")
+
+  (V1SI "V1QI") (V2SI "V2QI") (V4SI "V4QI") (V8SI "V8QI") (V16SI "V16QI")
+  (V32SI "V32QI") (V64SI "V64QI") (V128SI "V128QI") (V256SI "V256QI")
+  (V512SI "V512QI") (V1024SI "V1024QI")
+  (V1DI "V1HI") (V2DI "V2HI") (V4DI "V4HI") (V8DI "V8HI") (V16DI "V16HI")
+  (V32DI "V32HI") (V64DI "V64HI") (V128DI "V128HI") (V256DI "V256HI")
+  (V512DI "V512HI")
 ])

@@ -246,7 +246,7 @@ public:
   void visit (AttrInputLiteral &attr_input);
   void visit (AttrInputMacro &attr_input);
   void visit (MetaItemLitExpr &meta_item);
-  void visit (MetaItemPathLit &meta_item);
+  void visit (MetaItemPathExpr &meta_item);
   void visit (BorrowExpr &expr);
   void visit (DereferenceExpr &expr);
   void visit (ErrorPropagationExpr &expr);
@@ -330,7 +330,6 @@ public:
   void visit (ConstantItem &const_item);
   void visit (StaticItem &static_item);
   void visit (SelfParam &param);
-  void visit (TraitItemConst &item);
   void visit (TraitItemType &item);
   void visit (Trait &trait);
   void visit (InherentImpl &impl);
@@ -370,14 +369,16 @@ public:
   void visit (StructPatternFieldIdent &field);
   void visit (StructPattern &pattern);
   // void visit(TupleStructItems& tuple_items);
-  void visit (TupleStructItemsNoRange &tuple_items);
-  void visit (TupleStructItemsRange &tuple_items);
+  void visit (TupleStructItemsNoRest &tuple_items);
+  void visit (TupleStructItemsHasRest &tuple_items);
   void visit (TupleStructPattern &pattern);
   // void visit(TuplePatternItems& tuple_items);
-  void visit (TuplePatternItemsMultiple &tuple_items);
-  void visit (TuplePatternItemsRanged &tuple_items);
+  void visit (TuplePatternItemsNoRest &tuple_items);
+  void visit (TuplePatternItemsHasRest &tuple_items);
   void visit (TuplePattern &pattern);
   void visit (GroupedPattern &pattern);
+  void visit (SlicePatternItemsNoRest &items);
+  void visit (SlicePatternItemsHasRest &items);
   void visit (SlicePattern &pattern);
   void visit (AltPattern &pattern);
 
@@ -403,6 +404,7 @@ public:
   void visit (BareFunctionType &type);
 
   void visit (FormatArgs &fmt);
+  void visit (OffsetOf &offset_of);
 };
 } // namespace AST
 

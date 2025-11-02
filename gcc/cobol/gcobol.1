@@ -39,7 +39,7 @@ compiles \*[lang] source code to object code, and optionally produces an
 executable binary or shared object.  As a GCC component, it accepts
 all options that affect code-generation and linking.  Options specific
 to \*[lang] are listed below.
-.Bl -tag -width \0\0debug
+.Bl -tag -width "\0\0debug"
 .It Fl main Ar filename
 .Nm
 will generate a
@@ -197,14 +197,12 @@ Otherwise, columns 1-6 are examined. If those characters are all digits
 or blanks, the file is assumed to be in
 .Em "fixed-form reference format",
 also with the indicator in column 7.
-
 If not auto-detected as 
 .Em "fixed-form reference format" 
 or 
 .Em "extended source format",
 the file is assumed to be in 
 .Em "free-form reference format".
-
 .Pp
 .
 .It Fl fcobol-exceptions Ar exception Op Ns , Ns Ar exception Ns ...
@@ -589,6 +587,21 @@ statement, regardless of compile-time constants.
 ..
 .
 .Ss Implemented Exception Conditions
+By default, per ISO, no EC is enabled.  Implemented ECs may be enabled
+on the command line or via the
+.Sy TURN
+directive. Any attempt to enable an EC that is not implemented is
+treated as an error.
+.Pp
+An enabled EC not handled by a
+.Sy DECLARATIVE
+is written to the system log and to standard error.  (The authors
+intend to make that an option.)  A fatal EC not handled with
+.Sy RESUME
+ends with a call to
+.Xr abort 3
+and process termination. 
+.Pp
 Not all Exception Conditions are implemented.  Any attempt to enable
 an EC that that is not implemented produces a warning message.
 The following are implemented:
@@ -765,6 +778,30 @@ resolution of
 .Ar filename
 is deferred until runtime, when the name must appear in the program's
 environment.
+.Ss XML PARSE
+.Nm
+emulates the IBM
+.Sy "XML PARSE"
+statement.  The following values for
+.Sy XML-EVENT
+are defined:
+.Bl -tag -compact
+.It Sy COMMENT
+Text of a comment between "<!--" and "-->"
+.It Sy CONTENT-CHARACTERS
+Some or all of the character content of the element between start and end tags.
+.It Sy END-OF-ELEMENT
+End-element tag, with name if present in the input.
+.It Sy PROCESSING-INSTRUCTION-DATA
+Processing instruction (after the target name), excluding "?>".
+.It Sy PROCESSING-INSTRUCTION-TARGET
+The processing instruction target name appears in 
+.Sy XML-TEXT
+or
+.Sy XML-NTEXT .
+.It Sy START-OF-ELEMENT
+Name of the start element tag or empty element tag.
+.El
 .
 .Sh ISO \*[lang] Implementation Status
 .Ss USAGE Data Types
@@ -915,11 +952,90 @@ or
 has no effect; the two are interchangeable.
 ..
 .
-.Ss Compiler-Directing Facility (CDF)
+.Sh COMPILER-DIRECTING FACILITY
 The CDF should be used with caution because no comprehensive test
-suite has been identified.
+suite has been identified.  
 .
-.Ss Conditional Compilation
+.Ss CDF Text Manipulation
+.Bl -tag -width >>DEFINE
+.It Sy COPY Ar copybook Li Oo OF|BY Ar library Oc Oo Sy REPLACING ... Oc
+If
+.Ar copybook
+is a literal, it treated a literal filename, which either does or does not exist.  If
+.Ar copybook
+is a \*[lang] word,
+.Nm
+looks first for an environment variable named
+.Va copybook
+and, if found, uses the contents of that variable as the name of the
+copybook file.  If that file does not exist, it continues looking for
+a file named one of:
+.sp
+.Bl -bullet -compact -offset 5n
+.It
+.Pa copybook
+(literally)
+.It
+.Pa copybook.cpy
+.It
+.Pa copybook.CPY
+.It
+.Pa copybook.cbl
+.It
+.Pa copybook.CBL
+.It
+.Pa copybook.cob
+.It
+.Pa copybook.COB
+.El
+.sp
+in that order.  It looks first in the same directory as the source
+code file, and then in any
+.Ar copybook-path
+named with the
+.Fl I
+option.
+.
+.\" FIXME: need escape mechanism for directories with ':' in the name.
+.Ar copybook-path
+may (like the shell's
+.Ev PATH
+variable) be a colon-separated list.
+The
+.Fl I
+option may occur multiple times on the command line.  Each successive
+.Ar copybook-path
+is concatenated to previous ones.
+Relative paths (having no leading
+.Ql / Ns
+\&)
+are searched relative to the compiler's current working directory.
+.Pp
+For example,
+.D1 \&
+.D1 Fl I Li /usr/local/include:include
+.D1 \&
+searches first the directory where the \*[lang] program is found, next in
+.Pa /usr/local/include ,
+and finally in an
+.Pa include
+subdirectory of the directory from which
+.Nm
+was invoked.
+.Pp
+For the
+.Sy REPLACING
+phrase, both the modern pseudo-text and the \*[lang]/85 forms are
+recognized. (The older forms are used in the NIST CCVS/85 test suite.) 
+.It Sy REPLACE ...
+.Nm
+supports the full ISO
+.Sy REPLACE
+syntax.  
+.El
+.
+.Ss CDF Directives
+.\"Bl -tag -width >>PROPAGATE
 .Bl -tag -width >>DEFINE
 .It >> Ns Sy DEFINE Ar name Sy AS Bro Ar expression Li | Sy PARAMETER Brc Op Sy OVERRIDE
 Define
@@ -961,10 +1077,6 @@ is supported. Boolean literals are not supported.
 .
 .It >> Ns Sy EVALUATE
 Not implemented.
-.El
-.
-.Ss Other CDF Directives
-.Bl -tag -width >>PROPAGATE
 .It >> Ns Sy CALL-CONVENTION Ar convention
 .Ar convention
 may be one of:
@@ -1038,6 +1150,24 @@ Not implemented.
 Not implemented.
 .It >> Ns Sy PROPAGATE
 Not implemented.
+.It >> Ns Sy PUSH Ar directive
+.It >> Ns Sy POP  Ar directive
+With
+.Sy PUSH ,
+push CDF state onto a stack.
+With
+.Sy POP ,
+return to the prior pushed state.
+.Ar directive
+may be one of
+.Bl -tag -compact
+.It Sy CALL-CONVENTION
+.It Sy COBOL-WORDS
+.It Sy DEFINE
+.It Sy SOURCE FORMAT
+.It Sy TURN
+.El
+.
 .It >> Ns Sy TURN Oo
 .Ar ec Oo Ar file Li ... Oc ...
 .Oc Sy CHECKING Bro Oo Sy ON Oc Oo Oo Sy WITH Oc Sy LOCATION Oc | Sy OFF Brc
@@ -1088,76 +1218,6 @@ the directive must appear before
 .Pp
 To test a feature-set variable, use
 .Dl >>IF Ar feature Li DEFINED
-..
-.Ss Copybooks
-.Nm
-supports the CDF
-.Sy COPY
-statement, with or without its
-.Sy REPLACING
-component.  For any statement
-.sp
-.D1 COPY Ar copybook
-.sp
-.Nm
-looks first for an environment variable named
-.Va copybook
-and, if found, uses the contents of that variable as the name of the
-copybook file.  If that file does not exist, it continues looking for
-a file named one of:
-.sp
-.Bl -bullet -compact -offset 5n
-.It
-.Pa copybook
-(literally)
-.It
-.Pa copybook.cpy
-.It
-.Pa copybook.CPY
-.It
-.Pa copybook.cbl
-.It
-.Pa copybook.CBL
-.It
-.Pa copybook.cob
-.It
-.Pa copybook.COB
-.El
-.sp
-in that order.  It looks first in the same directory as the source
-code file, and then in any
-.Ar copybook-path
-named with the
-.Fl I
-option.
-.
-.\" FIXME: need escape mechanism for directories with ':' in the name.
-.Ar copybook-path
-may (like the shell's
-.Ev PATH
-variable) be a colon-separated list.
-.
-The
-.Fl I
-option may occur multiple times on the command line.  Each successive
-.Ar copybook-path
-is concatenated to previous ones.
-Relative paths (having no leading
-.Ql / Ns
-\&)
-are searched relative to the compiler's current working directory.
-.Pp
-For example,
-.D1 \&
-.D1 Fl I Li /usr/local/include:include
-.D1 \&
-searches first the directory where the \*[lang] program is found, next in
-.Pa /usr/local/include ,
-and finally in an
-.Pa include
-subdirectory of the directory from which
-.Nm
-was invoked.
 .
 .Ss Intrinsic functions
 .Nm
@@ -1294,7 +1354,7 @@ stores and converts
 numbers.  Converting the floating-point value to the numeric display
 value 0055110 is done by multiplying 55.109999...\& by 1,000 and then
 truncating the result to an integer.  And it turns out that even
-though 55.11 can’t be represented in floating-point as an exact value,
+though 55.11 can't be represented in floating-point as an exact value,
 the product of the multiplication, 55110, is an exact value.
 .Pp
 In cases where it is important for conversions to have predictable
@@ -1325,7 +1385,7 @@ specified for a calculation, then the intermediate result becomes a
 .
 .Ss A warning about binary floating point comparison
 The cardinal rule when doing comparisons involving floating-point
-values: Never, ever, test for equality.  It’s just not worth the hassle.
+values: Never, ever, test for equality.  It's just not worth the hassle.
 .Pp
 For example:
 .Bd -literal
@@ -1361,7 +1421,7 @@ and you really test the code.  And then avoid it anyway.
 .Pp
 Finally, it is observably the case that the
 .Nm
-implementations of floating-point conversions and comparisons don’t
+implementations of floating-point conversions and comparisons don't
 precisely match the behavior of other \*[lang] compilers.
 .Pp
 You have been warned.
@@ -1381,6 +1441,15 @@ it may contain several directory names separated by a colon
 .Ev COBPATH
 is searched first, followed by
 .Ev LD_LIBRARY_PATH .
+Note that
+.Ev COBPATH does not change where the runtime linker looks for
+.Pa libgcobol.so
+itself.
+How the runtime linker searches for
+.Pa libgcobol.so
+when the executable loads is controlled by 
+.Xr ld.so 8 ,
+not libgcobol.
 .Pp
 Each directory is searched for files whose name ends in
 .Ql ".so" .
@@ -1433,6 +1502,18 @@ If the value is just
 the effect is different: each copybook read is reported on standard
 error.  This feature is meant to help diagnose mysterious copybook
 errors.
+.El
+.
+.Ss Variables for Developers
+.Bl -tag -compact
+.It Ev GCOBOL_SHOW
+produces a trace of the internal calls made by the parser to prepare
+the GENERIC tree.
+.It Ev GCOBOL_TRACE
+used at compile time, produces an executable that traces the
+execution, mapping it back the same code-creation functions as
+.Ev GCOBOL_SHOW ,
+as well as the values of data items and branch conditions.
 .El
 .
 .Sh FILES

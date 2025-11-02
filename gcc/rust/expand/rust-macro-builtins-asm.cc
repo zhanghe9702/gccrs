@@ -101,7 +101,7 @@ parse_clobber_abi (InlineAsmContext inline_asm_ctx)
       if (token->get_id () == STRING_LITERAL)
 	{
 	  // TODO: Caring for span in here.
-	  new_abis.push_back ({token->as_string (), token->get_locus ()});
+	  new_abis.emplace_back (token->as_string (), token->get_locus ());
 	}
       else
 	{
@@ -384,6 +384,7 @@ parse_reg_operand_inout (InlineAsmContext inline_asm_ctx)
 {
   auto &parser = inline_asm_ctx.parser;
   auto token = parser.peek_current_token ();
+  location_t locus = token->get_locus ();
 
   if (!inline_asm_ctx.is_global_asm () && check_identifier (parser, "inout"))
     {
@@ -401,10 +402,8 @@ parse_reg_operand_inout (InlineAsmContext inline_asm_ctx)
 
       // TODO: Is error propogation our top priority, the ? in rust's asm.rs is
       // doing a lot of work.
-      // TODO: Not sure how to use parse_expr
-      if (!check_identifier (parser, ""))
-	rust_unreachable ();
-      // auto expr = parse_format_string (inline_asm_ctx);
+      std::unique_ptr<AST::Expr> in_expr = parser.parse_expr ();
+      rust_assert (in_expr != nullptr);
 
       std::unique_ptr<AST::Expr> out_expr;
 
@@ -414,10 +413,18 @@ parse_reg_operand_inout (InlineAsmContext inline_asm_ctx)
 	    {
 	      // auto result = parse_format_string (inline_asm_ctx);
 
-	      if (!check_identifier (parser, ""))
-		rust_unreachable ();
-	      // out_expr = parser.parse_expr();
+	      out_expr = parser.parse_expr ();
+
+	      AST::InlineAsmOperand::SplitInOut splitinout (
+		reg, false, std::move (in_expr), std::move (out_expr));
+
+	      inline_asm_ctx.inline_asm.operands.emplace_back (splitinout,
+							       locus);
+
+	      return inline_asm_ctx;
 	    }
+
+	  rust_unreachable ();
 
 	  // TODO: Rembmer to pass in clone_expr() instead of nullptr
 	  // https://github.com/rust-lang/rust/blob/a3167859f2fd8ff2241295469876a2b687280bdc/compiler/rustc_builtin_macros/src/asm.rs#L135
@@ -432,6 +439,8 @@ parse_reg_operand_inout (InlineAsmContext inline_asm_ctx)
 	}
       else
 	{
+	  AST::InlineAsmOperand::InOut inout (reg, false, std::move (in_expr));
+	  inline_asm_ctx.inline_asm.operands.emplace_back (inout, locus);
 	  // https://github.com/rust-lang/rust/blob/a3167859f2fd8ff2241295469876a2b687280bdc/compiler/rustc_builtin_macros/src/asm.rs#L137
 	  // RUST VERSION: ast::InlineAsmOperand::InOut { reg, expr, late: false
 	  // }
@@ -778,12 +787,12 @@ expand_inline_asm_strings (InlineAsmContext inline_asm_ctx)
 
       auto pieces = Fmt::Pieces::collect (template_str.symbol, false,
 					  Fmt::ffi::ParseMode::InlineAsm);
-      auto pieces_vec = pieces.get_pieces ();
+      auto &pieces_vec = pieces.get_pieces ();
 
       std::string transformed_template_str = "";
       for (size_t i = 0; i < pieces_vec.size (); i++)
 	{
-	  auto piece = pieces_vec[i];
+	  auto &piece = pieces_vec[i];
 	  if (piece.tag == Fmt::ffi::Piece::Tag::String)
 	    {
 	      transformed_template_str += piece.string._0.to_string ();
@@ -819,6 +828,11 @@ expand_inline_asm_strings (InlineAsmContext inline_asm_ctx)
 		  }
 		  break;
 		case Fmt::ffi::Position::Tag::ArgumentIs:
+		  {
+		    auto idx = next_argument.position.argument_is._0;
+		    transformed_template_str += "%" + std::to_string (idx);
+		    break;
+		  }
 		case Fmt::ffi::Position::Tag::ArgumentNamed:
 		  rust_sorry_at (inline_asm.get_locus (),
 				 "unhandled argument position specifier");
@@ -866,7 +880,8 @@ parse_asm (location_t invoc_locus, AST::MacroInvocData &invoc,
   // context.
   if (resulting_context)
     {
-      auto node = (*resulting_context).inline_asm.clone_expr_without_block ();
+      auto resulting_ctx = resulting_context.value ();
+      auto node = resulting_ctx.inline_asm.clone_expr_without_block ();
 
       std::vector<AST::SingleASTNode> single_vec = {};
 
@@ -923,7 +938,9 @@ parse_format_strings (InlineAsmContext inline_asm_ctx)
     {
       if (!parser.skip_token (COMMA))
 	{
-	  break;
+	  rust_error_at (parser.peek_current_token ()->get_locus (),
+			 "expected token %qs", ";");
+	  return tl::unexpected<InlineAsmParseError> (COMMITTED);
 	}
       // Ok after the comma is good, we better be parsing correctly
       // everything in here, which is formatted string in ABNF
@@ -1108,8 +1125,11 @@ parse_llvm_clobbers (LlvmAsmContext &ctx)
 	{
 	  ctx.llvm_asm.get_clobbers ().push_back (
 	    {strip_double_quotes (token->as_string ()), token->get_locus ()});
+
+	  parser.skip_token (STRING_LITERAL);
 	}
-      parser.skip_token (STRING_LITERAL);
+
+      parser.maybe_skip_token (COMMA);
       token = parser.peek_current_token ();
     }
 }
@@ -1161,12 +1181,13 @@ parse_llvm_asm (location_t invoc_locus, AST::MacroInvocData &invoc,
 
   auto asm_ctx = LlvmAsmContext (llvm_asm, parser, last_token_id);
 
-  auto resulting_context
+  tl::optional<LlvmAsmContext> resulting_context
     = parse_llvm_templates (asm_ctx).and_then (parse_llvm_arguments);
 
   if (resulting_context)
     {
-      auto node = (*resulting_context).llvm_asm.clone_expr_without_block ();
+      auto resulting_ctx = resulting_context.value ();
+      auto node = resulting_ctx.llvm_asm.clone_expr_without_block ();
 
       std::vector<AST::SingleASTNode> single_vec = {};
 
@@ -1174,12 +1195,13 @@ parse_llvm_asm (location_t invoc_locus, AST::MacroInvocData &invoc,
       // need to make it a statement. This way, it will be expanded
       // properly.
       if (semicolon == AST::InvocKind::Semicoloned)
-	single_vec.emplace_back (AST::SingleASTNode (
-	  std::make_unique<AST::ExprStmt> (std::move (node), invoc_locus,
-					   semicolon
-					     == AST::InvocKind::Semicoloned)));
+	{
+	  single_vec.emplace_back (
+	    std::make_unique<AST::ExprStmt> (std::move (node), invoc_locus,
+					     true /* has semicolon */));
+	}
       else
-	single_vec.emplace_back (AST::SingleASTNode (std::move (node)));
+	single_vec.emplace_back (std::move (node));
 
       AST::Fragment fragment_ast
 	= AST::Fragment (single_vec,

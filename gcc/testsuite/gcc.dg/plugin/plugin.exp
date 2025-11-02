@@ -70,12 +70,14 @@ set plugin_test_list [list \
     { poly-int-06_plugin.cc poly-int-test-1.c } \
     { poly-int-07_plugin.cc poly-int-test-1.c } \
     { crash_test_plugin.cc \
-	  crash-test-ice-stderr.c \
-	  crash-test-write-though-null-stderr.c \
-	  crash-test-ice-sarif.c \
 	  crash-test-ice-in-header-sarif-2.1.c \
 	  crash-test-ice-in-header-sarif-2.2.c \
-	  crash-test-write-though-null-sarif.c } \
+	  crash-test-ice-sarif.c \
+	  crash-test-ice-stderr.c \
+	  crash-test-nested-ice.c \
+	  crash-test-nested-write-through-null.c \
+	  crash-test-write-through-null-sarif.c \
+	  crash-test-write-through-null-stderr.c } \
     { diagnostic_group_plugin.cc \
 	  diagnostic-group-test-1.c } \
     { diagnostic_plugin_test_show_locus.cc \
@@ -107,16 +109,22 @@ set plugin_test_list [list \
 	  diagnostic-test-metadata.c \
 	  diagnostic-test-metadata-html.c \
 	  diagnostic-test-metadata-sarif.c } \
+    { diagnostic_plugin_test_graphs.cc
+	  diagnostic-test-graphs.c \
+	  diagnostic-test-graphs-html.c \
+	  diagnostic-test-graphs-sarif.c } \
     { diagnostic_plugin_test_nesting.cc \
+	  diagnostic-test-nesting-show-nesting.c \
+	  diagnostic-test-nesting-no-show-nesting.c \
 	  diagnostic-test-nesting-text-plain.c \
 	  diagnostic-test-nesting-text-indented.c \
 	  diagnostic-test-nesting-text-indented-show-levels.c \
 	  diagnostic-test-nesting-text-indented-unicode.c \
+	  diagnostic-test-nesting-html.c \
 	  diagnostic-test-nesting-sarif.c } \
     { diagnostic_plugin_test_paths.cc \
 	  diagnostic-test-paths-1.c \
 	  diagnostic-test-paths-2.c \
-	  diagnostic-test-paths-3.c \
 	  diagnostic-test-paths-4.c \
 	  diagnostic-test-paths-5.c \
 	  diagnostic-test-paths-multithreaded-inline-events.c \

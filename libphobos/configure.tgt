@@ -36,7 +36,7 @@ case "${target}" in
   arm*-*-linux*)
 	LIBPHOBOS_SUPPORTED=yes
 	;;
-  hppa-*-linux*)
+  hppa-*-linux* | hppa[12]*-*-linux*)
 	LIBPHOBOS_SUPPORTED=yes
 	;;
   loongarch*-*-linux*)
@@ -47,6 +47,15 @@ case "${target}" in
 	;;
   power*-*-freebsd*)
 	LIBPHOBOS_SUPPORTED=yes
+	;;
+  powerpc64le-*linux*)
+	LIBPHOBOS_SUPPORTED=yes
+	case "$ac_configure_args" in
+	  *--with-long-double-format=ieee*)
+	    ;;
+	  *)
+	    LIBDRUNTIME_ONLY=yes
+	esac
 	;;
   power*-*-linux*)
 	LIBPHOBOS_SUPPORTED=yes
@@ -64,7 +73,7 @@ case "${target}" in
   *-*-darwin9* | *-*-darwin1[01]*)
 	LIBDRUNTIME_ONLY=yes
 	;;
-  x86_64-*-darwin1[2-9]* | x86_64-*-darwin2* | i?86-*-darwin1[2-7])
+  x86_64-*-darwin1[2-9]* | x86_64-*-darwin2* | i?86-*-darwin1[2-7]*)
 	LIBPHOBOS_SUPPORTED=yes
 	;;
   x86_64-*-freebsd* | i?86-*-freebsd*)

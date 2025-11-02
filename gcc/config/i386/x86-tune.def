@@ -31,7 +31,7 @@ see the files COPYING3 and COPYING.RUNTIME respectively.  If not, see
 	- Updating ix86_issue_rate and ix86_adjust_cost in i386.md
 	- possibly updating ia32_multipass_dfa_lookahead, ix86_sched_reorder
 	  and ix86_sched_init_global if those tricks are needed.
-    - Tunning the flags bellow. Those are split into sections and each
+    - tuning flags below; those are split into sections and each
       section is very roughly ordered by importance.  */
 
 /*****************************************************************************/
@@ -612,31 +612,26 @@ DEF_TUNE (X86_TUNE_AVX256_AVOID_VEC_PERM,
 /* X86_TUNE_AVX256_SPLIT_REGS: if true, AVX512 ops are split into two AVX256 ops.  */
 DEF_TUNE (X86_TUNE_AVX512_SPLIT_REGS, "avx512_split_regs", m_ZNVER4)
 
+/* It's better to align MOVE_MAX with prefer_vector_width to reduce
+   risk of STLF stalls(small store followed by big load.)  */
 /* X86_TUNE_AVX256_MOVE_BY_PIECES: Optimize move_by_pieces with 256-bit
    AVX instructions.  */
 DEF_TUNE (X86_TUNE_AVX256_MOVE_BY_PIECES, "avx256_move_by_pieces",
 	  m_CORE_HYBRID | m_CORE_AVX2 | m_ZNVER1 | m_ZNVER2 | m_ZNVER3)
 
-/* X86_TUNE_AVX256_STORE_BY_PIECES: Optimize store_by_pieces with 256-bit
-   AVX instructions.  */
-DEF_TUNE (X86_TUNE_AVX256_STORE_BY_PIECES, "avx256_store_by_pieces",
-	  m_CORE_HYBRID | m_CORE_AVX2 | m_ZNVER1 | m_ZNVER2 | m_ZNVER3)
-
 /* X86_TUNE_AVX512_MOVE_BY_PIECES: Optimize move_by_pieces with 512-bit
    AVX instructions.  */
 DEF_TUNE (X86_TUNE_AVX512_MOVE_BY_PIECES, "avx512_move_by_pieces",
-	  m_SAPPHIRERAPIDS | m_GRANITERAPIDS | m_GRANITERAPIDS_D
-	  | m_DIAMONDRAPIDS | m_ZNVER4 | m_ZNVER5)
-
-/* X86_TUNE_AVX512_STORE_BY_PIECES: Optimize store_by_pieces with 512-bit
-   AVX instructions.  */
-DEF_TUNE (X86_TUNE_AVX512_STORE_BY_PIECES, "avx512_store_by_pieces",
-	  m_SAPPHIRERAPIDS | m_GRANITERAPIDS | m_GRANITERAPIDS_D
-	  | m_DIAMONDRAPIDS | m_ZNVER4 | m_ZNVER5)
+	   m_ZNVER4 | m_ZNVER5)
 
 /* X86_TUNE_AVX512_TWO_EPILOGUES: Use two vector epilogues for 512-bit
    vectorized loops.  */
 DEF_TUNE (X86_TUNE_AVX512_TWO_EPILOGUES, "avx512_two_epilogues",
+	  m_ZNVER4 | m_ZNVER5)
+
+/* X86_TUNE_AVX512_MAKED_EPILOGUES: Use two masked vector epilogues
+   when fit.  */
+DEF_TUNE (X86_TUNE_AVX512_MASKED_EPILOGUES, "avx512_masked_epilogues",
 	  m_ZNVER4 | m_ZNVER5)
 
 /*****************************************************************************/

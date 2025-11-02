@@ -110,6 +110,7 @@
 #define __glibcxx_want_constexpr_memory
 #define __glibcxx_want_enable_shared_from_this
 #define __glibcxx_want_indirect
+#define __glibcxx_want_is_sufficiently_aligned
 #define __glibcxx_want_make_unique
 #define __glibcxx_want_out_ptr
 #define __glibcxx_want_parallel_algorithm
@@ -119,8 +120,10 @@
 #define __glibcxx_want_shared_ptr_arrays
 #define __glibcxx_want_shared_ptr_weak_type
 #define __glibcxx_want_smart_ptr_for_overwrite
+#define __glibcxx_want_start_lifetime_as
 #define __glibcxx_want_to_address
 #define __glibcxx_want_transparent_operators
+#define __glibcxx_want_smart_ptr_owner_equality
 #include <bits/version.h>
 
 #if __cplusplus >= 201103L && __cplusplus <= 202002L && _GLIBCXX_HOSTED

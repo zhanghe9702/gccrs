@@ -21,7 +21,10 @@
 #include "system.h"
 #include "coretypes.h"
 #include "tm.h"
+#include "basic-block.h"
 #include "tree.h"
+#include "function.h"
+#include "gimple.h"
 #include "rtl.h"
 #include "tm_p.h"
 #include "memmodel.h"
@@ -68,23 +71,36 @@ za_group_is_pure_overload (const function_group_info &group)
    types in ARGUMENT_TYPES.  RETURN_TYPE is the type returned by the
    function.  */
 static void
-apply_predication (const function_instance &instance, tree return_type,
+apply_predication (function_instance &instance, tree return_type,
 		   vec<tree> &argument_types)
 {
+  /* Initially mark the function as not being predicated.  */
+  instance.gp_index = -1;
+
   /* There are currently no SME ZA instructions that have both merging and
      unpredicated forms, so for simplicity, the predicates are always included
      in the original format string.  */
   if (instance.pred != PRED_none && instance.pred != PRED_za_m)
     {
       argument_types.quick_insert (0, instance.gp_type ());
+      instance.gp_index = 0;
       /* For unary merge operations, the first argument is a vector with
 	 the same type as the result.  For unary_convert_narrowt it also
 	 provides the "bottom" half of active elements, and is present
 	 for all types of predication.  */
       auto nargs = argument_types.length () - 1;
       if (instance.shape->has_merge_argument_p (instance, nargs))
-	argument_types.quick_insert (0, return_type);
+	{
+	  argument_types.quick_insert (0, return_type);
+	  instance.gp_index = 1;
+	}
     }
+
+  /* In this case the predicate type we added above is a non-governing
+     predicate operand (and there is no GP), so update the gp_index value
+     accordingly.  */
+  if (!instance.shape->has_gp_argument_p (instance))
+    instance.gp_index = -1;
 }
 
 /* Parse and move past an element type in FORMAT and return it as a type
@@ -182,6 +198,7 @@ parse_element_type (const function_instance &instance, const char *&format)
    e<name> - an enum with the given name
    s<elt>  - a scalar type with the given element suffix
    t<elt>  - a vector or tuple type with given element suffix [*1]
+   T<elt>  - a vector or tuple type with given element suffix [*2]
    v<elt>  - a vector with the given element suffix
    D<elt>  - a 64 bit neon vector
    Q<elt>  - a 128 bit neon vector
@@ -189,7 +206,9 @@ parse_element_type (const function_instance &instance, const char *&format)
    where <elt> has the format described above parse_element_type
 
    [*1] the vectors_per_tuple function indicates whether the type should
-        be a tuple, and if so, how many vectors it should contain.  */
+	be a tuple, and if so, how many vectors it should contain.
+   [*2] same as for [*1], but the tuple contains half as many vectors.
+*/
 static tree
 parse_type (const function_instance &instance, const char *&format)
 {
@@ -259,6 +278,13 @@ parse_type (const function_instance &instance, const char *&format)
       type_suffix_index suffix = parse_element_type (instance, format);
       vector_type_index vector_type = type_suffixes[suffix].vector_type;
       unsigned int num_vectors = instance.vectors_per_tuple ();
+      return acle_vector_types[num_vectors - 1][vector_type];
+    }
+  if (ch == 'T')
+    {
+      type_suffix_index suffix = parse_element_type (instance, format);
+      vector_type_index vector_type = type_suffixes[suffix].vector_type;
+      unsigned int num_vectors = instance.vectors_per_tuple () / 2;
       return acle_vector_types[num_vectors - 1][vector_type];
     }
 
@@ -970,6 +996,24 @@ struct luti_lane_zt_base : public nonoverloaded_base
     auto nvectors = c.vectors_per_tuple ();
     return (c.require_immediate_range (0, 0, 0)
 	    && c.require_immediate_range (2, 0, 32 / BITS / nvectors - 1));
+  }
+};
+
+/* LUTI4 (four registers, 8-bit)
+   Variants are also available for: _u8
+   svint8x4_t svluti4_zt_s8_x4 (uint64_t zt0, svuint8x2_t zn)
+	      __arm_streaming __arm_in ("zt0");  */
+template <unsigned int BITS> struct luti_zt_base : public nonoverloaded_base
+{
+  void build (function_builder &b,
+	      const function_group_info &group) const override
+  {
+    build_all (b, "t0,su64,Tu0", group, MODE_none);
+  }
+
+  bool check (function_checker &c) const override
+  {
+    return c.require_immediate_range (0, 0, 0);
   }
 };
 
@@ -3207,6 +3251,9 @@ SHAPE (luti2_lane_zt)
 using luti4_lane_zt_def = luti_lane_zt_base<4>;
 SHAPE (luti4_lane_zt)
 
+using luti4_zt_def = luti_zt_base<4>;
+SHAPE (luti4_zt)
+
 /* svbool_t svfoo(enum svpattern).  */
 struct pattern_pred_def : public nonoverloaded_base
 {
@@ -3300,6 +3347,14 @@ struct pmov_to_vector_lane_def : public overloaded_base<0>
        ??? This should probably be folded into function_checker::m_base_arg,
        but it doesn't currently have the necessary information.  */
     return c.require_immediate_range (1, 1, bytes - 1);
+  }
+
+  /* This function has a predicate argument, and is a merging instruction, but
+     the predicate is not a GP.  */
+  bool
+  has_gp_argument_p (const function_instance &) const override
+  {
+    return false;
   }
 };
 SHAPE (pmov_to_vector_lane)
@@ -5269,4 +5324,75 @@ struct write_za_slice_def : public overloaded_base<1>
 };
 SHAPE (write_za_slice)
 
+/* MOVT (vector to table)
+   Variants are also available for:
+   [_s8], [_u16], [_s16], [_u32], [_s32], [_u64], [_s64]
+   [_bf16], [_f16], [_f32], [_f64]
+   void svwrite_zt[_u8] (uint64_t zt0, svuint8_t zt, uint64_t idx)
+	__arm_streaming __arm_out ("zt0");  */
+struct write_zt_def : public overloaded_base<0>
+{
+  void build (function_builder &b,
+	      const function_group_info &group) const override
+  {
+    b.add_overloaded_functions (group, MODE_none);
+    build_all (b, "_,su64,v0", group, MODE_none);
+  }
+
+  tree resolve (function_resolver &r) const override
+  {
+    sve_type type;
+
+    if (!r.check_num_arguments (2)
+	|| !r.require_scalar_type (0, "uint64_t")
+	|| !r.require_integer_immediate (0)
+	|| !(type = r.infer_vector_type (1)))
+      return error_mark_node;
+
+    return r.resolve_to (r.mode_suffix_id, type);
+  }
+
+  bool check (function_checker &c) const override
+  {
+    return c.require_immediate_range (0, 0, 0);
+  }
+};
+SHAPE (write_zt);
+
+/* MOVT (vector to table)
+   Variants are also available for:
+   [_s8], [_u16], [_s16], [_u32], [_s32], [_u64], [_s64]
+   [_bf16], [_f16], [_f32], [_f64]
+   void svwrite_lane_zt[_u8] (uint64_t zt0, svuint8_t zt, uint64_t idx)
+	__arm_streaming __arm_out ("zt0");  */
+struct write_lane_zt_def : public overloaded_base<0>
+{
+  void build (function_builder &b,
+	      const function_group_info &group) const override
+  {
+    b.add_overloaded_functions (group, MODE_none);
+    build_all (b, "_,su64,v0,su64", group, MODE_none);
+  }
+
+  tree resolve (function_resolver &r) const override
+  {
+    sve_type type;
+
+    if (!r.check_num_arguments (3)
+	|| !r.require_scalar_type (0, "uint64_t")
+	|| !r.require_integer_immediate (0)
+	|| !(type = r.infer_vector_type (1))
+	|| !r.require_scalar_type (2, "uint64_t"))
+      return error_mark_node;
+
+    return r.resolve_to (r.mode_suffix_id, type);
+  }
+
+  bool check (function_checker &c) const override
+  {
+    return c.require_immediate_range (0, 0, 0)
+	   && c.require_immediate_range (2, 0, 3);
+  }
+};
+SHAPE (write_lane_zt);
 }

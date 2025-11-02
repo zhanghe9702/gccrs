@@ -1107,6 +1107,36 @@ kind_value_check (gfc_expr *e, int n, int k)
 }
 
 
+/* Error message for an actual argument with an unsupported kind value.  */
+
+static void
+error_unsupported_kind (gfc_expr *e, int n)
+{
+  gfc_error ("Not supported: %qs argument of %qs intrinsic at %L with kind %d",
+	     gfc_current_intrinsic_arg[n]->name,
+	     gfc_current_intrinsic, &e->where, e->ts.kind);
+  return;
+}
+
+
+/* Check if the decimal exponent range of an integer variable is at least four
+   so that it is large enough to e.g. hold errno values and the values of
+   LIBERROR_* from libgfortran.h.  */
+
+static bool
+check_minrange4 (gfc_expr *e, int n)
+{
+  if (e->ts.kind >= 2)
+    return true;
+
+  gfc_error ("%qs argument of %qs intrinsic at %L must have "
+	     "a decimal exponent range of at least four",
+	     gfc_current_intrinsic_arg[n]->name,
+	     gfc_current_intrinsic, &e->where);
+  return false;
+}
+
+
 /* Make sure an expression is a variable.  */
 
 static bool
@@ -5559,6 +5589,27 @@ gfc_check_scan (gfc_expr *x, gfc_expr *y, gfc_expr *z, gfc_expr *kind)
   return true;
 }
 
+bool
+gfc_check_split (gfc_expr *string, gfc_expr *set, gfc_expr *pos, gfc_expr *back)
+{
+  if (!type_check (string, 0, BT_CHARACTER))
+    return false;
+
+  if (!type_check (set, 1, BT_CHARACTER))
+    return false;
+
+  if (!type_check (pos, 2, BT_INTEGER) || !scalar_check (pos, 2))
+    return false;
+
+  if (back != NULL
+      && (!type_check (back, 3, BT_LOGICAL) || !scalar_check (back, 3)))
+    return false;
+
+  if (!same_type_check (string, 0, set, 1))
+    return false;
+
+  return true;
+}
 
 bool
 gfc_check_secnds (gfc_expr *r)
@@ -6060,7 +6111,8 @@ gfc_check_c_associated (gfc_expr *c_ptr_1, gfc_expr *c_ptr_2)
 
 
 bool
-gfc_check_c_f_pointer (gfc_expr *cptr, gfc_expr *fptr, gfc_expr *shape)
+gfc_check_c_f_pointer (gfc_expr *cptr, gfc_expr *fptr, gfc_expr *shape,
+		       gfc_expr *lower)
 {
   symbol_attribute attr;
   const char *msg;
@@ -6129,6 +6181,43 @@ gfc_check_c_f_pointer (gfc_expr *cptr, gfc_expr *fptr, gfc_expr *shape)
 	      mpz_clear (size);
 	      gfc_error ("SHAPE argument at %L to C_F_POINTER must have the same "
 			"size as the RANK of FPTR", &shape->where);
+	      return false;
+	    }
+	  mpz_clear (size);
+	}
+    }
+
+  if (lower
+      && !gfc_notify_std (GFC_STD_F2023, "LOWER argument at %L to C_F_POINTER",
+			  &lower->where))
+    return false;
+
+  if (!shape && lower)
+    {
+      gfc_error ("Unexpected LOWER argument at %L to C_F_POINTER "
+		 "with scalar FPTR",
+		 &lower->where);
+      return false;
+    }
+
+  if (lower && !rank_check (lower, 3, 1))
+    return false;
+
+  if (lower && !type_check (lower, 3, BT_INTEGER))
+    return false;
+
+  if (lower)
+    {
+      mpz_t size;
+      if (gfc_array_size (lower, &size))
+	{
+	  if (mpz_cmp_ui (size, fptr->rank) != 0)
+	    {
+	      mpz_clear (size);
+	      gfc_error (
+		"LOWER argument at %L to C_F_POINTER must have the same "
+		"size as the RANK of FPTR",
+		&lower->where);
 	      return false;
 	    }
 	  mpz_clear (size);
@@ -6507,7 +6596,7 @@ gfc_check_fseek_sub (gfc_expr *unit, gfc_expr *offset, gfc_expr *whence, gfc_exp
 
 
 bool
-gfc_check_fstat (gfc_expr *unit, gfc_expr *array)
+gfc_check_fstat (gfc_expr *unit, gfc_expr *values)
 {
   if (!type_check (unit, 0, BT_INTEGER))
     return false;
@@ -6515,11 +6604,22 @@ gfc_check_fstat (gfc_expr *unit, gfc_expr *array)
   if (!scalar_check (unit, 0))
     return false;
 
-  if (!type_check (array, 1, BT_INTEGER)
-      || !kind_value_check (unit, 0, gfc_default_integer_kind))
+  if (!type_check (values, 1, BT_INTEGER))
     return false;
 
-  if (!array_check (array, 1))
+  if (values->ts.kind != 4 && values->ts.kind != 8)
+    {
+      error_unsupported_kind (values, 1);
+      return false;
+    }
+
+  if (!array_check (values, 1))
+    return false;
+
+  if (!variable_check (values, 1, false))
+    return false;
+
+  if (!array_size_check (values, 1, 13))
     return false;
 
   return true;
@@ -6527,29 +6627,22 @@ gfc_check_fstat (gfc_expr *unit, gfc_expr *array)
 
 
 bool
-gfc_check_fstat_sub (gfc_expr *unit, gfc_expr *array, gfc_expr *status)
+gfc_check_fstat_sub (gfc_expr *unit, gfc_expr *values, gfc_expr *status)
 {
-  if (!type_check (unit, 0, BT_INTEGER))
-    return false;
-
-  if (!scalar_check (unit, 0))
-    return false;
-
-  if (!type_check (array, 1, BT_INTEGER)
-      || !kind_value_check (array, 1, gfc_default_integer_kind))
-    return false;
-
-  if (!array_check (array, 1))
+  if (!gfc_check_fstat (unit, values))
     return false;
 
   if (status == NULL)
     return true;
 
   if (!type_check (status, 2, BT_INTEGER)
-      || !kind_value_check (status, 2, gfc_default_integer_kind))
+      || !check_minrange4 (status, 2))
     return false;
 
   if (!scalar_check (status, 2))
+    return false;
+
+  if (!variable_check (status, 2, false))
     return false;
 
   return true;
@@ -6589,18 +6682,29 @@ gfc_check_ftell_sub (gfc_expr *unit, gfc_expr *offset)
 
 
 bool
-gfc_check_stat (gfc_expr *name, gfc_expr *array)
+gfc_check_stat (gfc_expr *name, gfc_expr *values)
 {
   if (!type_check (name, 0, BT_CHARACTER))
     return false;
   if (!kind_value_check (name, 0, gfc_default_character_kind))
     return false;
 
-  if (!type_check (array, 1, BT_INTEGER)
-      || !kind_value_check (array, 1, gfc_default_integer_kind))
+  if (!type_check (values, 1, BT_INTEGER))
     return false;
 
-  if (!array_check (array, 1))
+  if (values->ts.kind != 4 && values->ts.kind != 8)
+    {
+      error_unsupported_kind (values, 1);
+      return false;
+    }
+
+  if (!array_check (values, 1))
+    return false;
+
+  if (!variable_check (values, 1, false))
+    return false;
+
+  if (!array_size_check (values, 1, 13))
     return false;
 
   return true;
@@ -6608,28 +6712,22 @@ gfc_check_stat (gfc_expr *name, gfc_expr *array)
 
 
 bool
-gfc_check_stat_sub (gfc_expr *name, gfc_expr *array, gfc_expr *status)
+gfc_check_stat_sub (gfc_expr *name, gfc_expr *values, gfc_expr *status)
 {
-  if (!type_check (name, 0, BT_CHARACTER))
-    return false;
-  if (!kind_value_check (name, 0, gfc_default_character_kind))
-    return false;
-
-  if (!type_check (array, 1, BT_INTEGER)
-      || !kind_value_check (array, 1, gfc_default_integer_kind))
-    return false;
-
-  if (!array_check (array, 1))
+  if (!gfc_check_stat (name, values))
     return false;
 
   if (status == NULL)
     return true;
 
   if (!type_check (status, 2, BT_INTEGER)
-      || !kind_value_check (array, 1, gfc_default_integer_kind))
+      || !check_minrange4 (status, 2))
     return false;
 
   if (!scalar_check (status, 2))
+    return false;
+
+  if (!variable_check (status, 2, false))
     return false;
 
   return true;

@@ -47,6 +47,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "tree-into-ssa.h"
 #include "tree-cfgcleanup.h"
 #include "gimple-pretty-print.h"
+#include "target.h"
 
 
 /* The set of blocks in that at least one of the following changes happened:
@@ -391,7 +392,7 @@ tree_forwarder_block_p (basic_block bb, bool phi_wanted)
   location_t locus;
 
   /* BB must have a single outgoing edge.  */
-  if (single_succ_p (bb) != 1
+  if (!single_succ_p (bb)
       /* If PHI_WANTED is false, BB must not have any PHI nodes.
 	 Otherwise, BB must have PHI nodes.  */
       || gimple_seq_empty_p (phi_nodes (bb)) == phi_wanted
@@ -1569,6 +1570,29 @@ execute_cleanup_cfg_post_optimizing (void)
   cleanup_dead_labels ();
   if (group_case_labels ())
     todo |= TODO_cleanup_cfg;
+
+  basic_block bb = single_succ (ENTRY_BLOCK_PTR_FOR_FN (cfun));
+  gimple_stmt_iterator gsi = gsi_start_nondebug_after_labels_bb (bb);
+  /* If the first (and only) bb and the only non debug
+     statement is __builtin_unreachable call, then replace it with a trap
+     so the function is at least one instruction in size.  */
+  if (!gsi_end_p (gsi)
+      && gimple_call_builtin_p (gsi_stmt (gsi), BUILT_IN_UNREACHABLE))
+    {
+      if (targetm.have_trap ())
+	{
+	  gimple_call_set_fndecl (gsi_stmt (gsi), builtin_decl_implicit (BUILT_IN_UNREACHABLE_TRAP));
+	  update_stmt (gsi_stmt (gsi));
+	}
+      /* If the target does not have a trap, convert it into an infinite loop. */
+      else
+	{
+	  gsi_remove (&gsi, true);
+	  make_single_succ_edge (bb, bb, EDGE_FALLTHRU);
+	  fix_loop_structure (NULL);
+	}
+    }
+
   if ((flag_compare_debug_opt || flag_compare_debug)
       && flag_dump_final_insns)
     {

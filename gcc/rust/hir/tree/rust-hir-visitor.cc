@@ -370,7 +370,8 @@ DefaultHIRVisitor::walk (BlockExpr &expr)
 void
 DefaultHIRVisitor::walk (AnonConst &expr)
 {
-  expr.get_inner_expr ().accept_vis (*this);
+  if (!expr.is_deferred ())
+    expr.get_inner_expr ().accept_vis (*this);
 }
 
 void
@@ -497,7 +498,7 @@ DefaultHIRVisitor::walk (IfExpr &expr)
 void
 DefaultHIRVisitor::walk (IfExprConseqElse &expr)
 {
-  reinterpret_cast<IfExpr &> (expr).accept_vis (*this);
+  expr.IfExpr::accept_vis (*this);
   expr.get_else_block ().accept_vis (*this);
 }
 
@@ -546,7 +547,7 @@ void
 DefaultHIRVisitor::walk (InlineAsm &expr)
 {
   visit_outer_attrs (expr);
-  const auto &operands = expr.get_operands ();
+  auto &operands = expr.get_operands ();
   using RegisterType = AST::InlineAsmOperand::RegisterType;
   for (auto &operand : operands)
     {
@@ -600,6 +601,12 @@ DefaultHIRVisitor::walk (LlvmInlineAsm &expr)
     output.expr->accept_vis (*this);
   for (auto &input : expr.inputs)
     input.expr->accept_vis (*this);
+}
+
+void
+DefaultHIRVisitor::walk (OffsetOf &expr)
+{
+  expr.get_type ().accept_vis (*this);
 }
 
 void
@@ -742,7 +749,7 @@ DefaultHIRVisitor::walk (EnumItem &item)
 void
 DefaultHIRVisitor::walk (EnumItemTuple &item_tuple)
 {
-  reinterpret_cast<EnumItem &> (item_tuple).accept_vis (*this);
+  item_tuple.EnumItem::accept_vis (*this);
   for (auto &field : item_tuple.get_tuple_fields ())
     field.get_field_type ().accept_vis (*this);
 }
@@ -750,7 +757,7 @@ DefaultHIRVisitor::walk (EnumItemTuple &item_tuple)
 void
 DefaultHIRVisitor::walk (EnumItemStruct &item_struct)
 {
-  reinterpret_cast<EnumItem &> (item_struct).accept_vis (*this);
+  item_struct.EnumItem::accept_vis (*this);
   for (auto &field : item_struct.get_struct_fields ())
     field.get_field_type ().accept_vis (*this);
 }
@@ -758,7 +765,7 @@ DefaultHIRVisitor::walk (EnumItemStruct &item_struct)
 void
 DefaultHIRVisitor::walk (EnumItemDiscriminant &item)
 {
-  reinterpret_cast<EnumItem &> (item).accept_vis (*this);
+  item.EnumItem::accept_vis (*this);
   item.get_discriminant_expression ().accept_vis (*this);
 }
 
@@ -890,7 +897,8 @@ DefaultHIRVisitor::walk (ImplBlock &impl)
   visit_outer_attrs (impl);
   for (auto &generic : impl.get_generic_params ())
     generic->accept_vis (*this);
-  impl.get_trait_ref ().accept_vis (*this);
+  if (impl.has_trait_ref ())
+    impl.get_trait_ref ().accept_vis (*this);
   impl.get_type ().accept_vis (*this);
   if (impl.has_where_clause ())
     visit_where_clause (impl.get_where_clause ());
@@ -1015,14 +1023,14 @@ DefaultHIRVisitor::walk (StructPattern &pattern)
 }
 
 void
-DefaultHIRVisitor::walk (TupleStructItemsNoRange &tuple_items)
+DefaultHIRVisitor::walk (TupleStructItemsNoRest &tuple_items)
 {
   for (auto &item : tuple_items.get_patterns ())
     item->accept_vis (*this);
 }
 
 void
-DefaultHIRVisitor::walk (TupleStructItemsRange &tuple_items)
+DefaultHIRVisitor::walk (TupleStructItemsHasRest &tuple_items)
 {
   for (auto &lower : tuple_items.get_lower_patterns ())
     lower->accept_vis (*this);
@@ -1038,14 +1046,14 @@ DefaultHIRVisitor::walk (TupleStructPattern &pattern)
 }
 
 void
-DefaultHIRVisitor::walk (TuplePatternItemsMultiple &tuple_items)
+DefaultHIRVisitor::walk (TuplePatternItemsNoRest &tuple_items)
 {
   for (auto &pattern : tuple_items.get_patterns ())
     pattern->accept_vis (*this);
 }
 
 void
-DefaultHIRVisitor::walk (TuplePatternItemsRanged &tuple_items)
+DefaultHIRVisitor::walk (TuplePatternItemsHasRest &tuple_items)
 {
   for (auto &lower : tuple_items.get_lower_patterns ())
     lower->accept_vis (*this);
@@ -1060,10 +1068,25 @@ DefaultHIRVisitor::walk (TuplePattern &pattern)
 }
 
 void
+DefaultHIRVisitor::walk (SlicePatternItemsNoRest &items)
+{
+  for (auto &pattern : items.get_patterns ())
+    pattern->accept_vis (*this);
+}
+
+void
+DefaultHIRVisitor::walk (SlicePatternItemsHasRest &items)
+{
+  for (auto &lower : items.get_lower_patterns ())
+    lower->accept_vis (*this);
+  for (auto &upper : items.get_upper_patterns ())
+    upper->accept_vis (*this);
+}
+
+void
 DefaultHIRVisitor::walk (SlicePattern &pattern)
 {
-  for (auto &item : pattern.get_items ())
-    item->accept_vis (*this);
+  pattern.get_items ().accept_vis (*this);
 }
 
 void

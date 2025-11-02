@@ -2,17 +2,12 @@
 /* { dg-options "-march=rv64gcv -mabi=lp64d --param=gpr2vr-cost=0" } */
 
 #include "vx_binary.h"
+#include "vx_ternary.h"
 
 #define T int16_t
 
-DEF_VX_BINARY_CASE_0_WRAP(T, +, add)
-DEF_VX_BINARY_CASE_0_WRAP(T, -, sub)
-DEF_VX_BINARY_REVERSE_CASE_0_WRAP(T, -, rsub);
-DEF_VX_BINARY_CASE_0_WRAP(T, &, and)
-DEF_VX_BINARY_CASE_0_WRAP(T, |, or)
-DEF_VX_BINARY_CASE_0_WRAP(T, ^, xor)
-DEF_VX_BINARY_CASE_0_WRAP(T, *, mul)
-DEF_VX_BINARY_CASE_0_WRAP(T, /, div)
+TEST_BINARY_VX_SIGNED_0(T)
+TEST_TERNARY_VX_SIGNED_0(T)
 
 /* { dg-final { scan-assembler-times {vadd.vx} 1 } } */
 /* { dg-final { scan-assembler-times {vsub.vx} 1 } } */
@@ -22,3 +17,13 @@ DEF_VX_BINARY_CASE_0_WRAP(T, /, div)
 /* { dg-final { scan-assembler-times {vxor.vx} 1 } } */
 /* { dg-final { scan-assembler-times {vmul.vx} 1 } } */
 /* { dg-final { scan-assembler-times {vdiv.vx} 1 } } */
+/* { dg-final { scan-assembler-times {vrem.vx} 1 } } */
+/* { dg-final { scan-assembler-times {vmax.vx} 2 } } */
+/* { dg-final { scan-assembler-times {vmin.vx} 2 } } */
+/* { dg-final { scan-assembler-times {vsadd.vx} 1 } } */
+/* { dg-final { scan-assembler-times {vssub.vx} 1 } } */
+/* { dg-final { scan-assembler-times {vaadd.vx} 2 } } */
+/* { dg-final { scan-assembler-times {vmacc.vx} 1 } } */
+/* { dg-final { scan-assembler-times {vnmsac.vx} 1 } } */
+/* { dg-final { scan-assembler-times {vmadd.vx} 1 } } */
+/* { dg-final { scan-assembler-times {vnmsub.vx} 1 } } */

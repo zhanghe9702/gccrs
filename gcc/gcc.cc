@@ -28,6 +28,7 @@ Once it knows which kind of compilation to perform, the procedure for
 compilation is specified by a string called a "spec".  */
 
 #define INCLUDE_STRING
+#define INCLUDE_VECTOR
 #include "config.h"
 #include "system.h"
 #ifdef HOST_HAS_PERSONALITY_ADDR_NO_RANDOMIZE
@@ -43,7 +44,7 @@ compilation is specified by a string called a "spec".  */
 #include "opt-suggestions.h"
 #include "gcc.h"
 #include "diagnostic.h"
-#include "diagnostic-format.h"
+#include "diagnostics/sink.h"
 #include "pretty-print-urlifier.h"
 #include "flags.h"
 #include "opts.h"
@@ -983,6 +984,13 @@ proper position among the other output files.  */
 #endif
 
 /* Here is the spec for running the linker, after compiling all files.  */
+
+#if defined(TARGET_PROVIDES_LIBATOMIC) && defined(USE_LD_AS_NEEDED)
+#define LINK_LIBATOMIC_SPEC "%{!fno-link-libatomic:" LD_AS_NEEDED_OPTION \
+			    " -latomic " LD_NO_AS_NEEDED_OPTION "} "
+#else
+#define LINK_LIBATOMIC_SPEC ""
+#endif
 
 /* This is overridable by the target in case they need to specify the
    -lgcc and -lc order specially, yet not require them to override all
@@ -2774,12 +2782,12 @@ clear_failure_queue (void)
 
    Returns the value returned by CALLBACK.  */
 
-static void *
+template<typename fun>
+auto *
 for_each_path (const struct path_prefix *paths,
 	       bool do_multi,
 	       size_t extra_space,
-	       void *(*callback) (char *, void *),
-	       void *callback_info)
+	       fun && callback)
 {
   struct prefix_list *pl;
   const char *multi_dir = NULL;
@@ -2788,7 +2796,7 @@ for_each_path (const struct path_prefix *paths,
   const char *multi_suffix;
   const char *just_multi_suffix;
   char *path = NULL;
-  void *ret = NULL;
+  decltype (callback (nullptr)) ret = nullptr;
   bool skip_multi_dir = false;
   bool skip_multi_os_dir = false;
 
@@ -2839,7 +2847,7 @@ for_each_path (const struct path_prefix *paths,
 	  if (!skip_multi_dir)
 	    {
 	      memcpy (path + len, multi_suffix, suffix_len + 1);
-	      ret = callback (path, callback_info);
+	      ret = callback (path);
 	      if (ret)
 		break;
 	    }
@@ -2850,7 +2858,7 @@ for_each_path (const struct path_prefix *paths,
 	      && pl->require_machine_suffix == 2)
 	    {
 	      memcpy (path + len, just_multi_suffix, just_suffix_len + 1);
-	      ret = callback (path, callback_info);
+	      ret = callback (path);
 	      if (ret)
 		break;
 	    }
@@ -2860,7 +2868,7 @@ for_each_path (const struct path_prefix *paths,
 	      && !pl->require_machine_suffix && multiarch_dir)
 	    {
 	      memcpy (path + len, multiarch_suffix, multiarch_len + 1);
-	      ret = callback (path, callback_info);
+	      ret = callback (path);
 	      if (ret)
 		break;
 	    }
@@ -2888,7 +2896,7 @@ for_each_path (const struct path_prefix *paths,
 	      else
 		path[len] = '\0';
 
-	      ret = callback (path, callback_info);
+	      ret = callback (path);
 	      if (ret)
 		break;
 	    }
@@ -2934,31 +2942,6 @@ for_each_path (const struct path_prefix *paths,
   return ret;
 }
 
-/* Callback for build_search_list.  Adds path to obstack being built.  */
-
-struct add_to_obstack_info {
-  struct obstack *ob;
-  bool check_dir;
-  bool first_time;
-};
-
-static void *
-add_to_obstack (char *path, void *data)
-{
-  struct add_to_obstack_info *info = (struct add_to_obstack_info *) data;
-
-  if (info->check_dir && !is_directory (path))
-    return NULL;
-
-  if (!info->first_time)
-    obstack_1grow (info->ob, PATH_SEPARATOR);
-
-  obstack_grow (info->ob, path, strlen (path));
-
-  info->first_time = false;
-  return NULL;
-}
-
 /* Add or change the value of an environment variable, outputting the
    change to standard error if in verbose mode.  */
 static void
@@ -2979,16 +2962,26 @@ static char *
 build_search_list (const struct path_prefix *paths, const char *prefix,
 		   bool check_dir, bool do_multi)
 {
-  struct add_to_obstack_info info;
-
-  info.ob = &collect_obstack;
-  info.check_dir = check_dir;
-  info.first_time = true;
+  struct obstack *const ob = &collect_obstack;
+  bool first_time = true;
 
   obstack_grow (&collect_obstack, prefix, strlen (prefix));
   obstack_1grow (&collect_obstack, '=');
 
-  for_each_path (paths, do_multi, 0, add_to_obstack, &info);
+  /* Callback adds path to obstack being built.  */
+  for_each_path (paths, do_multi, 0, [&](char *path) -> void*
+    {
+      if (check_dir && !is_directory (path))
+	return NULL;
+
+      if (!first_time)
+	obstack_1grow (ob, PATH_SEPARATOR);
+
+      obstack_grow (ob, path, strlen (path));
+
+      first_time = false;
+      return NULL;
+    });
 
   obstack_1grow (&collect_obstack, '\0');
   return XOBFINISH (&collect_obstack, char *);
@@ -3022,42 +3015,6 @@ access_check (const char *name, int mode)
   return access (name, mode);
 }
 
-/* Callback for find_a_file.  Appends the file name to the directory
-   path.  If the resulting file exists in the right mode, return the
-   full pathname to the file.  */
-
-struct file_at_path_info {
-  const char *name;
-  const char *suffix;
-  int name_len;
-  int suffix_len;
-  int mode;
-};
-
-static void *
-file_at_path (char *path, void *data)
-{
-  struct file_at_path_info *info = (struct file_at_path_info *) data;
-  size_t len = strlen (path);
-
-  memcpy (path + len, info->name, info->name_len);
-  len += info->name_len;
-
-  /* Some systems have a suffix for executable files.
-     So try appending that first.  */
-  if (info->suffix_len)
-    {
-      memcpy (path + len, info->suffix, info->suffix_len + 1);
-      if (access_check (path, info->mode) == 0)
-	return path;
-    }
-
-  path[len] = '\0';
-  if (access_check (path, info->mode) == 0)
-    return path;
-
-  return NULL;
-}
 
 /* Search for NAME using the prefix list PREFIXES.  MODE is passed to
    access to check permissions.  If DO_MULTI is true, search multilib
@@ -3068,8 +3025,6 @@ static char *
 find_a_file (const struct path_prefix *pprefix, const char *name, int mode,
 	     bool do_multi)
 {
-  struct file_at_path_info info;
-
   /* Find the filename in question (special case for absolute paths).  */
 
   if (IS_ABSOLUTE_PATH (name))
@@ -3080,15 +3035,38 @@ find_a_file (const struct path_prefix *pprefix, const char *name, int mode,
       return NULL;
     }
 
-  info.name = name;
-  info.suffix = (mode & X_OK) != 0 ? HOST_EXECUTABLE_SUFFIX : "";
-  info.name_len = strlen (info.name);
-  info.suffix_len = strlen (info.suffix);
-  info.mode = mode;
+  const char *suffix = (mode & X_OK) != 0 ? HOST_EXECUTABLE_SUFFIX : "";
+  const int name_len = strlen (name);
+  const int suffix_len = strlen (suffix);
 
-  return (char*) for_each_path (pprefix, do_multi,
-				info.name_len + info.suffix_len,
-				file_at_path, &info);
+
+  /* Callback appends the file name to the directory path.  If the
+     resulting file exists in the right mode, return the full pathname
+     to the file.  */
+  return for_each_path (pprefix, do_multi,
+			name_len + suffix_len,
+			[=](char *path) -> char*
+    {
+      size_t len = strlen (path);
+
+      memcpy (path + len, name, name_len);
+      len += name_len;
+
+      /* Some systems have a suffix for executable files.
+	 So try appending that first.  */
+      if (suffix_len)
+	{
+	  memcpy (path + len, suffix, suffix_len + 1);
+	  if (access_check (path, mode) == 0)
+	    return path;
+	}
+
+      path[len] = '\0';
+      if (access_check (path, mode) == 0)
+	return path;
+
+      return NULL;
+    });
 }
 
 /* Specialization of find_a_file for programs that also takes into account
@@ -4195,7 +4173,7 @@ driver_handle_option (struct gcc_options *opts,
 		      unsigned int lang_mask ATTRIBUTE_UNUSED, int kind,
 		      location_t loc,
 		      const struct cl_option_handlers *handlers ATTRIBUTE_UNUSED,
-		      diagnostic_context *dc,
+		      diagnostics::context *dc,
 		      void (*) (void))
 {
   size_t opt_index = decoded->opt_index;
@@ -4207,7 +4185,8 @@ driver_handle_option (struct gcc_options *opts,
 
   gcc_assert (opts == &global_options);
   gcc_assert (opts_set == &global_options_set);
-  gcc_assert (kind == DK_UNSPECIFIED);
+  gcc_assert (static_cast<diagnostics::kind> (kind)
+	      == diagnostics::kind::unspecified);
   gcc_assert (loc == UNKNOWN_LOCATION);
   gcc_assert (dc == global_dc);
 
@@ -4367,10 +4346,10 @@ driver_handle_option (struct gcc_options *opts,
 	  const char *basename = (opts->x_dump_base_name ? opts->x_dump_base_name
 				  : opts->x_main_input_basename);
 	  gcc_assert (dc);
-	  diagnostic_output_format_init (*dc,
-					 opts->x_main_input_filename, basename,
-					 (enum diagnostics_output_format)value,
-					 opts->x_flag_diagnostics_json_formatting);
+	  diagnostics::output_format_init (*dc,
+					   opts->x_main_input_filename, basename,
+					   (enum diagnostics_output_format)value,
+					   opts->x_flag_diagnostics_json_formatting);
 	  break;
 	}
 
@@ -6007,25 +5986,26 @@ do_self_spec (const char *spec)
 
 /* Callback for processing %D and %I specs.  */
 
-struct spec_path_info {
+struct spec_path {
   const char *option;
   const char *append;
   size_t append_len;
   bool omit_relative;
   bool separate_options;
   bool realpaths;
+
+  void *operator() (char *path);
 };
 
-static void *
-spec_path (char *path, void *data)
+void *
+spec_path::operator() (char *path)
 {
-  struct spec_path_info *info = (struct spec_path_info *) data;
   size_t len = 0;
   char save = 0;
 
   /* The path must exist; we want to resolve it to the realpath so that this
      can be embedded as a runpath.  */
-  if (info->realpaths)
+  if (realpaths)
      path = lrealpath (path);
 
   /* However, if we failed to resolve it - perhaps because there was a bogus
@@ -6033,23 +6013,23 @@ spec_path (char *path, void *data)
   if (!path)
     return NULL;
 
-  if (info->omit_relative && !IS_ABSOLUTE_PATH (path))
+  if (omit_relative && !IS_ABSOLUTE_PATH (path))
     return NULL;
 
-  if (info->append_len != 0)
+  if (append_len != 0)
     {
       len = strlen (path);
-      memcpy (path + len, info->append, info->append_len + 1);
+      memcpy (path + len, append, append_len + 1);
     }
 
   if (!is_directory (path))
     return NULL;
 
-  do_spec_1 (info->option, 1, NULL);
-  if (info->separate_options)
+  do_spec_1 (option, 1, NULL);
+  if (separate_options)
     do_spec_1 (" ", 0, NULL);
 
-  if (info->append_len == 0)
+  if (append_len == 0)
     {
       len = strlen (path);
       save = path[len - 1];
@@ -6061,7 +6041,7 @@ spec_path (char *path, void *data)
   do_spec_1 (" ", 0, NULL);
 
   /* Must not damage the original path.  */
-  if (info->append_len == 0)
+  if (append_len == 0)
     path[len - 1] = save;
 
   return NULL;
@@ -6249,7 +6229,7 @@ do_spec_1 (const char *spec, int inswitch, const char *soft_matched_part)
 	     that we search for startfiles.  */
 	  case 'D':
 	    {
-	      struct spec_path_info info;
+	      struct spec_path info;
 
 	      info.option = "-L";
 	      info.append_len = 0;
@@ -6266,13 +6246,13 @@ do_spec_1 (const char *spec, int inswitch, const char *soft_matched_part)
 	      info.separate_options = false;
 	      info.realpaths = false;
 
-	      for_each_path (&startfile_prefixes, true, 0, spec_path, &info);
+	      for_each_path (&startfile_prefixes, true, 0, info);
 	    }
 	    break;
 
 	  case 'P':
 	    {
-	      struct spec_path_info info;
+	      struct spec_path info;
 
 	      info.option = RUNPATH_OPTION;
 	      info.append_len = 0;
@@ -6281,7 +6261,7 @@ do_spec_1 (const char *spec, int inswitch, const char *soft_matched_part)
 	      /* We want to embed the actual paths that have the libraries.  */
 	      info.realpaths = true;
 
-	      for_each_path (&startfile_prefixes, true, 0, spec_path, &info);
+	      for_each_path (&startfile_prefixes, true, 0, info);
 	    }
 	    break;
 
@@ -6560,7 +6540,7 @@ do_spec_1 (const char *spec, int inswitch, const char *soft_matched_part)
 
 	  case 'I':
 	    {
-	      struct spec_path_info info;
+	      struct spec_path info;
 
 	      if (multilib_dir)
 		{
@@ -6608,8 +6588,7 @@ do_spec_1 (const char *spec, int inswitch, const char *soft_matched_part)
 	      info.separate_options = true;
 	      info.realpaths = false;
 
-	      for_each_path (&include_prefixes, false, info.append_len,
-			     spec_path, &info);
+	      for_each_path (&include_prefixes, false, info.append_len, info);
 
 	      info.append = "include-fixed";
 	      if (*sysroot_hdrs_suffix_spec)
@@ -6622,14 +6601,13 @@ do_spec_1 (const char *spec, int inswitch, const char *soft_matched_part)
 		  info.append = concat (info.append, dir_separator_str,
 					multiarch_dir, NULL);
 		  info.append_len = strlen (info.append);
-		  for_each_path (&include_prefixes, false, info.append_len,
-				 spec_path, &info);
+		  for_each_path (&include_prefixes, false,
+				 info.append_len, info);
 
 		  info.append = "include-fixed";
 		}
 	      info.append_len = strlen (info.append);
-	      for_each_path (&include_prefixes, false, info.append_len,
-			     spec_path, &info);
+	      for_each_path (&include_prefixes, false, info.append_len, info);
 	    }
 	    break;
 
@@ -8506,11 +8484,13 @@ driver::set_up_specs () const
   spec_machine_suffix = just_machine_suffix;
 #endif
 
+  const char *exec_prefix
+    = gcc_exec_prefix ? gcc_exec_prefix : standard_exec_prefix;
   /* We need to check standard_exec_prefix/spec_machine_suffix/specs
      for any override of as, ld and libraries.  */
-  specs_file = (char *) alloca (strlen (standard_exec_prefix)
-		       + strlen (spec_machine_suffix) + sizeof ("specs"));
-  strcpy (specs_file, standard_exec_prefix);
+  specs_file = (char *) alloca (
+    strlen (exec_prefix) + strlen (spec_machine_suffix) + sizeof ("specs"));
+  strcpy (specs_file, exec_prefix);
   strcat (specs_file, spec_machine_suffix);
   strcat (specs_file, "specs");
   if (access (specs_file, R_OK) == 0)

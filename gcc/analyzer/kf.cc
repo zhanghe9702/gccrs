@@ -783,7 +783,7 @@ public:
 
     /* SEI CERT C Coding Standard: "POS34-C. Do not call putenv() with a
        pointer to an automatic variable as the argument".  */
-    diagnostic_metadata::precanned_rule
+    diagnostics::metadata::precanned_rule
       rule ("POS34-C", "https://wiki.sei.cmu.edu/confluence/x/6NYxBQ");
     ctxt.add_rule (rule);
 
@@ -857,7 +857,8 @@ public:
     const svalue *ptr_sval = cd.get_arg_svalue (0);
     const region *reg
       = model->deref_rvalue (ptr_sval, cd.get_arg_tree (0), ctxt);
-    model->get_store ()->mark_as_escaped (reg);
+    store_manager *store_mgr = model->get_manager ()->get_store_manager ();
+    model->get_store ()->mark_as_escaped (*store_mgr, reg);
     enum memory_space mem_space = reg->get_memory_space ();
     switch (mem_space)
       {
@@ -1053,11 +1054,11 @@ kf_realloc::impl_call_post (const call_details &cd) const
 	      const svalue *copied_size_sval
 		= get_copied_size (model, old_size_sval, new_size_sval);
 	      const region *copied_old_reg
-		= mgr->get_sized_region (freed_reg, NULL, copied_size_sval);
+		= mgr->get_sized_region (freed_reg, nullptr, copied_size_sval);
 	      const svalue *buffer_content_sval
 		= model->get_store_value (copied_old_reg, cd.get_ctxt ());
 	      const region *copied_new_reg
-		= mgr->get_sized_region (new_reg, NULL, copied_size_sval);
+		= mgr->get_sized_region (new_reg, nullptr, copied_size_sval);
 	      model->set_value (copied_new_reg, buffer_content_sval,
 				cd.get_ctxt ());
 	    }
@@ -1636,7 +1637,7 @@ kf_strncpy::impl_call_post (const call_details &cd) const
     }
   private:
     /* (strlen + 1) of the source string if it has a terminator,
-       or NULL for the case where UB would happen before
+       or nullptr for the case where UB would happen before
        finding any terminator.  */
     const svalue *m_num_bytes_with_terminator_sval;
 
@@ -1691,8 +1692,8 @@ public:
     region_model_manager *mgr = cd.get_manager ();
     /* Ideally we'd get the size here, and simulate copying the bytes.  */
     const region *new_reg
-      = model->get_or_create_region_for_heap_alloc (NULL, cd.get_ctxt ());
-    model->mark_region_as_unknown (new_reg, NULL);
+      = model->get_or_create_region_for_heap_alloc (nullptr, cd.get_ctxt ());
+    model->mark_region_as_unknown (new_reg, nullptr);
     if (cd.get_lhs_type ())
       {
 	const svalue *ptr_sval
@@ -2373,6 +2374,7 @@ register_known_functions (known_function_manager &kfm,
     kfm.add ("___errno", std::make_unique<kf_errno_location> ());
     kfm.add ("__error", std::make_unique<kf_errno_location> ());
     kfm.add ("__errno", std::make_unique<kf_errno_location> ());
+    kfm.add ("__get_errno_ptr", std::make_unique<kf_errno_location> ());
   }
 
   /* Language-specific support functions.  */

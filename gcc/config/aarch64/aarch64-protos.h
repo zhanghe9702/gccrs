@@ -581,6 +581,9 @@ struct tune_params
 
   /* Define models for the aarch64_ldp_stp_policy.  */
   enum aarch64_ldp_stp_policy ldp_policy_model, stp_policy_model;
+
+  /* Dispatch constraints for instruction scheduling.  */
+  const struct dispatch_constraint_info *dispatch_constraints;
 };
 
 /* Classifies an address.
@@ -652,6 +655,14 @@ enum aarch64_extra_tuning_flags_index
 {
 #include "aarch64-tuning-flags.def"
   AARCH64_EXTRA_TUNE_index_END
+};
+
+/* Dispatch constraints configuration for instruction scheduling.  */
+struct dispatch_constraint_info
+{
+  const int *max_slots;
+  int num_constraints;
+  vec<std::pair<int, int>> (*callback) (rtx_insn *);
 };
 
 
@@ -947,6 +958,7 @@ bool aarch64_parallel_select_half_p (machine_mode, rtx);
 bool aarch64_pars_overlap_p (rtx, rtx);
 bool aarch64_simd_scalar_immediate_valid_for_move (rtx, scalar_int_mode);
 bool aarch64_simd_shift_imm_p (rtx, machine_mode, bool);
+bool aarch64_sve_valid_pred_p (rtx, machine_mode);
 bool aarch64_sve_ptrue_svpattern_p (rtx, struct simd_immediate_info *);
 bool aarch64_simd_valid_and_imm (rtx);
 bool aarch64_simd_valid_and_imm_fmov (rtx, unsigned int * = NULL);
@@ -1019,7 +1031,7 @@ void aarch64_err_no_fpadvsimd (machine_mode);
 void aarch64_expand_epilogue (rtx_call_insn *);
 rtx aarch64_ptrue_all (unsigned int);
 opt_machine_mode aarch64_ptrue_all_mode (rtx);
-rtx aarch64_convert_sve_data_to_pred (rtx, machine_mode, rtx);
+rtx aarch64_convert_sve_data_to_pred (rtx, rtx);
 rtx aarch64_expand_sve_dupq (rtx, machine_mode, rtx);
 void aarch64_expand_mov_immediate (rtx, rtx);
 rtx aarch64_stack_protect_canary_mem (machine_mode, rtx, aarch64_salt_type);
@@ -1028,6 +1040,9 @@ rtx aarch64_ptrue_reg (machine_mode, unsigned int);
 rtx aarch64_ptrue_reg (machine_mode, machine_mode);
 rtx aarch64_pfalse_reg (machine_mode);
 bool aarch64_sve_same_pred_for_ptest_p (rtx *, rtx *);
+rtx aarch64_sve_packed_pred (machine_mode);
+rtx aarch64_sve_fp_pred (machine_mode, rtx *);
+rtx aarch64_sve_emit_masked_fp_pred (machine_mode, rtx);
 void aarch64_emit_load_store_through_mode (rtx, rtx, machine_mode);
 bool aarch64_expand_maskloadstore (rtx *, machine_mode);
 void aarch64_emit_sve_pred_move (rtx, rtx, rtx);
@@ -1035,7 +1050,9 @@ void aarch64_expand_sve_mem_move (rtx, rtx, machine_mode);
 bool aarch64_maybe_expand_sve_subreg_move (rtx, rtx);
 rtx aarch64_replace_reg_mode (rtx, machine_mode);
 void aarch64_split_sve_subreg_move (rtx, rtx, rtx);
+void aarch64_emit_sve_pred_vec_duplicate (machine_mode, rtx, rtx);
 void aarch64_expand_prologue (void);
+void aarch64_decompose_vec_struct_index (machine_mode, rtx *, rtx *, bool);
 void aarch64_expand_vector_init (rtx, rtx);
 void aarch64_sve_expand_vector_init_subvector (rtx, rtx);
 void aarch64_sve_expand_vector_init (rtx, rtx);
@@ -1092,6 +1109,7 @@ bool aarch64_legitimate_address_p (machine_mode, rtx, bool,
 				   aarch64_addr_query_type = ADDR_QUERY_M);
 machine_mode aarch64_select_cc_mode (RTX_CODE, rtx, rtx);
 rtx aarch64_gen_compare_reg (RTX_CODE, rtx, rtx);
+rtx aarch64_gen_compare_split_imm24 (rtx, rtx, rtx);
 bool aarch64_maxmin_plus_const (rtx_code, rtx *, bool);
 rtx aarch64_load_tp (rtx);
 
@@ -1130,6 +1148,8 @@ bool aarch64_check_required_extensions (location_t, tree,
 bool aarch64_general_check_builtin_call (location_t, vec<location_t>,
 					 unsigned int, tree, unsigned int,
 					 tree *);
+
+bool aarch64_cb_rhs (rtx_code op_code, rtx rhs);
 
 namespace aarch64 {
   void report_non_ice (location_t, tree, unsigned int);
@@ -1228,7 +1248,6 @@ rtl_opt_pass *make_pass_fma_steering (gcc::context *);
 rtl_opt_pass *make_pass_track_speculation (gcc::context *);
 rtl_opt_pass *make_pass_late_track_speculation (gcc::context *);
 rtl_opt_pass *make_pass_insert_bti (gcc::context *ctxt);
-rtl_opt_pass *make_pass_cc_fusion (gcc::context *ctxt);
 rtl_opt_pass *make_pass_switch_pstate_sm (gcc::context *ctxt);
 rtl_opt_pass *make_pass_ldp_fusion (gcc::context *);
 
@@ -1267,9 +1286,13 @@ void aarch64_expand_reversed_crc_using_pmull (scalar_mode, scalar_mode, rtx *);
 
 void aarch64_expand_fp_spaceship (rtx, rtx, rtx, rtx);
 
+extern bool aarch64_pacret_enabled ();
 extern bool aarch64_gcs_enabled ();
 
 extern unsigned aarch64_data_alignment (const_tree exp, unsigned align);
 extern unsigned aarch64_stack_alignment (const_tree exp, unsigned align);
+
+extern rtx aarch64_gen_compare_zero_and_branch (rtx_code code, rtx x,
+						rtx_code_label *label);
 
 #endif /* GCC_AARCH64_PROTOS_H */

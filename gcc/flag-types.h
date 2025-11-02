@@ -288,7 +288,8 @@ enum vect_cost_model {
 enum auto_init_type {
   AUTO_INIT_UNINITIALIZED = 0,
   AUTO_INIT_PATTERN = 1,
-  AUTO_INIT_ZERO = 2
+  AUTO_INIT_ZERO = 2,
+  AUTO_INIT_CXX26 = 3
 };
 
 /* Initialization of padding bits with zeros.  */
@@ -349,6 +350,9 @@ enum sanitize_code {
   SANITIZE_UNDEFINED_NONDEFAULT = SANITIZE_FLOAT_DIVIDE | SANITIZE_FLOAT_CAST
 				  | SANITIZE_BOUNDS_STRICT
 };
+
+/* Sanitizer flag type.  */
+typedef uint64_t sanitize_code_type;
 
 /* Different settings for zeroing subset of registers.  */
 namespace zero_regs_flags {

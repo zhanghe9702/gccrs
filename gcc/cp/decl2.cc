@@ -52,6 +52,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "omp-general.h"
 #include "tree-inline.h"
 #include "escaped_string.h"
+#include "contracts.h"
 
 /* Id for dumping the raw trees.  */
 int raw_dump_id;
@@ -232,7 +233,8 @@ change_return_type (tree new_ret, tree fntype)
 
   if (TREE_CODE (fntype) == FUNCTION_TYPE)
     {
-      newtype = build_function_type (new_ret, args);
+      newtype = build_function_type (new_ret, args,
+				     TYPE_NO_NAMED_ARGS_STDARG_P (fntype));
       newtype = apply_memfn_quals (newtype,
 				   type_memfn_quals (fntype));
     }
@@ -876,7 +878,7 @@ check_classfn (tree ctype, tree function, tree template_parms)
       if (same_type_p (TREE_TYPE (TREE_TYPE (function)),
 		       TREE_TYPE (TREE_TYPE (fndecl)))
 	  && compparms (p1, p2)
-	  && !targetm.target_option.function_versions (function, fndecl)
+	  && !disjoint_version_decls (function, fndecl)
 	  && (!is_template
 	      || comp_template_parms (template_parms,
 				      DECL_TEMPLATE_PARMS (fndecl)))
@@ -1697,7 +1699,8 @@ cp_reconstruct_complex_type (tree type, tree bottom)
   else if (TREE_CODE (type) == FUNCTION_TYPE)
     {
       inner = cp_reconstruct_complex_type (TREE_TYPE (type), bottom);
-      outer = build_function_type (inner, TYPE_ARG_TYPES (type));
+      outer = build_function_type (inner, TYPE_ARG_TYPES (type),
+				   TYPE_NO_NAMED_ARGS_STDARG_P (type));
       outer = apply_memfn_quals (outer, type_memfn_quals (type));
     }
   else if (TREE_CODE (type) == METHOD_TYPE)
@@ -2012,6 +2015,26 @@ cplus_decl_attributes (tree *decl, tree attributes, int flags)
 	if (*decl == pattern)
 	  TREE_UNAVAILABLE (tmpl) = true;
       }
+
+  if (VAR_P (*decl) && CP_DECL_THREAD_LOCAL_P (*decl))
+    {
+      // tls_model attribute can set a stronger TLS access model.
+      tls_model model = DECL_TLS_MODEL (*decl);
+      // Don't upgrade TLS model if TLS model isn't set yet.
+      if (model != TLS_MODEL_NONE)
+	{
+	  tls_model default_model = decl_default_tls_model (*decl);
+	  if (default_model > model)
+	    set_decl_tls_model (*decl, default_model);
+	}
+    }
+
+  /* For target_version semantics, mark any annotated function as versioned
+     so that it gets mangled even when on its own in a TU.  */
+  if (!TARGET_HAS_FMV_TARGET_ATTRIBUTE
+      && TREE_CODE (*decl) == FUNCTION_DECL
+      && get_target_version (*decl).is_valid ())
+    maybe_mark_function_versioned (*decl);
 }
 
 /* Walks through the namespace- or function-scope anonymous union
@@ -6229,6 +6252,7 @@ cp_warn_deprecated_use_scopes (tree scope)
 bool
 decl_dependent_p (tree decl)
 {
+  tree orig_decl = decl;
   if (DECL_FUNCTION_SCOPE_P (decl)
       || TREE_CODE (decl) == CONST_DECL
       || TREE_CODE (decl) == USING_DECL
@@ -6239,6 +6263,13 @@ decl_dependent_p (tree decl)
       return true;
   if (LAMBDA_FUNCTION_P (decl)
       && dependent_type_p (DECL_CONTEXT (decl)))
+    return true;
+  /* for-range-declaration of expansion statement as well as variable
+     declarations in the expansion statement body when the expansion statement
+     is not inside a template still need to be treated as dependent during
+     parsing.  When the body is instantiated, in_expansion_stmt will be already
+     false.  */
+  if (VAR_P (orig_decl) && in_expansion_stmt && decl == current_function_decl)
     return true;
   return false;
 }
@@ -6267,6 +6298,33 @@ mark_single_function (tree expr, tsubst_flags_t complain)
       && !(complain & tf_error))
     return false;
   return true;
+}
+
+/* True iff we have started, but not finished, defining FUNCTION_DECL DECL.  */
+
+bool
+fn_being_defined (tree decl)
+{
+  /* DECL_INITIAL is set to error_mark_node in grokfndecl for a definition, and
+     changed to BLOCK by poplevel at the end of the function.  */
+  return (TREE_CODE (decl) == FUNCTION_DECL
+	  && DECL_INITIAL (decl) == error_mark_node);
+}
+
+/* True if DECL is an instantiation of a function template currently being
+   defined.  */
+
+bool
+fn_template_being_defined (tree decl)
+{
+  if (TREE_CODE (decl) != FUNCTION_DECL
+      || !DECL_LANG_SPECIFIC (decl)
+      || !DECL_TEMPLOID_INSTANTIATION (decl)
+      || DECL_TEMPLATE_INSTANTIATED (decl))
+    return false;
+  tree tinfo = DECL_TEMPLATE_INFO (decl);
+  tree pattern = DECL_TEMPLATE_RESULT (TI_TEMPLATE (tinfo));
+  return fn_being_defined (pattern);
 }
 
 /* Mark DECL (either a _DECL or a BASELINK) as "used" in the program.
@@ -6422,6 +6480,9 @@ mark_used (tree decl, tsubst_flags_t complain /* = tf_warning_or_error */)
     maybe_instantiate_decl (decl);
 
   if (!decl_dependent_p (decl)
+      /* Don't require this yet for an instantiation of a function template
+	 we're currently defining (c++/120555).  */
+      && !fn_template_being_defined (decl)
       && !require_deduced_type (decl, complain))
     return false;
 
@@ -6435,9 +6496,6 @@ mark_used (tree decl, tsubst_flags_t complain /* = tf_warning_or_error */)
   if (DECL_TEMPLATE_INFO (decl)
       && uses_template_parms (DECL_TI_ARGS (decl)))
     return true;
-
-  if (!require_deduced_type (decl, complain))
-    return false;
 
   if (builtin_pack_fn_p (decl))
     {

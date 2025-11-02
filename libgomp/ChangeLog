@@ -1,3 +1,297 @@
+2025-10-23  Andrew Stubbs  <ams@baylibre.com>
+
+	* Makefile.am (libgomp_la_SOURCES): Add simple-allocator.c.
+	* Makefile.in: Regenerate.
+	* basic-allocator.c: Mention simple-allocator in the comment.
+	* config/linux/allocator.c: Include unistd.h.
+	(pin_ctx): New variable.
+	(ctxlock): New variable.
+	(linux_init_pin_ctx): New function.
+	(linux_memspace_alloc): Use simple-allocator for pinned memory.
+	(linux_memspace_free): Likewise.
+	(linux_memspace_realloc): Likewise.
+	* libgomp.h (gomp_simple_alloc_init_context): New prototype.
+	(gomp_simple_alloc_register_memory): New prototype.
+	(gomp_simple_alloc): New prototype.
+	(gomp_simple_free): New prototype.
+	(gomp_simple_realloc): New prototype.
+	* libgomp.texi: Update pinned memory trait documentation.
+	* testsuite/libgomp.c/alloc-pinned-8.c: New test.
+	* simple-allocator.c: New file.
+
+2025-10-23  Andrew Stubbs  <ams@baylibre.com>
+	    Thomas Schwinge  <thomas@codesourcery.com>
+
+	* config/linux/allocator.c: Include assert.h.
+	(using_device_for_page_locked): New variable.
+	(linux_memspace_alloc): Add init0 parameter. Support device pinning.
+	(linux_memspace_calloc): Set init0 to true.
+	(linux_memspace_free): Support device pinning.
+	(linux_memspace_realloc): Support device pinning.
+	(MEMSPACE_ALLOC): Set init0 to false.
+	* libgomp-plugin.h
+	(GOMP_OFFLOAD_page_locked_host_alloc): New prototype.
+	(GOMP_OFFLOAD_page_locked_host_free): Likewise.
+	* libgomp.h (gomp_page_locked_host_alloc): Likewise.
+	(gomp_page_locked_host_free): Likewise.
+	(struct gomp_device_descr): Add page_locked_host_alloc_func and
+	page_locked_host_free_func.
+	* libgomp.texi: Adjust the docs for the pinned trait.
+	* plugin/plugin-nvptx.c
+	(GOMP_OFFLOAD_page_locked_host_alloc): New function.
+	(GOMP_OFFLOAD_page_locked_host_free): Likewise.
+	* target.c (device_for_page_locked): New variable.
+	(get_device_for_page_locked): New function.
+	(gomp_page_locked_host_alloc): Likewise.
+	(gomp_page_locked_host_free): Likewise.
+	(gomp_load_plugin_for_device): Add page_locked_host_alloc and
+	page_locked_host_free.
+	* testsuite/libgomp.c/alloc-pinned-1.c: Change expectations for NVPTX
+	devices.
+	* testsuite/libgomp.c/alloc-pinned-2.c: Likewise.
+	* testsuite/libgomp.c/alloc-pinned-3.c: Likewise.
+	* testsuite/libgomp.c/alloc-pinned-4.c: Likewise.
+	* testsuite/libgomp.c/alloc-pinned-5.c: Likewise.
+	* testsuite/libgomp.c/alloc-pinned-6.c: Likewise.
+
+2025-10-20  Josef Melcr  <jmelcr02@gmail.com>
+
+	* testsuite/libgomp.c/ipcp-cb-spec1.c: Moved from
+	gcc/testsuite/gcc.dg/ipa/.
+	* testsuite/libgomp.c/ipcp-cb-spec2.c: Likewise.
+	* testsuite/libgomp.c/ipcp-cb1.c: Likewise.
+
+2025-10-20  Thomas Schwinge  <tschwinge@baylibre.com>
+
+	PR c++/114457
+	PR c++/122268
+	PR c++/120450
+	* testsuite/libgomp.c++/target-flex-101.C: XFAIL GCN, nvptx
+	offloading compilation.
+	* testsuite/libgomp.c++/target-std__flat_map-concurrent.C:
+	Un-XFAIL GCN offloading compilation.
+	* testsuite/libgomp.c++/target-std__flat_multimap-concurrent.C:
+	Likewise.
+
+2025-10-16  Tobias Burnus  <tburnus@baylibre.com>
+
+	* testsuite/libgomp.c/declare-variant-4-gfx10-3-generic.c: Add
+	dg-excess-errors to handle possible missing libgomp multi lib.
+	* testsuite/libgomp.c/declare-variant-4-gfx1030.c: Likewise.
+	* testsuite/libgomp.c/declare-variant-4-gfx1036.c: Likewise.
+	* testsuite/libgomp.c/declare-variant-4-gfx11-generic.c: Likewise.
+	* testsuite/libgomp.c/declare-variant-4-gfx1100.c: Likewise.
+	* testsuite/libgomp.c/declare-variant-4-gfx1103.c: Likewise.
+	* testsuite/libgomp.c/declare-variant-4-gfx9-4-generic.c: Likewise.
+	* testsuite/libgomp.c/declare-variant-4-gfx9-generic.c: Likewise.
+	* testsuite/libgomp.c/declare-variant-4-gfx900.c: Likewise.
+	* testsuite/libgomp.c/declare-variant-4-gfx906.c: Likewise.
+	* testsuite/libgomp.c/declare-variant-4-gfx908.c: Likewise.
+	* testsuite/libgomp.c/declare-variant-4-gfx90a.c: Likewise.
+	* testsuite/libgomp.c/declare-variant-4-gfx90c.c: Likewise.
+	* testsuite/libgomp.c/declare-variant-4-gfx942.c: Likewise.
+	* testsuite/libgomp.c/declare-variant-4-gfx1031.c: New test.
+	* testsuite/libgomp.c/declare-variant-4-gfx1032.c: New test.
+	* testsuite/libgomp.c/declare-variant-4-gfx1033.c: New test.
+	* testsuite/libgomp.c/declare-variant-4-gfx1034.c: New test.
+	* testsuite/libgomp.c/declare-variant-4-gfx1035.c: New test.
+	* testsuite/libgomp.c/declare-variant-4-gfx1101.c: New test.
+	* testsuite/libgomp.c/declare-variant-4-gfx1102.c: New test.
+	* testsuite/libgomp.c/declare-variant-4-gfx1150.c: New test.
+	* testsuite/libgomp.c/declare-variant-4-gfx1151.c: New test.
+	* testsuite/libgomp.c/declare-variant-4-gfx1152.c: New test.
+	* testsuite/libgomp.c/declare-variant-4-gfx1153.c: New test.
+	* testsuite/libgomp.c/declare-variant-4-gfx902.c: New test.
+	* testsuite/libgomp.c/declare-variant-4-gfx904.c: New test.
+	* testsuite/libgomp.c/declare-variant-4-gfx909.c: New test.
+	* testsuite/libgomp.c/declare-variant-4-gfx950.c: New test.
+
+2025-10-15  Tobias Burnus  <tburnus@baylibre.com>
+
+	* libgomp.texi (OpenMP Context Selectors): Add note that there is
+	currently an exact match between ISA and compilation, ignoring
+	compatibilities in both ways.
+	* testsuite/libgomp.c/declare-variant-4.h: Add missing variant
+	functions for specific and generic AMD GPUs.
+	* testsuite/libgomp.c/declare-variant-4-gfx10-3-generic.c: New test.
+	* testsuite/libgomp.c/declare-variant-4-gfx11-generic.c: New test.
+	* testsuite/libgomp.c/declare-variant-4-gfx9-4-generic.c: New test.
+	* testsuite/libgomp.c/declare-variant-4-gfx9-generic.c: New test.
+
+2025-10-10  Tobias Burnus  <tburnus@baylibre.com>
+
+	* plugin/plugin-gcn.c (is_integrated_apu): New; currently '#if 0'.
+	* plugin/plugin-nvptx.c (is_integrated_apu): Likewise.
+
+2025-10-05  Sam James  <sam@gentoo.org>
+
+	* Makefile.in: Regenerate.
+	* aclocal.m4: Regenerate.
+	* configure: Regenerate.
+	* testsuite/Makefile.in: Regenerate.
+
+2025-09-18  Tobias Burnus  <tburnus@baylibre.com>
+	    Sandra Loosemore  <sloosemore@baylibre.com>
+
+	PR middle-end/121922
+	* testsuite/libgomp.c-c++-common/declare-variant-1.c: New test.
+
+2025-09-17  Tobias Burnus  <tburnus@baylibre.com>
+
+	PR libgomp/119857
+	PR libgomp/114445
+	* config/accel/target-indirect.c: Change to use uint128_t instead
+	of a struct as data structure and add GOMP_INDIRECT_ADDR_HMAP as
+	host-accessible variable.
+	(struct indirect_map_t): Remove.
+	(USE_HASHTAB_LOOKUP, INDIRECT_DEV_ADDR, INDIRECT_HOST_ADDR,
+	SET_INDIRECT_HOST_ADDR, SET_INDIRECT_ADDRS): Define.
+	(htab_free): Use __builtin_unreachable.
+	(htab_hash, htab_eq, GOMP_target_map_indirect_ptr,
+	build_indirect_map): Update for new representation and new
+	pointer-to-hash variable.
+	* config/gcn/team.c (gomp_gcn_enter_kernel): Only call
+	build_indirect_map when GOMP_INDIRECT_ADDR_MAP.
+	* config/nvptx/team.c (gomp_nvptx_main): Likewise.
+	* libgomp-plugin.h (GOMP_INDIRECT_ADDR_HMAP): Define.
+	* plugin/plugin-gcn.c: Conditionally include
+	build-target-indirect-htab.h.
+	(USE_HASHTAB_LOOKUP_FOR_INDIRECT): Define.
+	(create_target_indirect_map): New prototype.
+	(GOMP_OFFLOAD_load_image): Update to create the device's
+	indirect-function hash table on the host.
+	* plugin/plugin-nvptx.c: Conditionally include
+	build-target-indirect-htab.h.
+	(USE_HASHTAB_LOOKUP_FOR_INDIRECT): Define.
+	(create_target_indirect_map): New prototype.
+	(GOMP_OFFLOAD_load_image): Update to create the device's
+	indirect-function hash table on the host.
+	* plugin/build-target-indirect-htab.h: New file.
+
+2025-09-17  Tobias Burnus  <tburnus@baylibre.com>
+
+	* libgomp.map (OACC_2.5): Move previously unimplemented
+	acc_{copyout,delete}_finalize_async_{32,64,array}_h_ to ...
+	(OACC_2.6.1): ... here.
+	* libgomp.texi (acc_copyin, acc_present_or_copyin, acc_create,
+	acc_present_or_create, acc_copyout, acc_update_device,
+	acc_update_self, acc_is_present): Use 'type(*), dimension(..)'
+	instead of 'type, dimension(:[,:]...)' for Fortran.
+	(acc_delete): Likewise; change acc_delete_async_finalize to
+	acc_delete_finalize_async.
+	* openacc.f90 (openacc_internal): Add interfaces for
+	acc_{copyout,delete}_finalize_async_{{32,64,array}_h,_l}.
+	(openacc): Add generic interfaces for
+	acc_copyout_finalize_async and acc_delete_finalize_async.
+	(acc_{copyout,delete}_finalize_async_{32,64,array}_h): New.
+	* openacc_lib.h: Add generic interfaces for
+	acc_copyout_finalize_async and acc_delete_finalize_async.
+	* testsuite/libgomp.oacc-fortran/pr92970-1.f90: New test.
+
+2025-09-06  Jakub Jelinek  <jakub@redhat.com>
+
+	* omp.h.in: Fix up formatting of __cplusplus >= 201103L
+	guarded code from libstc++ style to GCC/libgomp style.
+
+2025-08-06  Kwok Cheung Yeung  <kcyeung@baylibre.com>
+
+	* target.c (gomp_update): Call gomp_merge_iterator_maps.  Free
+	allocated variables.
+	* testsuite/libgomp.c-c++-common/target-update-iterators-1.c: New.
+	* testsuite/libgomp.c-c++-common/target-update-iterators-2.c: New.
+	* testsuite/libgomp.c-c++-common/target-update-iterators-3.c: New.
+
+2025-08-06  Kwok Cheung Yeung  <kcyeung@baylibre.com>
+	    Andrew Stubbs  <ams@baylibre.com>
+
+	* target.c (kind_to_name): New.
+	(gomp_merge_iterator_maps): New.
+	(gomp_map_vars_internal): Call gomp_merge_iterator_maps.  Copy
+	address of only the first iteration to target vars.  Free allocated
+	variables.
+	* testsuite/libgomp.c-c++-common/target-map-iterators-1.c: New.
+	* testsuite/libgomp.c-c++-common/target-map-iterators-2.c: New.
+	* testsuite/libgomp.c-c++-common/target-map-iterators-3.c: New.
+
+2025-07-21  Thomas Schwinge  <tschwinge@baylibre.com>
+
+	PR target/119853
+	PR target/119854
+	* testsuite/libgomp.c++/target-cdtor-1.C: Adjust for
+	'targetm.cxx.use_aeabi_atexit'.
+	* testsuite/libgomp.c++/target-cdtor-2.C: Likewise.
+
+2025-07-18  Andrew Stubbs  <ams@baylibre.com>
+
+	PR target/121156
+	* config/gcn/bar.c (gomp_team_barrier_wait_end): Remove unused
+	"generation" variable.
+	(gomp_team_barrier_wait_cancel_end): Likewise.
+
+2025-07-17  Thomas Schwinge  <tschwinge@baylibre.com>
+
+	PR target/119692
+	* testsuite/libgomp.c++/pr119692-1-4.C: '{ dg-timeout 10 { target offload_device } }'.
+	* testsuite/libgomp.c++/pr119692-1-5.C: Likewise.
+	* testsuite/libgomp.c++/target-exceptions-bad_cast-1.C: Likewise.
+	* testsuite/libgomp.c++/target-exceptions-bad_cast-2.C: Likewise.
+	* testsuite/libgomp.oacc-c++/exceptions-bad_cast-1.C: Likewise.
+	* testsuite/libgomp.oacc-c++/exceptions-bad_cast-2.C: Likewise.
+
+2025-06-24  Tobias Burnus  <tburnus@baylibre.com>
+
+	* libgomp.texi (acc_attach, acc_detach): Update for Fortran
+	version.
+	* openacc.f90 (acc_attach{,_async}, acc_detach{,_finalize}{,_async}):
+	Add.
+	* openacc_lib.h: Likewise.
+	* testsuite/libgomp.oacc-fortran/acc-attach-detach-1.f90: New test.
+	* testsuite/libgomp.oacc-fortran/acc-attach-detach-2.f90: New test.
+
+2025-06-19  Tobias Burnus  <tburnus@baylibre.com>
+
+	* target.c (GOMP_REQUIRES_NAME_BUF_LEN): Define.
+	(GOMP_offload_register_ver, gomp_target_init): Use it for the
+	char buffer size.
+
+2025-06-19  Tobias Burnus  <tburnus@baylibre.com>
+	    waffl3x  <waffl3x@baylibre.com>
+
+	* libgomp.texi (omp_init_allocator): Refer to 'Memory allocation'
+	for available memory spaces.
+	(OMP_ALLOCATOR): Move list of traits and predefined memspaces
+	and allocators to ...
+	(Memory allocation): ... here. Document omp(x)::allocator::*;
+	minor wording tweaks, be more explicit about memkind, pinned and
+	pool_size.
+
+2025-06-17  Tobias Burnus  <tburnus@baylibre.com>
+
+	* testsuite/libgomp.c++/declare_target-2.C: New test.
+
+2025-06-10  Tobias Burnus  <tburnus@baylibre.com>
+
+	* testsuite/libgomp.c/declare-variant-4.h (gfx942): New variant function.
+	* testsuite/libgomp.c/declare-variant-4-gfx942.c: New test.
+
+2025-06-06  Tobias Burnus  <tburnus@baylibre.com>
+	    Sandra Loosemore  <sloosemore@baylibre.com>
+
+	* libgomp.texi (omp_get_num_devices, omp_get_intrinsic_device):
+	Document builtin handling.
+
+2025-06-06  Tobias Burnus  <tburnus@baylibre.com>
+
+	PR target/120530
+	* testsuite/libgomp.c/target-map-zero-sized-3.c (main): Add missing
+	map clause; remove unused variable.
+
+2025-06-04  Tobias Burnus  <tburnus@baylibre.com>
+	    Sandra Loosemore  <sloosemore@baylibre.com>
+
+	* libgomp.texi (omp_interop_{int,ptr,str,rc_desc}): Add note about
+	the 'ret_code' type change in OpenMP 6.
+
 2025-06-03  Jakub Jelinek  <jakub@redhat.com>
 
 	PR libgomp/120444

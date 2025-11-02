@@ -19,6 +19,7 @@
 #include "rust-ast-visitor.h"
 #include "rust-ast-full-decls.h"
 #include "rust-ast.h"
+#include "rust-builtin-ast-nodes.h"
 #include "rust-path.h"
 #include "rust-token.h"
 #include "rust-expr.h"
@@ -223,10 +224,10 @@ DefaultASTVisitor::visit (AST::SimplePath &path)
 }
 
 void
-DefaultASTVisitor::visit (AST::MetaItemPathLit &meta_item)
+DefaultASTVisitor::visit (AST::MetaItemPathExpr &meta_item)
 {
   visit (meta_item.get_path ());
-  visit (meta_item.get_literal ());
+  visit (meta_item.get_expr ());
 }
 
 void
@@ -247,6 +248,7 @@ void
 DefaultASTVisitor::visit (AST::ErrorPropagationExpr &expr)
 {
   visit_outer_attrs (expr);
+  visit (expr.get_propagating_expr ());
 }
 
 void
@@ -449,8 +451,13 @@ DefaultASTVisitor::visit (AST::BlockExpr &expr)
 {
   visit_outer_attrs (expr);
   visit_inner_attrs (expr);
+
+  if (expr.has_label ())
+    visit (expr.get_label ());
+
   for (auto &stmt : expr.get_statements ())
     visit (stmt);
+
   if (expr.has_tail_expr ())
     visit (expr.get_tail_expr ());
 }
@@ -464,7 +471,8 @@ DefaultASTVisitor::visit (AST::ConstBlock &expr)
 void
 DefaultASTVisitor::visit (AST::AnonConst &expr)
 {
-  visit (expr.get_inner_expr ());
+  if (!expr.is_deferred ())
+    visit (expr.get_inner_expr ());
 }
 
 void
@@ -601,7 +609,10 @@ DefaultASTVisitor::visit (AST::WhileLetLoopExpr &expr)
   visit_outer_attrs (expr);
   for (auto &pattern : expr.get_patterns ())
     visit (pattern);
-  visit (expr.get_loop_label ());
+
+  if (expr.has_loop_label ())
+    visit (expr.get_loop_label ());
+
   visit (expr.get_scrutinee_expr ());
   visit (expr.get_loop_block ());
 }
@@ -1015,15 +1026,6 @@ DefaultASTVisitor::visit (AST::StaticItem &static_item)
 }
 
 void
-DefaultASTVisitor::visit (AST::TraitItemConst &item)
-{
-  visit_outer_attrs (item);
-  visit (item.get_type ());
-  if (item.has_expr ())
-    visit (item.get_expr ());
-}
-
-void
 DefaultASTVisitor::visit (AST::TraitItemType &item)
 {
   visit_outer_attrs (item);
@@ -1286,14 +1288,14 @@ DefaultASTVisitor::visit (AST::StructPattern &pattern)
 }
 
 void
-DefaultASTVisitor::visit (AST::TupleStructItemsNoRange &tuple_items)
+DefaultASTVisitor::visit (AST::TupleStructItemsNoRest &tuple_items)
 {
   for (auto &pattern : tuple_items.get_patterns ())
     visit (pattern);
 }
 
 void
-DefaultASTVisitor::visit (AST::TupleStructItemsRange &tuple_items)
+DefaultASTVisitor::visit (AST::TupleStructItemsHasRest &tuple_items)
 {
   for (auto &lower : tuple_items.get_lower_patterns ())
     visit (lower);
@@ -1309,14 +1311,14 @@ DefaultASTVisitor::visit (AST::TupleStructPattern &pattern)
 }
 
 void
-DefaultASTVisitor::visit (AST::TuplePatternItemsMultiple &tuple_items)
+DefaultASTVisitor::visit (AST::TuplePatternItemsNoRest &tuple_items)
 {
   for (auto &pattern : tuple_items.get_patterns ())
     visit (pattern);
 }
 
 void
-DefaultASTVisitor::visit (AST::TuplePatternItemsRanged &tuple_items)
+DefaultASTVisitor::visit (AST::TuplePatternItemsHasRest &tuple_items)
 {
   for (auto &lower : tuple_items.get_lower_patterns ())
     visit (lower);
@@ -1337,10 +1339,25 @@ DefaultASTVisitor::visit (AST::GroupedPattern &pattern)
 }
 
 void
+DefaultASTVisitor::visit (AST::SlicePatternItemsNoRest &items)
+{
+  for (auto &item : items.get_patterns ())
+    visit (item);
+}
+
+void
+DefaultASTVisitor::visit (AST::SlicePatternItemsHasRest &items)
+{
+  for (auto &item : items.get_lower_patterns ())
+    visit (item);
+  for (auto &item : items.get_upper_patterns ())
+    visit (item);
+}
+
+void
 DefaultASTVisitor::visit (AST::SlicePattern &pattern)
 {
-  for (auto &item : pattern.get_items ())
-    visit (item);
+  visit (pattern.get_items ());
 }
 
 void
@@ -1478,6 +1495,12 @@ void
 DefaultASTVisitor::visit (AST::FormatArgs &)
 {
   // FIXME: Do we have anything to do? any subnodes to visit? Probably, right?
+}
+
+void
+DefaultASTVisitor::visit (AST::OffsetOf &offset_of)
+{
+  visit (offset_of.get_type ());
 }
 
 void

@@ -240,43 +240,21 @@ constexpr auto AARCH64_FL_DEFAULT_ISA_MODE ATTRIBUTE_UNUSED
 #define TARGET_SIMD (TARGET_BASE_SIMD && TARGET_NON_STREAMING)
 #define TARGET_FLOAT AARCH64_HAVE_ISA (FP)
 
-/* AARCH64_FL options necessary for system register implementation.  */
-
 /* Define AARCH64_FL aliases for architectural features which are protected
    by -march flags in binutils but which receive no special treatment by GCC.
+   These features are used in the aarch64-sys-regs.def file, which is copied
+   from Binutils.
 
-   Such flags are inherited from the Binutils definition of system registers
-   and are mapped to the architecture in which the feature is implemented.  */
+   We should try to eliminate these inconsistencies in future.  */
 #define AARCH64_FL_RAS		   AARCH64_FL_V8A
 #define AARCH64_FL_LOR		   AARCH64_FL_V8_1A
 #define AARCH64_FL_PAN		   AARCH64_FL_V8_1A
-#define AARCH64_FL_AMU		   AARCH64_FL_V8_4A
-#define AARCH64_FL_SCXTNUM	   AARCH64_FL_V8_5A
-#define AARCH64_FL_ID_PFR2	   AARCH64_FL_V8_5A
-
-/* Armv8.9-A extension feature bits defined in Binutils but absent from GCC,
-   aliased to their base architecture.  */
-#define AARCH64_FL_AIE		   AARCH64_FL_V8_9A
-#define AARCH64_FL_DEBUGv8p9	   AARCH64_FL_V8_9A
-#define AARCH64_FL_FGT2	   AARCH64_FL_V8_9A
 #define AARCH64_FL_ITE		   AARCH64_FL_V8_9A
-#define AARCH64_FL_PFAR	   AARCH64_FL_V8_9A
-#define AARCH64_FL_PMUv3_ICNTR	   AARCH64_FL_V8_9A
-#define AARCH64_FL_PMUv3_SS	   AARCH64_FL_V8_9A
-#define AARCH64_FL_PMUv3p9	   AARCH64_FL_V8_9A
 #define AARCH64_FL_RASv2	   AARCH64_FL_V8_9A
-#define AARCH64_FL_S1PIE	   AARCH64_FL_V8_9A
-#define AARCH64_FL_S1POE	   AARCH64_FL_V8_9A
-#define AARCH64_FL_S2PIE	   AARCH64_FL_V8_9A
-#define AARCH64_FL_S2POE	   AARCH64_FL_V8_9A
-#define AARCH64_FL_SCTLR2	   AARCH64_FL_V8_9A
-#define AARCH64_FL_SEBEP	   AARCH64_FL_V8_9A
-#define AARCH64_FL_SPE_FDS	   AARCH64_FL_V8_9A
-#define AARCH64_FL_TCR2	   AARCH64_FL_V8_9A
+
 
 #define TARGET_V8R AARCH64_HAVE_ISA (V8R)
 #define TARGET_V9A AARCH64_HAVE_ISA (V9A)
-
 
 /* SHA2 is an optional extension to AdvSIMD.  */
 #define TARGET_SHA2 AARCH64_HAVE_ISA (SHA2)
@@ -410,6 +388,10 @@ constexpr auto AARCH64_FL_DEFAULT_ISA_MODE ATTRIBUTE_UNUSED
 /* CSSC instructions are enabled through +cssc.  */
 #define TARGET_CSSC AARCH64_HAVE_ISA (CSSC)
 
+/* CB<cc> instructions are enabled through +cmpbr,
+   but are incompatible with -mtrack-speculation. */
+#define TARGET_CMPBR (AARCH64_HAVE_ISA (CMPBR) && !aarch64_track_speculation)
+
 /* Make sure this is always defined so we don't have to check for ifdefs
    but rather use normal ifs.  */
 #ifndef TARGET_FIX_ERR_A53_835769_DEFAULT
@@ -473,8 +455,13 @@ constexpr auto AARCH64_FL_DEFAULT_ISA_MODE ATTRIBUTE_UNUSED
    enabled through +faminmax.  */
 #define TARGET_FAMINMAX AARCH64_HAVE_ISA (FAMINMAX)
 
-/* Lookup table (LUTI) extension instructions are enabled through +lut.  */
+/* Lookup table (LUTI) extension instructions with 2-bit and 4-bit indices are
+   enabled through +lut.  */
 #define TARGET_LUT AARCH64_HAVE_ISA (LUT)
+
+/* Lookup table (LUTI) extension instructions with 4-bit indices and 8-bit
+   elements are enabled through +sme-lutv2.  */
+#define TARGET_SME_LUTv2 AARCH64_HAVE_ISA (SME_LUTv2)
 
 /* Prefer different predicate registers for the output of a predicated
    operation over re-using an existing input predicate.  */
@@ -489,6 +476,11 @@ constexpr auto AARCH64_FL_DEFAULT_ISA_MODE ATTRIBUTE_UNUSED
 #define TARGET_CHEAP_FPMR_WRITE \
   (bool (aarch64_tune_params.extra_tuning_flags \
 	 & AARCH64_EXTRA_TUNE_CHEAP_FPMR_WRITE))
+
+/* Enable folding address computation into LDAPUR when RCPC2 is available.  */
+#define TARGET_ENABLE_LDAPUR (TARGET_RCPC2 \
+			      && !(aarch64_tune_params.extra_tuning_flags \
+				   & AARCH64_EXTRA_TUNE_AVOID_LDAPUR))
 
 /* Combinatorial tests.  */
 

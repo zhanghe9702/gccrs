@@ -856,6 +856,9 @@ struct GTY((for_user)) cgraph_function_version_info {
      dispatcher. The dispatcher decl is an alias to the resolver
      function decl.  */
   tree dispatcher_resolver;
+
+  /* The assmbly name of the function set before version mangling.  */
+  tree assembler_name;
 };
 
 #define DEFCIFCODE(code, type, string)	CIF_ ## code,
@@ -904,7 +907,9 @@ struct GTY((tag ("SYMTAB_FUNCTION"))) cgraph_node : public symtab_node
       used_as_abstract_origin (false),
       lowered (false), process (false), frequency (NODE_FREQUENCY_NORMAL),
       only_called_at_startup (false), only_called_at_exit (false),
-      tm_clone (false), dispatcher_function (false), calls_comdat_local (false),
+      tm_clone (false), dispatcher_function (false),
+      dispatcher_resolver_function (false), is_target_clone (false),
+      calls_comdat_local (false),
       icf_merged (false), nonfreeing_fn (false), merged_comdat (false),
       merged_extern_inline (false), parallelized_function (false),
       split_part (false), indirect_call_target (false), local (false),
@@ -1256,6 +1261,21 @@ struct GTY((tag ("SYMTAB_FUNCTION"))) cgraph_node : public symtab_node
      it is not used in any other non-standard way.  */
   bool only_called_directly_p (void);
 
+  /* Turn profile to global0.  Walk into inlined functions.  */
+  void make_profile_local ();
+
+  /* Turn profile to global0.  Walk into inlined functions.  */
+  void make_profile_global0 (profile_quality quality);
+
+  /* Scale profile by NUM/DEN.  Walk into inlined funtion.  */
+  void apply_scale (profile_count num, profile_count den);
+
+  /* Scale profile to given IPA_COUNT.
+     IPA_COUNT should pass ipa_p () with a single exception.
+     It can be also GUESSED_LOCAL in case we want to
+     drop any IPA info about the profile.  */
+  void scale_profile_to (profile_count ipa_count);
+
   /* Return true when function is only called directly or it has alias.
      i.e. it is not externally visible, address was not taken and
      it is not used in any other non-standard way.  */
@@ -1324,13 +1344,15 @@ struct GTY((tag ("SYMTAB_FUNCTION"))) cgraph_node : public symtab_node
     return m_summary_id;
   }
 
-  /* Record that DECL1 and DECL2 are semantically identical function
-     versions.  */
-  static void record_function_versions (tree decl1, tree decl2);
+  /* Adds DECL to the FN_V structure of semantically identical functions.  */
+  static void add_function_version (cgraph_function_version_info *fn_v,
+				    tree decl);
 
   /* Remove the cgraph_function_version_info and cgraph_node for DECL.  This
      DECL is a duplicate declaration.  */
   static void delete_function_version_by_decl (tree decl);
+
+  static void delete_function_version (cgraph_function_version_info *);
 
   /* Add the function FNDECL to the call graph.
      Unlike finalize_function, this function is intended to be used
@@ -1467,6 +1489,12 @@ struct GTY((tag ("SYMTAB_FUNCTION"))) cgraph_node : public symtab_node
   unsigned tm_clone : 1;
   /* True if this decl is a dispatcher for function versions.  */
   unsigned dispatcher_function : 1;
+  /* True if this decl is a resolver for function versions.  */
+  unsigned dispatcher_resolver_function : 1;
+  /* True this is part of a multiversioned set and this version comes from a
+     target_clone attribute.  Or if this is a dispatched symbol or resolver
+     and the default version comes from a target_clones.  */
+  unsigned is_target_clone : 1;
   /* True if this decl calls a COMDAT-local function.  This is set up in
      compute_fn_summary and inline_call.  */
   unsigned calls_comdat_local : 1;
@@ -1710,12 +1738,14 @@ public:
   /* Remove EDGE from the cgraph.  */
   static void remove (cgraph_edge *edge);
 
-  /* Change field call_stmt of edge E to NEW_STMT.  If UPDATE_SPECULATIVE and E
-     is any component of speculative edge, then update all components.
+  /* Change field call_stmt of edge E to NEW_STMT.  If UPDATE_DERIVED_EDGES and
+     E is any component of speculative edge, then update all components.
      Speculations can be resolved in the process and EDGE can be removed and
-     deallocated.  Return the edge that now represents the call.  */
+     deallocated.  Return the edge that now represents the call.  If
+     UPDATE_DERIVED_EDGES and E is a part of a callback edge, update all
+     associated edges and return the callback-carrying edge.  */
   static cgraph_edge *set_call_stmt (cgraph_edge *e, gcall *new_stmt,
-				     bool update_speculative = true);
+				     bool update_derived_edges = true);
 
   /* Redirect callee of the edge to N.  The function does not update underlying
      call expression.  */
@@ -1740,6 +1770,32 @@ public:
    */
   cgraph_edge *make_speculative (cgraph_node *n2, profile_count direct_count,
 				 unsigned int speculative_id = 0);
+
+  /* Create a callback edge, representing an indirect call to n2
+     passed to a function by argument.  Sets has_callback flag of the original
+     edge. Both edges are attached to the same call statement.  Returns created
+     callback edge.  */
+  cgraph_edge *make_callback (cgraph_node *n2, unsigned int callback_hash);
+
+  /* Returns the callback-carrying edge of a callback edge or NULL, if such edge
+     cannot be found.  An edge is considered callback-carrying, if it has it's
+     has_callback flag set and shares it's call statement with the edge
+     this method is caled on.  */
+  cgraph_edge *get_callback_carrying_edge ();
+
+  /* Returns the first callback edge in the list of callees of the caller node.
+     Note that the edges might be in arbitrary order.  Must be called on a
+     callback or callback-carrying edge.  */
+  cgraph_edge *first_callback_edge ();
+
+  /* Given a callback edge, returns the next callback edge belonging to the same
+     callback-carrying edge.  Must be called on a callback edge, not the
+     callback-carrying edge.  */
+  cgraph_edge *next_callback_edge ();
+
+  /* When called on a callback-carrying edge, removes all of its attached
+     callback edges and sets has_callback to FALSE.  */
+  void purge_callback_edges ();
 
   /* Speculative call consists of an indirect edge and one or more
      direct edge+ref pairs.  Speculative will expand to the following sequence:
@@ -1962,6 +2018,23 @@ public:
      Optimizers may later redirect direct call to clone, so 1) and 3)
      do not need to necessarily agree with destination.  */
   unsigned int speculative : 1;
+  /* Edges with CALLBACK flag represent indirect calls to functions passed
+     to their callers by argument.  This is useful in cases, where the body
+     of these caller functions is not known, e. g. qsort in glibc or
+     GOMP_parallel in libgomp.  These edges are never made into real calls,
+     but are used instead to optimize these callback functions and later replace
+     their addresses with their optimized versions.  Edges with this flag set
+     share their call statement with their callback-carrying edge.  */
+  unsigned int callback : 1;
+  /* Edges with this flag set have one or more callback edges attached.  They
+     share their call statements with this edge.  This flag represents the fact
+     that the callee of this edge takes a function and it's parameters by
+     argument and calls it at a later time.  */
+  unsigned int has_callback : 1;
+  /* Used to pair callback edges and the attributes that originated them
+     together.  Currently the index of the callback argument, retrieved
+     from the attribute.  */
+  unsigned int callback_id : 16;
   /* Set to true when caller is a constructor or destructor of polymorphic
      type.  */
   unsigned in_polymorphic_cdtor : 1;
@@ -1976,6 +2049,10 @@ public:
 
   /* Expected frequency of executions within the function.  */
   sreal sreal_frequency ();
+
+  /* Expected frequency of executions within the function.
+     If edge is speculative, sum all its indirect targets.  */
+  sreal combined_sreal_frequency ();
 private:
   /* Unique id of the edge.  */
   int m_uid;
@@ -2629,6 +2706,8 @@ tree clone_function_name (const char *name, const char *suffix,
 tree clone_function_name (tree decl, const char *suffix,
 			  unsigned long number);
 tree clone_function_name (tree decl, const char *suffix);
+tree clone_identifier (tree decl, const char *suffix,
+		       bool filter_suffix = false);
 
 void tree_function_versioning (tree, tree, vec<ipa_replace_map *, va_gc> *,
 			       ipa_param_adjustments *,
@@ -3089,6 +3168,13 @@ symbol_table::next_function_with_gimple_body (cgraph_node *node)
 #define FOR_EACH_FUNCTION(node) \
    for ((node) = symtab->first_function (); (node); \
 	(node) = symtab->next_function ((node)))
+
+/* Walk all functions but precompute so a node can be deleted if needed.  */
+#define FOR_EACH_FUNCTION_REMOVABLE(node) \
+   cgraph_node *next; \
+   for ((node) = symtab->first_function (), \
+	next = (node) ? symtab->next_function ((node)) : NULL; (node); \
+	(node) = next, next = (node) ? symtab->next_function ((node)) : NULL)
 
 /* Return true when callgraph node is a function with Gimple body defined
    in current unit.  Functions can also be define externally or they

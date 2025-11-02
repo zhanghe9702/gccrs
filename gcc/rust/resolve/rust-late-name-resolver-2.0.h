@@ -42,6 +42,7 @@ public:
 
   // some more label declarations
   void visit (AST::LetStmt &) override;
+  void visit (AST::WhileLetLoopExpr &) override;
   // TODO: Do we need this?
   // void visit (AST::Method &) override;
   void visit (AST::IdentifierPattern &) override;
@@ -73,9 +74,6 @@ public:
 
 private:
   void resolve_label (AST::Lifetime &lifetime);
-
-  /* Setup Rust's builtin types (u8, i32, !...) in the resolver */
-  void setup_builtin_types ();
 
   bool funny_error;
 

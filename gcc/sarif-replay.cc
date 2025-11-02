@@ -19,6 +19,7 @@ along with GCC; see the file COPYING3.  If not see
 <http://www.gnu.org/licenses/>.  */
 
 #include "config.h"
+#define INCLUDE_STRING
 #define INCLUDE_VECTOR
 #include "system.h"
 #include "coretypes.h"
@@ -36,6 +37,7 @@ set_defaults (replay_options &replay_opts)
   replay_opts.m_echo_file = false;
   replay_opts.m_json_comments = false;
   replay_opts.m_verbose = false;
+  replay_opts.m_debug_physical_locations = false;
   replay_opts.m_diagnostics_colorize = DIAGNOSTIC_COLORIZE_IF_TTY;
 }
 
@@ -48,6 +50,7 @@ struct options
 
   replay_options m_replay_opts;
   std::vector<const char *> m_sarif_filenames;
+  std::vector<std::string> m_extra_output_specs;
 };
 
 static void
@@ -70,6 +73,10 @@ static const char *const usage_msg = (
 "\n"
 "Options:\n"
 "\n"
+"  -fdiagnostics-add-output=SCHEME\n"
+"     Add an additional output sink when replaying diagnostics, as\n"
+"     per the gcc option\n"
+"\n"
 "  -fdiagnostics-color={never|always|auto}\n"
 "     Control colorization of diagnostics.  Default: auto.\n"
 "\n"
@@ -87,12 +94,30 @@ static const char *const usage_msg = (
 "\n"
 "  --usage\n"
 "     Print this message and exit.\n"
+"\n"
+"Options for maintainers:\n"
+"\n"
+"  -fdebug-physical-locations\n"
+"    Dump debugging information about physical locations to stderr.\n"
 "\n");
 
 static void
 print_usage ()
 {
   fprintf (stderr, usage_msg);
+}
+
+/* If STR starts with PREFIX, return the rest of STR.
+   Otherwise return nullptr.  */
+
+static const char *
+str_starts_with (const char *str, const char *prefix)
+{
+  size_t prefix_len = strlen (prefix);
+  if (0 == strncmp (str, prefix, prefix_len))
+    return str + prefix_len;
+  else
+    return nullptr;
 }
 
 static bool
@@ -128,6 +153,13 @@ parse_options (int argc, char **argv,
 	  opts.m_replay_opts.m_echo_file = true;
 	  handled = true;
 	}
+#define ADD_OUTPUT_OPTION "-fdiagnostics-add-output="
+      else if (const char *arg
+		= str_starts_with (option, ADD_OUTPUT_OPTION))
+	{
+	  opts.m_extra_output_specs.push_back (std::string (arg));
+	  handled = true;
+	}
       else if (strcmp (option, "-fdiagnostics-color=never") == 0)
 	{
 	  opts.m_replay_opts.m_diagnostics_colorize = DIAGNOSTIC_COLORIZE_NO;
@@ -156,7 +188,11 @@ parse_options (int argc, char **argv,
 	  print_version ();
 	  exit (0);
 	}
-
+      else if (strcmp (option, "-fdebug-physical-locations") == 0)
+	{
+	  opts.m_replay_opts.m_debug_physical_locations = true;
+	  handled = true;
+	}
       if (!handled)
 	{
 	  if (option[0] == '-')
@@ -219,8 +255,16 @@ main (int argc, char **argv)
 	  note.finish ("about to replay %qs...", filename);
 	}
       libgdiagnostics::manager playback_mgr;
+      playback_mgr.set_debug_physical_locations
+	(opts.m_replay_opts.m_debug_physical_locations);
       playback_mgr.add_text_sink (stderr,
 				  opts.m_replay_opts.m_diagnostics_colorize);
+      for (auto spec : opts.m_extra_output_specs)
+	if (playback_mgr.add_sink_from_spec
+	      (ADD_OUTPUT_OPTION,
+	       spec.c_str (),
+	       libgdiagnostics::manager (control_mgr.m_inner, false)))
+	  return -1;
 
       int result = sarif_replay_path (filename,
 				      playback_mgr.m_inner,

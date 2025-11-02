@@ -1,3 +1,135 @@
+2025-10-25  Olivier Hainque  <hainque@adacore.com>
+
+	* config/t-vxworks (LIBGCC2_INCLUDES): Replace $(VSB_DIR)
+	by sysroot references.
+
+2025-10-20  Olivier Hainque  <hainque@adacore.com>
+	    Ashley Gay  <gay@adacore.com>
+
+	* config/gthr-vxworks.h: Include stdatomic.h and prevent indirect
+	inclusion of contents from the system version of that header.
+
+2025-10-20  Olivier Hainque  <hainque@adacore.com>
+
+	* config/gthr-vxworks-thread.c (__init_gthread_tcb): Make static.
+	(__delete_gthread_tcb): Likewise.
+	(__task_wrapper): Likewise.
+	(__gthread_create): Convert __task_wrapper to (void *) before going
+	to (FUNCPTR).
+	* config/gthr-vxworks-tls.c (tls_delete_hook): Accommodate prototype
+	variations between kernel and rtp. Return STATUS.
+
+2025-10-20  Olivier Hainque  <hainque@adacore.com>
+
+	* config/t-vxworks: -include vxworks-predef.h explicitly, as the
+	automatic inclusion is disabled by -nostdinc.
+
+2025-10-07  H.J. Lu  <hjl.tools@gmail.com>
+
+	PR target/120691
+	* Makefile.in (DECNUMINC): Add -I$(srcdir)/config/$(cpu_type).
+	* config/i386/dfp-machine.h: New file.
+	* config/i386/32/dfp-machine.h: Likewise.
+	* config/i386/64/dfp-machine.h: Likewise.
+
+2025-09-30  Andre Vieira  <andre.simoesdiasvieira@arm.com>
+
+	* config/t-softfp: Don't use softfp_wrap for bitint functions.
+	(softfp_cflags): New parameter that is passed to the building of bitint
+	functions.
+
+2025-09-25  John David Anglin  <danglin@gcc.gnu.org>
+
+	* config/pa/sync-libfuncs.c (atomic_store_8): Fix asm.
+
+2025-09-19  Jim Lin  <jim@andestech.com>
+
+	* config/riscv/save-restore.S: Only save/restore the registers
+	which are really used for ILP32E/LP64.
+
+2025-08-21  Dimitar Dimitrov  <dimitar@dinux.eu>
+
+	* config/pru/libgcc-eabi.ver: Add __pruabi_softmpyi and
+	__pruabi_softmpyll symbols.
+	* config/pru/t-pru: Add softmpy source files.
+	* config/pru/pru-softmpy.h: New file.
+	* config/pru/softmpyi.c: New file.
+	* config/pru/softmpyll.c: New file.
+
+2025-08-13  Yang Yujie  <yangyujie@loongson.cn>
+
+	PR target/117599
+	* config/loongarch/t-softfp-tf: Enable _BitInt helper functions.
+	* config/loongarch/t-loongarch: Same.
+	* config/loongarch/libgcc-loongarch.ver: New file.
+
+2025-08-13  Yang Yujie  <yangyujie@loongson.cn>
+
+	* config.host: Remove unused code. Include LoongArch-specific
+	tmake_files after the OS-specific ones.
+
+2025-08-08  Christophe Lyon  <christophe.lyon@linaro.org>
+
+	PR libgcc/117600
+	* Makefile.in (WERROR): New.
+	* config/aarch64/t-aarch64: Handle WERROR.
+	* configure: Regenerate.
+	* configure.ac: Add support for --enable-werror.
+
+2025-08-07  Stefan Schulze Frielinghaus  <stefansf@gcc.gnu.org>
+
+	* config/s390/libgcc-glibc.ver: Export _BitInt support
+	functions.
+	* config/s390/t-softfp (softfp_extras): Add fixtfbitint
+	floatbitinttf.
+
+2025-08-07  Stefan Schulze Frielinghaus  <stefansf@gcc.gnu.org>
+
+	* config.host: Include makefiles t-softfp for -m64.
+	* config/s390/sfp-exceptions.c: New file.
+	* config/s390/sfp-machine.h: New file.
+	* config/s390/t-softfp: New file.
+
+2025-08-06  Jakub Jelinek  <jakub@redhat.com>
+
+	PR libgcc/121397
+	* enable-execute-stack-mprotect.c (check_enabling): Remove useless
+	forward declaration.
+
+2025-07-31  Wilco Dijkstra  <wilco.dijkstra@arm.com>
+
+	* config/aarch64/cpuinfo.c (__init_cpu_features_constructor):
+	Remove unused features, add support for CSSC and MOPS.
+
+2025-07-31  Wilco Dijkstra  <wilco.dijkstra@arm.com>
+
+	* config/aarch64/cpuinfo.c: Cleanup HWCAP defines.
+
+2025-07-31  Yury Khrustalev  <yury.khrustalev@arm.com>
+
+	* config/aarch64/cpuinfo.c (__ifunc_arg_t): Likewise.
+	(__init_cpu_features): obtain and assign values for the
+	fields _hwcap3 and _hwcap4.
+	(__init_cpu_features_constructor): check _size in the
+	arg argument.
+
+2025-07-17  Richard Sandiford  <richard.sandiford@arm.com>
+	    Yury Khrustalev  <yury.khrustalev@arm.com>
+
+	* config/aarch64/linux-unwind.h (aarch64_fallback_frame_state):
+	If a signal was raised while there was an uncommitted lazy save,
+	commit the save as part of the unwind process.
+
+2025-07-16  John Ericson  <git@JohnEricson.me>
+
+	* Makefile.in:  Delete dead `MACHMODE_H` variable
+
+2025-07-10  Jan Dubiec  <jdx@o2.pl>
+
+	PR target/116363
+	* libgcc2.c (__fixunssfDI): Fix SFtype to UDWtype conversion for targets
+	without LIBGCC2_HAS_DF_MODE defined
+
 2025-05-27  Jakub Jelinek  <jakub@redhat.com>
 
 	* config/t-softfp (softfp_bid_list): Don't guard with

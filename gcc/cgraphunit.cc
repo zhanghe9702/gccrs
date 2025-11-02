@@ -63,7 +63,7 @@ along with GCC; see the file COPYING3.  If not see
       final assembler is generated.  This is done in the following way. Note
       that with link time optimization the process is split into three
       stages (compile time, linktime analysis and parallel linktime as
-      indicated bellow).
+      indicated below).
 
       Compile time:
 
@@ -1264,6 +1264,15 @@ analyze_functions (bool first_time)
 	      if (!cnode->analyzed)
 		cnode->analyze ();
 
+	      /* A reference to a default node in a function set implies a
+		 reference to all versions in the set.  */
+	      cgraph_function_version_info *node_v = cnode->function_version ();
+	      if (node_v && is_function_default_version (node->decl))
+		for (cgraph_function_version_info *fvi = node_v->next;
+		     fvi;
+		     fvi = fvi->next)
+		  enqueue_node (fvi->this_node);
+
 	      for (edge = cnode->callees; edge; edge = edge->next_callee)
 		if (edge->callee->definition
 		    && (!DECL_EXTERNAL (edge->callee->decl)
@@ -2400,9 +2409,10 @@ symbol_table::compile (void)
     if (node->alias
 	&& lookup_attribute ("weakref", DECL_ATTRIBUTES (node->decl)))
       {
-	IDENTIFIER_TRANSPARENT_ALIAS
-	   (DECL_ASSEMBLER_NAME (node->decl)) = 1;
-	TREE_CHAIN (DECL_ASSEMBLER_NAME (node->decl))
+	tree id = DECL_ASSEMBLER_NAME (node->decl);
+	gcc_assert (!IDENTIFIER_INTERNAL_P (id));
+	IDENTIFIER_TRANSPARENT_ALIAS (id) = 1;
+	TREE_CHAIN (id)
 	   = (node->alias_target ? node->alias_target
 	      : DECL_ASSEMBLER_NAME (node->get_alias_target ()->decl));
       }

@@ -24,6 +24,7 @@ m4_include(config/override.m4)
 m4_include(config/proginstall.m4)
 m4_include(config/elf.m4)
 m4_include(config/ax_cxx_compile_stdcxx.m4)
+m4_include(config/clang-plugin.m4)
 m4_include(config/gcc-plugin.m4)
 m4_include([libtool.m4])
 m4_include([ltoptions.m4])
@@ -32,7 +33,8 @@ m4_include([ltversion.m4])
 m4_include([lt~obsolete.m4])
 m4_include([config/isl.m4])
 
-AC_INIT(move-if-change)
+AC_INIT
+AC_CONFIG_SRCDIR([move-if-change])
 AC_DISABLE_OPTION_CHECKING
 
 progname=$0
@@ -70,14 +72,14 @@ ACX_NONCANONICAL_TARGET
 
 dnl Autoconf 2.5x and later will set a default program prefix if
 dnl --target was used, even if it was the same as --host.  Disable
-dnl that behavior.  This must be done before AC_CANONICAL_SYSTEM
+dnl that behavior.  This must be done before AC_CANONICAL_TARGET
 dnl to take effect.
 test "$host_noncanonical" = "$target_noncanonical" &&
   test "$program_prefix$program_suffix$program_transform_name" = \
     NONENONEs,x,x, &&
   program_transform_name=s,y,y,
 
-AC_CANONICAL_SYSTEM
+AC_CANONICAL_TARGET
 AC_ARG_PROGRAM
 
 m4_pattern_allow([^AS_FOR_TARGET$])dnl
@@ -622,6 +624,10 @@ case "${target}" in
 esac
 
 cpu_type=`echo ${host} | sed 's/-.*$//'`
+# Special case cpu_type for x86_64 as it shares AUTO_PROFILE from i386.
+if test "${cpu_type}" = "x86_64" ; then
+  cpu_type="i386"
+fi
 AC_SUBST(cpu_type)
 
 # Disable libssp for some systems.
@@ -1315,10 +1321,6 @@ case "${target}" in
     # always build newlib.
     skipdirs=`echo " ${skipdirs} " | sed -e 's/ target-newlib / /'`
     ;;
-    # This is temporary until we can link against shared libraries
-  powerpcle-*-solaris*)
-    noconfigdirs="$noconfigdirs gdb sim tcl tk itcl"
-    ;;
   powerpc-*-beos*)
     noconfigdirs="$noconfigdirs gdb"
     ;;
@@ -1446,11 +1448,12 @@ if test "${build}" != "${host}" ; then
   CC_FOR_BUILD=${CC_FOR_BUILD-gcc}
   CPP_FOR_BUILD="${CPP_FOR_BUILD-\$(CC_FOR_BUILD) -E}"
   CXX_FOR_BUILD=${CXX_FOR_BUILD-g++}
+  DLLTOOL_FOR_BUILD=${DLLTOOL_FOR_BUILD-dlltool}
   DSYMUTIL_FOR_BUILD=${DSYMUTIL_FOR_BUILD-dsymutil}
   GFORTRAN_FOR_BUILD=${GFORTRAN_FOR_BUILD-gfortran}
   GOC_FOR_BUILD=${GOC_FOR_BUILD-gccgo}
   GDC_FOR_BUILD=${GDC_FOR_BUILD-gdc}
-  DLLTOOL_FOR_BUILD=${DLLTOOL_FOR_BUILD-dlltool}
+  GNATMAKE_FOR_BUILD=${GNATMAKE_FOR_BUILD-gnatmake}
   LD_FOR_BUILD=${LD_FOR_BUILD-ld}
   NM_FOR_BUILD=${NM_FOR_BUILD-nm}
   RANLIB_FOR_BUILD=${RANLIB_FOR_BUILD-ranlib}
@@ -1461,11 +1464,12 @@ else
   AS_FOR_BUILD="\$(AS)"
   CC_FOR_BUILD="\$(CC)"
   CXX_FOR_BUILD="\$(CXX)"
+  DLLTOOL_FOR_BUILD="\$(DLLTOOL)"
   DSYMUTIL_FOR_BUILD="\$(DSYMUTIL)"
   GFORTRAN_FOR_BUILD="\$(GFORTRAN)"
   GOC_FOR_BUILD="\$(GOC)"
   GDC_FOR_BUILD="\$(GDC)"
-  DLLTOOL_FOR_BUILD="\$(DLLTOOL)"
+  GNATMAKE_FOR_BUILD="\$(GNATMAKE)"
   LD_FOR_BUILD="\$(LD)"
   NM_FOR_BUILD="\$(NM)"
   RANLIB_FOR_BUILD="\$(RANLIB)"
@@ -3247,6 +3251,11 @@ if echo " ${target_configdirs} " | grep " libgomp " > /dev/null 2>&1 ; then
   bootstrap_target_libs=${bootstrap_target_libs}target-libgomp,
 fi
 
+# If we are building libatomic, bootstrap it.
+if echo " ${target_configdirs} " | grep " libatomic " > /dev/null 2>&1 ; then
+  bootstrap_target_libs=${bootstrap_target_libs}target-libatomic,
+fi
+
 # If we are building libsanitizer and $BUILD_CONFIG contains bootstrap-asan
 # or bootstrap-ubsan, bootstrap it.
 if echo " ${target_configdirs} " | grep " libsanitizer " > /dev/null 2>&1; then
@@ -3911,6 +3920,7 @@ AC_SUBST(DSYMUTIL_FOR_BUILD)
 AC_SUBST(GFORTRAN_FOR_BUILD)
 AC_SUBST(GOC_FOR_BUILD)
 AC_SUBST(GDC_FOR_BUILD)
+AC_SUBST(GNATMAKE_FOR_BUILD)
 AC_SUBST(LDFLAGS_FOR_BUILD)
 AC_SUBST(LD_FOR_BUILD)
 AC_SUBST(NM_FOR_BUILD)
@@ -4008,18 +4018,30 @@ AC_SUBST(GDCFLAGS)
 GDCFLAGS=${GDCFLAGS-${CFLAGS}}
 AC_SUBST(PKG_CONFIG_PATH)
 
-GCC_PLUGIN_OPTION(PLUGIN_OPTION)
+# Try CLANG_PLUGIN_FILE first since GCC_PLUGIN_OPTION may return the
+# wrong PLUGIN_OPTION with clang.
+CLANG_PLUGIN_FILE(PLUGIN_FILE)
+if test -n "$PLUGIN_FILE"; then
+  PLUGIN_OPTION="--plugin $PLUGIN_FILE"
+else
+  GCC_PLUGIN_OPTION(PLUGIN_OPTION)
+fi
 AR_PLUGIN_OPTION=
+NM_PLUGIN_OPTION=
 RANLIB_PLUGIN_OPTION=
 if test -n "$PLUGIN_OPTION"; then
   if $AR --help 2>&1 | grep -q "\--plugin"; then
     AR_PLUGIN_OPTION="$PLUGIN_OPTION"
+  fi
+  if $NM --help 2>&1 | grep -q "\--plugin"; then
+    NM_PLUGIN_OPTION="$PLUGIN_OPTION"
   fi
   if $RANLIB --help 2>&1 | grep -q "\--plugin"; then
     RANLIB_PLUGIN_OPTION="$PLUGIN_OPTION"
   fi
 fi
 AC_SUBST(AR_PLUGIN_OPTION)
+AC_SUBST(NM_PLUGIN_OPTION)
 AC_SUBST(RANLIB_PLUGIN_OPTION)
 
 # Target tools.
@@ -4113,6 +4135,27 @@ AC_SUBST(RAW_CXX_FOR_TARGET)
 AR_FOR_TARGET=${AR_FOR_TARGET}${extra_arflags_for_target}
 RANLIB_FOR_TARGET=${RANLIB_FOR_TARGET}${extra_ranlibflags_for_target}
 NM_FOR_TARGET=${NM_FOR_TARGET}${extra_nmflags_for_target}
+
+# Try CLANG_PLUGIN_FILE_FOR_TARGET first since GCC_PLUGIN_OPTION_FOR_TARGET
+# may return the wrong PLUGIN_OPTION_FOR_TARGET with clang.
+CLANG_PLUGIN_FILE_FOR_TARGET(PLUGIN_FILE_FOR_TARGET)
+if test -n "$PLUGIN_FILE_FOR_TARGET"; then
+  PLUGIN_OPTION_FOR_TARGET="--plugin $PLUGIN_FILE_FOR_TARGET"
+else
+  GCC_PLUGIN_OPTION_FOR_TARGET(PLUGIN_OPTION_FOR_TARGET)
+fi
+if test -n "$PLUGIN_OPTION_FOR_TARGET"; then
+  AR_PLUGIN_OPTION_FOR_TARGET="$PLUGIN_OPTION_FOR_TARGET"
+  NM_PLUGIN_OPTION_FOR_TARGET="$PLUGIN_OPTION_FOR_TARGET"
+  RANLIB_PLUGIN_OPTION_FOR_TARGET="$PLUGIN_OPTION_FOR_TARGET"
+else
+  AR_PLUGIN_OPTION_FOR_TARGET=
+  NM_PLUGIN_OPTION_FOR_TARGET=
+  RANLIB_PLUGIN_OPTION_FOR_TARGET=
+fi
+AC_SUBST(AR_PLUGIN_OPTION_FOR_TARGET)
+AC_SUBST(NM_PLUGIN_OPTION_FOR_TARGET)
+AC_SUBST(RANLIB_PLUGIN_OPTION_FOR_TARGET)
 
 # When building target libraries, except in a Canadian cross, we use
 # the same toolchain as the compiler we just built.

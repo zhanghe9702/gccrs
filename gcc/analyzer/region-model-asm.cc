@@ -119,7 +119,7 @@ deterministic_p (const gasm *asm_stmt)
 void
 region_model::on_asm_stmt (const gasm *stmt, region_model_context *ctxt)
 {
-  logger *logger = ctxt ? ctxt->get_logger () : NULL;
+  logger *logger = ctxt ? ctxt->get_logger () : nullptr;
   LOG_SCOPE (logger);
 
   const unsigned noutputs = gimple_asm_noutputs (stmt);
@@ -171,7 +171,8 @@ region_model::on_asm_stmt (const gasm *stmt, region_model_context *ctxt)
 	 no point in going further.  */
       constraint = constraints[i];
       if (!parse_output_constraint (&constraint, i, ninputs, noutputs,
-				    &allows_mem, &allows_reg, &is_inout))
+				    &allows_mem, &allows_reg, &is_inout,
+				    nullptr))
 	{
 	  if (logger)
 	    logger->log ("error parsing constraint for output %i: %qs",
@@ -204,8 +205,8 @@ region_model::on_asm_stmt (const gasm *stmt, region_model_context *ctxt)
       const char *constraint = constraints[i + noutputs];
       bool allows_reg, allows_mem;
       if (! parse_input_constraint (&constraint, i, ninputs, noutputs, 0,
-				    constraints.address (),
-				    &allows_mem, &allows_reg))
+				    constraints.address (), &allows_mem,
+				    &allows_reg, nullptr))
 	{
 	  if (logger)
 	    logger->log ("error parsing constraint for input %i: %qs",
@@ -216,7 +217,7 @@ region_model::on_asm_stmt (const gasm *stmt, region_model_context *ctxt)
 
       tree src_expr = input_tvec[i];
       const svalue *src_sval = get_rvalue (src_expr, ctxt);
-      check_for_poison (src_sval, src_expr, NULL, ctxt);
+      check_for_poison (src_sval, src_expr, nullptr, ctxt);
       input_svals.quick_push (src_sval);
       reachable_regs.handle_sval (src_sval);
 
@@ -259,7 +260,9 @@ region_model::on_asm_stmt (const gasm *stmt, region_model_context *ctxt)
 	  || !base_reg->tracked_p ())
 	continue;
 
-      binding_cluster *cluster = m_store.get_or_create_cluster (base_reg);
+      binding_cluster *cluster
+	= m_store.get_or_create_cluster (*m_mgr->get_store_manager (),
+					 base_reg);
       cluster->on_asm (stmt, m_mgr->get_store_manager (),
 		       conjured_purge (this, ctxt));
     }

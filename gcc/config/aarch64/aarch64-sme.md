@@ -38,6 +38,7 @@
 ;; ---- Binary arithmetic on ZA tile
 ;; ---- Binary arithmetic on ZA slice
 ;; ---- Binary arithmetic, writing to ZA slice
+;; ---- Absolute minimum/maximum
 ;;
 ;; == Ternary arithmetic
 ;; ---- [INT] Dot product
@@ -60,6 +61,10 @@
 ;; (a) they are only emitted under direct control of aarch64 code and
 ;; (b) they are sometimes used conditionally, particularly in streaming-
 ;; compatible code.
+;;
+;; To prevent the latter from upsetting the assembler, we emit the literal
+;; encodings of "SMSTART SM" and "SMSTOP SM" when compiling without
+;; TARGET_SME.
 ;;
 ;; =========================================================================
 
@@ -160,7 +165,9 @@
    (clobber (reg:VNx16BI P14_REGNUM))
    (clobber (reg:VNx16BI P15_REGNUM))]
   ""
-  "smstart\tsm"
+  {
+    return TARGET_SME ? "smstart\tsm" : ".inst 0xd503437f // smstart sm";
+  }
 )
 
 ;; Turn off streaming mode.  This clobbers all SVE state.
@@ -195,7 +202,9 @@
    (clobber (reg:VNx16BI P14_REGNUM))
    (clobber (reg:VNx16BI P15_REGNUM))]
   ""
-  "smstop\tsm"
+  {
+    return TARGET_SME ? "smstop\tsm" : ".inst 0xd503427f // smstop sm";
+  }
 )
 
 ;; -------------------------------------------------------------------------
@@ -373,6 +382,8 @@
 		    (reg:DI SME_STATE_REGNUM)
 		    (reg:DI TPIDR2_SETUP_REGNUM)
 		    (reg:DI ZA_SAVED_REGNUM)] UNSPEC_RESTORE_ZA))
+   (set (reg:DI SME_STATE_REGNUM)
+	(unspec:DI [(reg:DI SME_STATE_REGNUM)] UNSPEC_TPIDR2_RESTORE))
    (clobber (reg:DI R0_REGNUM))
    (clobber (reg:DI R14_REGNUM))
    (clobber (reg:DI R15_REGNUM))
@@ -389,7 +400,8 @@
     auto label = gen_label_rtx ();
     auto tpidr2 = gen_rtx_REG (DImode, R16_REGNUM);
     emit_insn (gen_aarch64_read_tpidr2 (tpidr2));
-    auto jump = emit_likely_jump_insn (gen_aarch64_cbnedi1 (tpidr2, label));
+    auto pat = aarch64_gen_compare_zero_and_branch (NE, tpidr2, label);
+    auto jump = emit_likely_jump_insn (pat);
     JUMP_LABEL (jump) = label;
 
     aarch64_restore_za (operands[0]);
@@ -1028,6 +1040,24 @@
   "mova\tza.d[%w0, %1, vgx<vector_count>], %2"
 )
 
+;; MOVT (vector to table)
+;; Variants are also available for:
+;; [_s8], [_u16], [_s16], [_u32], [_s32], [_u64], [_s64]
+;; [_bf16], [_f16], [_f32], [_f64]
+;; void svwrite_zt[_u8](uint64_t zt0, svuint8_t zt)
+;;      __arm_streaming __arm_out ("zt0");
+;; void svwrite_lane_zt[_u8](uint64_t zt0, svuint8_t zt, uint64_t idx)
+;;      __arm_streaming __arm_out ("zt0");
+(define_insn "@aarch64_sme_write_zt<SVE_FULL:mode>"
+  [(set (reg:V8DI ZT0_REGNUM)
+	(unspec_volatile:V8DI
+	  [(match_operand:SVE_FULL 0 "register_operand" "w")
+	   (match_operand:DI       1 "const_int_operand")]
+	  UNSPEC_SME_WRITE))]
+  "TARGET_SME_LUTv2"
+  "movt\tzt0 [%1, mul vl], %0"
+)
+
 ;; -------------------------------------------------------------------------
 ;; ---- Zeroing
 ;; -------------------------------------------------------------------------
@@ -1260,6 +1290,23 @@
 	  SME_BINARY_WRITE_SLICE_SDI))]
   "TARGET_STREAMING_SME2"
   "<sme_int_op>\tza.<Vetype>[%w0, %1, vgx<vector_count>], %2, %3.<Vetype>"
+)
+
+;; -------------------------------------------------------------------------
+;; ---- Absolute minimum/maximum
+;; -------------------------------------------------------------------------
+;; Includes:
+;; - FAMIN (SME2+FAMINMAX)
+;; - FAMAX (SME2+FAMINMAX)
+;; -------------------------------------------------------------------------
+
+(define_insn "@aarch64_sme_<faminmax_uns_op><mode>"
+  [(set (match_operand:SVE_Fx24 0 "register_operand" "=Uw<vector_count>")
+	(unspec:SVE_Fx24 [(match_operand:SVE_Fx24 1 "register_operand" "%0")
+			  (match_operand:SVE_Fx24 2 "register_operand" "Uw<vector_count>")]
+	 FAMINMAX_UNS))]
+  "TARGET_STREAMING_SME2 && TARGET_FAMINMAX"
+  "<faminmax_uns_op>\t%0, %1, %2"
 )
 
 ;; =========================================================================
@@ -2136,6 +2183,7 @@
 
 (define_c_enum "unspec" [
   UNSPEC_SME_LUTI
+  UNSPEC_SME_LUTI_ZT
 ])
 
 (define_insn "@aarch64_sme_lut<LUTI_BITS><mode>"
@@ -2163,4 +2211,19 @@
   "TARGET_STREAMING_SME2
    && !(<LUTI_BITS> == 4 && <vector_count> == 4 && <elem_bits> == 8)"
   "luti<LUTI_BITS>\t%0, zt0, %1[%2]"
+)
+
+;; LUTI4 (four registers, 8-bit)
+;; Variants are also available for: _u8
+;; svint8x4_t svluti4_zt_s8_x4 (uint64_t zt0, svuint8x2_t zn)
+;;	      __arm_streaming __arm_in ("zt0");  */
+(define_insn "aarch64_sme_lut_zt"
+  [(set (match_operand:VNx64QI 0 "aligned_register_operand" "=Uw4")
+	(unspec:VNx64QI
+	  [(reg:V8DI ZT0_REGNUM)
+	   (reg:DI SME_STATE_REGNUM)
+	   (match_operand:VNx32QI 1 "register_operand" "w")]
+	  UNSPEC_SME_LUTI_ZT))]
+  "TARGET_SME_LUTv2"
+  "luti4\t%0, zt0, {%Z1 - %T1}"
 )

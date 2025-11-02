@@ -1008,6 +1008,16 @@ switch_conversion::build_one_array (int num, tree arr_index_type,
       default_type = TREE_TYPE (m_default_values[num]);
       value_type = array_value_type (default_type, num);
       array_type = build_array_type (value_type, arr_index_type);
+      addr_space_t as
+	= targetm.addr_space.for_artificial_rodata (array_type,
+						    ARTIFICIAL_RODATA_CSWITCH);
+      if (!ADDR_SPACE_GENERIC_P (as))
+	{
+	  int quals = (TYPE_QUALS_NO_ADDR_SPACE (value_type)
+		       | ENCODE_QUAL_ADDR_SPACE (as));
+	  value_type = build_qualified_type (value_type, quals);
+	  array_type = build_array_type (value_type, arr_index_type);
+	}
       if (default_type != value_type)
 	{
 	  unsigned int i;
@@ -1030,9 +1040,10 @@ switch_conversion::build_one_array (int num, tree arr_index_type,
       TREE_CONSTANT (decl) = 1;
       TREE_READONLY (decl) = 1;
       DECL_IGNORED_P (decl) = 1;
-      /* The decl is mergable since we don't take the address ever and
+      /* The decl is mergeable since we don't take the address ever and
 	 just reading from it. */
       DECL_MERGEABLE (decl) = 1;
+
       if (offloading_function_p (cfun->decl))
 	DECL_ATTRIBUTES (decl)
 	  = tree_cons (get_identifier ("omp declare target"), NULL_TREE,

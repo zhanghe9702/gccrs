@@ -137,11 +137,14 @@ extern void riscv_expand_usadd (rtx, rtx, rtx);
 extern void riscv_expand_ssadd (rtx, rtx, rtx);
 extern void riscv_expand_ussub (rtx, rtx, rtx);
 extern void riscv_expand_sssub (rtx, rtx, rtx);
+extern void riscv_expand_usmul (rtx, rtx, rtx);
 extern void riscv_expand_ustrunc (rtx, rtx);
 extern void riscv_expand_sstrunc (rtx, rtx);
 extern int riscv_register_move_cost (machine_mode, reg_class_t, reg_class_t);
 extern bool synthesize_ior_xor (rtx_code, rtx [3]);
 extern bool synthesize_and (rtx [3]);
+extern bool synthesize_add (rtx [3]);
+extern bool synthesize_add_extended (rtx [3]);
 
 #ifdef RTX_CODE
 extern void riscv_expand_int_scc (rtx, enum rtx_code, rtx, rtx, bool *invert_ptr = 0);
@@ -204,6 +207,7 @@ rtl_opt_pass * make_pass_avlprop (gcc::context *ctxt);
 rtl_opt_pass * make_pass_vsetvl (gcc::context *ctxt);
 rtl_opt_pass * make_pass_insert_landing_pad (gcc::context *ctxt);
 rtl_opt_pass * make_pass_vector_permconst (gcc::context *ctxt);
+rtl_opt_pass * make_pass_bclr_lowest_set_bit (gcc::context *ctxt);
 
 
 /* Routines implemented in riscv-string.c.  */
@@ -413,8 +417,14 @@ enum insn_flags : unsigned int
   /* Means INSN has VXRM operand and the value is VXRM_RNU.  */
   VXRM_RNU_P = 1 << 20,
 
+  /* Means INSN has VXRM operand and the value is VXRM_RNE.  */
+  VXRM_RNE_P = 1 << 21,
+
   /* Means INSN has VXRM operand and the value is VXRM_RDN.  */
-  VXRM_RDN_P = 1 << 21,
+  VXRM_RDN_P = 1 << 22,
+
+  /* Means INSN has VXRM operand and the value is VXRM_ROD.  */
+  VXRM_ROD_P = 1 << 23,
 };
 
 enum insn_type : unsigned int
@@ -476,7 +486,9 @@ enum insn_type : unsigned int
   BINARY_OP_TUMA = __MASK_OP_TUMA | BINARY_OP_P,
   BINARY_OP_FRM_DYN = BINARY_OP | FRM_DYN_P,
   BINARY_OP_VXRM_RNU = BINARY_OP | VXRM_RNU_P,
+  BINARY_OP_VXRM_RNE = BINARY_OP | VXRM_RNE_P,
   BINARY_OP_VXRM_RDN = BINARY_OP | VXRM_RDN_P,
+  BINARY_OP_VXRM_ROD = BINARY_OP | VXRM_ROD_P,
 
   /* Ternary operator. Always have real merge operand.  */
   TERNARY_OP = HAS_DEST_P | HAS_MASK_P | USE_ALL_TRUES_MASK_P | HAS_MERGE_P
@@ -603,6 +615,7 @@ void emit_vlmax_vsetvl (machine_mode, rtx);
 void emit_hard_vlmax_vsetvl (machine_mode, rtx);
 void emit_vlmax_insn (unsigned, unsigned, rtx *);
 void emit_nonvlmax_insn (unsigned, unsigned, rtx *, rtx);
+void emit_avltype_insn (unsigned, unsigned, rtx *, avl_type, rtx = nullptr);
 void emit_vlmax_insn_lra (unsigned, unsigned, rtx *, rtx);
 enum vlmul_type get_vlmul (machine_mode);
 rtx get_vlmax_rtx (machine_mode);
@@ -670,6 +683,8 @@ void expand_vec_oct_sstrunc (rtx, rtx, machine_mode, machine_mode,
 			     machine_mode);
 void expand_vx_binary_vec_dup_vec (rtx, rtx, rtx, rtx_code, machine_mode);
 void expand_vx_binary_vec_vec_dup (rtx, rtx, rtx, rtx_code, machine_mode);
+void expand_vx_binary_vxrm_vec_vec_dup (rtx, rtx, rtx, int, int, machine_mode);
+void expand_vx_binary_vxrm_vec_dup_vec (rtx, rtx, rtx, int, int, machine_mode);
 #endif
 bool sew64_scalar_helper (rtx *, rtx *, rtx, machine_mode,
 			  bool, void (*)(rtx *, rtx), enum avl_type);
@@ -693,6 +708,9 @@ bool expand_block_move (rtx, rtx, rtx, bool);
 machine_mode preferred_simd_mode (scalar_mode);
 machine_mode get_mask_mode (machine_mode);
 void expand_vec_series (rtx, rtx, rtx, rtx = 0);
+void expand_broadcast (machine_mode, rtx *, rtx = 0);
+void expand_set_first (machine_mode, rtx *, rtx = 0);
+void expand_set_first_tu (machine_mode, rtx *, rtx = 0);
 void expand_vec_init (rtx, rtx);
 void expand_vec_perm (rtx, rtx, rtx, rtx);
 void expand_select_vl (rtx *);
@@ -748,7 +766,7 @@ opt_machine_mode vectorize_related_mode (machine_mode, scalar_mode,
 unsigned int autovectorize_vector_modes (vec<machine_mode> *, bool);
 bool cmp_lmul_le_one (machine_mode);
 bool cmp_lmul_gt_one (machine_mode);
-bool vls_mode_valid_p (machine_mode);
+bool vls_mode_valid_p (machine_mode, bool allow_up_to_lmul_8 = true);
 bool vlmax_avl_type_p (rtx_insn *);
 bool has_vl_op (rtx_insn *);
 bool tail_agnostic_p (rtx_insn *);
@@ -759,7 +777,8 @@ uint8_t get_sew (rtx_insn *);
 enum vlmul_type get_vlmul (rtx_insn *);
 int count_regno_occurrences (rtx_insn *, unsigned int);
 bool imm_avl_p (machine_mode);
-bool can_be_broadcasted_p (rtx);
+bool can_be_broadcast_p (rtx);
+bool strided_broadcast_p (rtx);
 bool gather_scatter_valid_offset_p (machine_mode);
 HOST_WIDE_INT estimated_poly_value (poly_int64, unsigned int);
 bool whole_reg_to_reg_move_p (rtx *, machine_mode, int);
@@ -812,17 +831,24 @@ extern const char *th_output_move (rtx, rtx);
 extern bool th_print_operand_address (FILE *, machine_mode, rtx);
 #endif
 
+extern bool strided_load_broadcast_p (void);
+extern bool riscv_prefer_agnostic_p (void);
 extern bool riscv_use_divmod_expander (void);
-void riscv_init_cumulative_args (CUMULATIVE_ARGS *, tree, rtx, tree, int);
+void riscv_init_cumulative_args (CUMULATIVE_ARGS *, const_tree,
+				 rtx, tree, int, bool);
 extern bool
 riscv_option_valid_attribute_p (tree, tree, tree, int);
 extern bool
 riscv_option_valid_version_attribute_p (tree, tree, tree, int);
 extern bool
-riscv_process_target_version_attr (tree, location_t);
+riscv_process_target_version_attr (tree, location_t *);
+extern bool
+riscv_process_target_version_str (string_slice, location_t *);
 extern void
 riscv_override_options_internal (struct gcc_options *);
 extern void riscv_option_override (void);
+extern rtx riscv_prefetch_cookie (rtx, rtx);
+extern bool riscv_prefetch_offset_address_p (rtx, machine_mode);
 
 struct riscv_tune_param;
 /* Information about one micro-arch we know about.  */

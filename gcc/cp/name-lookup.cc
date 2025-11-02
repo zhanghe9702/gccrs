@@ -353,6 +353,8 @@ append_imported_binding_slot (tree *slot, tree name, unsigned ix)
 
       tree new_vec = make_binding_vec (name, want);
       BINDING_VECTOR_NUM_CLUSTERS (new_vec) = have + 1;
+      BINDING_VECTOR_INTERNAL_DECLS (new_vec)
+	= BINDING_VECTOR_INTERNAL_DECLS (*slot);
       BINDING_VECTOR_GLOBAL_DUPS_P (new_vec)
 	= BINDING_VECTOR_GLOBAL_DUPS_P (*slot);
       BINDING_VECTOR_PARTITION_DUPS_P (new_vec)
@@ -550,7 +552,7 @@ private:
   void adl_class_only (tree);
   void adl_namespace (tree);
   void adl_class_fns (tree);
-  void adl_namespace_fns (tree, bitmap);
+  void adl_namespace_fns (tree, bitmap, bitmap, bitmap);
 
 public:
   /* Search namespace + inlines + maybe usings as qualified lookup.  */
@@ -1205,10 +1207,16 @@ name_lookup::add_fns (tree fns)
   add_overload (fns);
 }
 
-/* Add the overloaded fns of SCOPE.  */
+/* Add the overloaded fns of SCOPE.  IMPORTS is the list of visible modules
+   for this lookup. INST_PATH for dependent (2nd phase) ADL is the list of
+   modules on the instantiation context for this lookup, or otherwise NULL.
+   ASSOCS is the list of modules where this namespace shares an innermost
+   non-inline namespace with an associated entity attached to said module,
+   or NULL if there are none.  */
 
 void
-name_lookup::adl_namespace_fns (tree scope, bitmap imports)
+name_lookup::adl_namespace_fns (tree scope, bitmap imports,
+				bitmap inst_path, bitmap assocs)
 {
   if (tree *binding = find_namespace_slot (scope, name))
     {
@@ -1257,19 +1265,22 @@ name_lookup::adl_namespace_fns (tree scope, bitmap imports)
 	  for (; ix--; cluster++)
 	    for (unsigned jx = 0; jx != BINDING_VECTOR_SLOTS_PER_CLUSTER; jx++)
 	      {
+		int mod = cluster->indices[jx].base;
+
 		/* Functions are never on merged slots.  */
-		if (!cluster->indices[jx].base
-		    || cluster->indices[jx].span != 1)
+		if (!mod || cluster->indices[jx].span != 1)
 		  continue;
 
-		/* Is this slot visible?  */
-		if (!bitmap_bit_p (imports, cluster->indices[jx].base))
+		/* Is this slot accessible here?  */
+		bool visible = bitmap_bit_p (imports, mod);
+		bool on_inst_path = inst_path && bitmap_bit_p (inst_path, mod);
+		if (!visible && !on_inst_path
+		    && !(assocs && bitmap_bit_p (assocs, mod)))
 		  continue;
 
-		/* Is it loaded.  */
+		/* Is it loaded?  */
 		if (cluster->slots[jx].is_lazy ())
-		  lazy_load_binding (cluster->indices[jx].base,
-				     scope, name, &cluster->slots[jx]);
+		  lazy_load_binding (mod, scope, name, &cluster->slots[jx]);
 
 		tree bind = cluster->slots[jx];
 		if (!bind)
@@ -1294,10 +1305,52 @@ name_lookup::adl_namespace_fns (tree scope, bitmap imports)
 			dup_detect |= dup;
 		      }
 
-		    bind = STAT_VISIBLE (bind);
+		    /* For lookups on the instantiation path we can see any
+		       declarations visible at any point on the path;
+		       otherwise we should only see exported decls.  */
+		    if (on_inst_path)
+		      {
+			/* If there are any internal functions visible, naming
+			   them outside that module is ill-formed.  */
+			auto_diagnostic_group d;
+			if (MODULE_BINDING_INTERNAL_DECLS_P (bind)
+			    && pedwarn (input_location, OPT_Wexternal_tu_local,
+					"overload set for argument-dependent "
+					"lookup of %<%D::%D%> in module %qs "
+					"contains TU-local entities",
+					scope, name, module_name (mod, false)))
+			  {
+			    tree *tu_locals
+			      = BINDING_VECTOR_INTERNAL_DECLS (val)->get (mod);
+			    gcc_checking_assert (tu_locals && *tu_locals);
+			    for (tree t = *tu_locals; t; t = TREE_CHAIN (t))
+			      {
+				tree decl = TREE_VALUE (t);
+				inform (TU_LOCAL_ENTITY_LOCATION (decl),
+					"ignoring %qD declared here "
+					"with internal linkage",
+					TU_LOCAL_ENTITY_NAME (decl));
+			      }
+			  }
+			bind = STAT_DECL (bind);
+		      }
+		    else
+		      bind = STAT_VISIBLE (bind);
 		  }
 
-		add_fns (bind);
+		if (on_inst_path || visible)
+		  add_fns (bind);
+		else
+		  {
+		    /* We're only accessible because we're the same module as
+		       an associated entity with module attachment: only add
+		       functions actually attached to this module.  */
+		    for (tree fn : ovl_range (bind))
+		      if (DECL_DECLARES_FUNCTION_P (fn)
+			  && DECL_LANG_SPECIFIC (STRIP_TEMPLATE (fn))
+			  && DECL_MODULE_ATTACH_P (STRIP_TEMPLATE (fn)))
+			add_overload (fn);
+		  }
 	      }
 	}
     }
@@ -1632,6 +1685,32 @@ name_lookup::search_adl (tree fns, vec<tree, va_gc> *args)
       if (fns)
 	dedup (true);
 
+      /* First get the attached modules for each innermost non-inline
+	 namespace of an associated entity.  */
+      bitmap_obstack_initialize (NULL);
+      hash_map<tree, bitmap> ns_mod_assocs;
+      if (modules_p ())
+	{
+	  for (tree scope : scopes)
+	    if (TYPE_P (scope))
+	      {
+		int mod = get_originating_module (TYPE_NAME (scope),
+						  /*global_m1=*/true);
+		if (mod > 0)
+		  {
+		    tree ctx = decl_namespace_context (scope);
+		    while (DECL_NAMESPACE_INLINE_P (ctx))
+		      ctx = CP_DECL_CONTEXT (ctx);
+
+		    bool existed = false;
+		    bitmap &b = ns_mod_assocs.get_or_insert (ctx, &existed);
+		    if (!existed)
+		      b = BITMAP_ALLOC (NULL);
+		    bitmap_set_bit (b, mod);
+		  }
+	      }
+	}
+
       /* INST_PATH will be NULL, if this is /not/ 2nd-phase ADL.  */
       bitmap inst_path = NULL;
       /* VISIBLE is the regular import bitmap.  */
@@ -1641,65 +1720,21 @@ name_lookup::search_adl (tree fns, vec<tree, va_gc> *args)
 	{
 	  tree scope = (*scopes)[ix];
 	  if (TREE_CODE (scope) == NAMESPACE_DECL)
-	    adl_namespace_fns (scope, visible);
-	  else
 	    {
-	      if (RECORD_OR_UNION_TYPE_P (scope))
-		adl_class_fns (scope);
-
-	      /* During 2nd phase ADL: Any exported declaration D in N
-		 declared within the purview of a named module M
-		 (10.2) is visible if there is an associated entity
-		 attached to M with the same innermost enclosing
-		 non-inline namespace as D.
-		 [basic.lookup.argdep]/4.4 */
-
-	      if (!inst_path)
-		/* Not 2nd phase.  */
-		continue;
-
-	      tree ctx = CP_DECL_CONTEXT (TYPE_NAME (scope));
-	      if (TREE_CODE (ctx) != NAMESPACE_DECL)
-		/* Not namespace-scope class.  */
-		continue;
-
-	      tree origin = get_originating_module_decl (TYPE_NAME (scope));
-	      tree not_tmpl = STRIP_TEMPLATE (origin);
-	      if (!DECL_LANG_SPECIFIC (not_tmpl)
-		  || !DECL_MODULE_IMPORT_P (not_tmpl))
-		/* Not imported.  */
-		continue;
-
-	      unsigned module = get_importing_module (origin);
-
-	      if (!bitmap_bit_p (inst_path, module))
-		/* Not on path of instantiation.  */
-		continue;
-
-	      if (bitmap_bit_p (visible, module))
-		/* If the module was in the visible set, we'll look at
-		   its namespace partition anyway.  */
-		continue;
-
-	      if (tree *slot = find_namespace_slot (ctx, name, false))
-		if (binding_slot *mslot = search_imported_binding_slot (slot, module))
-		  {
-		    if (mslot->is_lazy ())
-		      lazy_load_binding (module, ctx, name, mslot);
-
-		    if (tree bind = *mslot)
-		      {
-			/* We must turn on deduping, because some other class
-			   from this module might also be in this namespace.  */
-			dedup (true);
-
-			/* Add the exported fns  */
-			if (STAT_HACK_P (bind))
-			  add_fns (STAT_VISIBLE (bind));
-		      }
-		  }
+	      tree ctx = scope;
+	      while (DECL_NAMESPACE_INLINE_P (ctx))
+		ctx = CP_DECL_CONTEXT (ctx);
+	      bitmap *assocs = ns_mod_assocs.get (ctx);
+	      adl_namespace_fns (scope, visible, inst_path,
+				 assocs ? *assocs : NULL);
 	    }
+	  else if (RECORD_OR_UNION_TYPE_P (scope))
+	    adl_class_fns (scope);
 	}
+
+      for (auto refs : ns_mod_assocs)
+	BITMAP_FREE (refs.second);
+      bitmap_obstack_release (NULL);
 
       fns = value;
       dedup (false);
@@ -3351,8 +3386,12 @@ check_local_shadow (tree decl)
 	}
       /* Don't complain if it's from an enclosing function.  */
       else if (DECL_CONTEXT (old) == current_function_decl
-	       && TREE_CODE (decl) != PARM_DECL
-	       && TREE_CODE (old) == PARM_DECL)
+	       && ((TREE_CODE (decl) != PARM_DECL
+		    && TREE_CODE (old) == PARM_DECL)
+		   /* We should also give an error for
+		       [x=1]{ int x; }  */
+		   || (is_capture_proxy (old)
+		       && !is_normal_capture_proxy (old))))
 	{
 	  /* Go to where the parms should be and see if we find
 	     them there.  */
@@ -3408,7 +3447,9 @@ check_local_shadow (tree decl)
 	 detected elsewhere.  */
       else if (VAR_P (old)
 	       && old_scope == current_binding_level->level_chain
-	       && (old_scope->kind == sk_cond || old_scope->kind == sk_for))
+	       && (old_scope->kind == sk_cond
+		   || old_scope->kind == sk_for
+		   || old_scope->kind == sk_template_for))
 	{
 	  if (name_independent_decl_p (decl))
 	    return old;
@@ -3685,7 +3726,11 @@ push_local_extern_decl_alias (tree decl)
 			  chain = &TREE_CHAIN (*chain);
 			}
 
-		    tree fn_type = build_function_type (TREE_TYPE (type), nargs);
+		    bool no_named_args_stdarg
+		      = TYPE_NO_NAMED_ARGS_STDARG_P (type);
+		    tree fn_type
+		      = build_function_type (TREE_TYPE (type), nargs,
+					     no_named_args_stdarg);
 
 		    fn_type = apply_memfn_quals
 		      (fn_type, type_memfn_quals (type));
@@ -3841,7 +3886,7 @@ check_module_override (tree decl, tree mvec, bool hiding,
 	  }
       }
 
-  if (TREE_PUBLIC (scope) && TREE_PUBLIC (STRIP_TEMPLATE (decl))
+  if (TREE_PUBLIC (scope)
       /* Namespaces are dealt with specially in
 	 make_namespace_finish.  */
       && !(TREE_CODE (decl) == NAMESPACE_DECL && !DECL_NAMESPACE_ALIAS (decl)))
@@ -4412,18 +4457,21 @@ import_module_binding  (tree ns, tree name, unsigned mod, unsigned snum)
 /* An import of MODULE is binding NS::NAME.  There should be no
    existing binding for >= MODULE.  GLOBAL_P indicates whether the
    bindings include global module entities.  PARTITION_P is true if
-   it is part of the current module. VALUE and TYPE are the value
-   and type bindings. VISIBLE are the value bindings being exported.  */
+   it is part of the current module.  VALUE and TYPE are the value
+   and type bindings.  VISIBLE are the value bindings being exported.
+   INTERNAL is a TREE_LIST of any TU-local names visible for ADL.  */
 
 bool
 set_module_binding (tree ns, tree name, unsigned mod, bool global_p,
-		    bool partition_p, tree value, tree type, tree visible)
+		    bool partition_p, tree value, tree type, tree visible,
+		    tree internal)
 {
-  if (!value)
+  if (!value && !internal)
     /* Bogus BMIs could give rise to nothing to bind.  */
     return false;
 
-  gcc_assert (TREE_CODE (value) != NAMESPACE_DECL
+  gcc_assert (!value
+	      || TREE_CODE (value) != NAMESPACE_DECL
 	      || DECL_NAMESPACE_ALIAS (value));
   gcc_checking_assert (mod);
 
@@ -4435,13 +4483,24 @@ set_module_binding (tree ns, tree name, unsigned mod, bool global_p,
     return false;
 
   tree bind = value;
-  if (type || visible != bind || partition_p || global_p)
+  if (type || visible != bind || internal || partition_p || global_p)
     {
       bind = stat_hack (bind, type);
       STAT_VISIBLE (bind) = visible;
       if ((partition_p && TREE_PUBLIC (ns))
 	  || (type && DECL_MODULE_EXPORT_P (type)))
 	STAT_TYPE_VISIBLE_P (bind) = true;
+    }
+
+  /* If this has internal declarations, track them for diagnostics.  */
+  if (internal)
+    {
+      if (!BINDING_VECTOR_INTERNAL_DECLS (*slot))
+	BINDING_VECTOR_INTERNAL_DECLS (*slot)
+	  = module_tree_map_t::create_ggc ();
+      bool existed = BINDING_VECTOR_INTERNAL_DECLS (*slot)->put (mod, internal);
+      gcc_checking_assert (!existed);
+      MODULE_BINDING_INTERNAL_DECLS_P (bind) = true;
     }
 
   /* Note if this is this-module and/or global binding.  */
@@ -4626,6 +4685,7 @@ cp_binding_level_descriptor (cp_binding_level *scope)
     "try-scope",
     "catch-scope",
     "for-scope",
+    "template-for-scope",
     "cond-init-scope",
     "stmt-expr-scope",
     "function-parameter-scope",
@@ -4635,7 +4695,8 @@ cp_binding_level_descriptor (cp_binding_level *scope)
     "template-parameter-scope",
     "template-explicit-spec-scope",
     "transaction-scope",
-    "openmp-scope"
+    "openmp-scope",
+    "lambda-scope"
   };
   static_assert (ARRAY_SIZE (scope_kind_names) == sk_count,
 		 "must keep names aligned with scope_kind enum");
@@ -4720,12 +4781,14 @@ begin_scope (scope_kind kind, tree entity)
     case sk_try:
     case sk_catch:
     case sk_for:
+    case sk_template_for:
     case sk_cond:
     case sk_class:
     case sk_scoped_enum:
     case sk_transaction:
     case sk_omp:
     case sk_stmt_expr:
+    case sk_lambda:
       scope->keep = keep_next_level_flag;
       break;
 
@@ -5347,7 +5410,8 @@ do_nonmember_using_decl (name_lookup &lookup, bool fn_scope_p,
 			OVL_EXPORT_P (old.get_using ()) = true;
 		    }
 		  else if (!DECL_LANG_SPECIFIC (inner)
-			   || !DECL_MODULE_PURVIEW_P (inner))
+			   || !DECL_MODULE_PURVIEW_P (inner)
+			   || (exporting_p && !DECL_MODULE_EXPORT_P (inner)))
 		    /* We need to re-insert this function as a revealed
 		       (possibly exported) declaration.  We can't remove
 		       the existing decl because that will change any
@@ -5369,7 +5433,8 @@ do_nonmember_using_decl (name_lookup &lookup, bool fn_scope_p,
 		  found = true;
 		  if (revealing_p
 		      && (!DECL_LANG_SPECIFIC (inner)
-			  || !DECL_MODULE_PURVIEW_P (inner)))
+			  || !DECL_MODULE_PURVIEW_P (inner)
+			  || (exporting_p && !DECL_MODULE_EXPORT_P (inner))))
 		    found = false;
 		  break;
 		}
@@ -7195,7 +7260,7 @@ suggest_alternatives_for_1 (location_t location, tree name,
   /* Look for exact matches for builtin defines that would have been
      defined if the user had passed a command-line option (e.g. -fopenmp
      for "_OPENMP").  */
-  diagnostic_option_id option_id
+  diagnostics::option_id option_id
     = get_option_for_builtin_define (IDENTIFIER_POINTER (name));
   if (option_id.m_idx > 0)
     return name_hint
@@ -8536,6 +8601,12 @@ pushtag (tree name, tree type, TAG_how how)
 	}
       else
 	{
+	  /* If an import is going to provide a definition for this tag,
+	     load it now so that we don't get confused later when processing
+	     this tag's definition.  */
+	  if (modules_p ())
+	    lazy_load_pendings (decl);
+
 	  decl = do_pushdecl_with_scope
 	    (decl, b, /*hiding=*/(how == TAG_how::HIDDEN_FRIEND));
 	  if (decl == error_mark_node)
@@ -8938,20 +9009,34 @@ pop_nested_namespace (tree ns)
 static void
 add_using_namespace (vec<tree, va_gc> *&usings, tree target)
 {
+  /* Find if this using already exists.  */
+  tree old = NULL_TREE;
   if (usings)
-    for (unsigned ix = usings->length (); ix--;)
-      if ((*usings)[ix] == target)
-	return;
+    for (tree t : *usings)
+      if (USING_DECL_DECLS (t) == target)
+	{
+	  old = t;
+	  break;
+	}
 
+  tree decl = old;
+  if (!decl)
+    {
+      decl = build_lang_decl (USING_DECL, NULL_TREE, NULL_TREE);
+      USING_DECL_DECLS (decl) = target;
+    }
+
+  /* Update purviewness and exportedness in case that has changed.  */
   if (modules_p ())
     {
-      tree u = build_lang_decl (USING_DECL, NULL_TREE, NULL_TREE);
-      USING_DECL_DECLS (u) = target;
-      DECL_MODULE_EXPORT_P (u) = module_exporting_p ();
-      DECL_MODULE_PURVIEW_P (u) = module_purview_p ();
-      target = u;
+      if (module_purview_p ())
+	DECL_MODULE_PURVIEW_P (decl) = true;
+      if (module_exporting_p ())
+	DECL_MODULE_EXPORT_P (decl) = true;
     }
-  vec_safe_push (usings, target);
+
+  if (!old)
+    vec_safe_push (usings, decl);
 }
 
 /* Convenience overload for the above, taking the user as its first
@@ -9261,6 +9346,9 @@ push_namespace (tree name, bool make_inline)
 		  gcc_checking_assert (!(tree)slot || (tree)slot == ctx);
 		  slot = ctx;
 		}
+
+	      if (module_purview_p ())
+		DECL_MODULE_PURVIEW_P (ctx) = true;
 	    }
 	}
 

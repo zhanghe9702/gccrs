@@ -123,15 +123,6 @@ package body Sem_Ch10 is
    --  Verify that a stub is declared immediately within a compilation unit,
    --  and not in an inner frame.
 
-   procedure Expand_With_Clause (Item : Node_Id; Nam : Node_Id; N : Node_Id);
-   --  When a child unit appears in a context clause, the implicit withs on
-   --  parents are made explicit, and with clauses are inserted in the context
-   --  clause before the one for the child. If a parent in the with_clause
-   --  is a renaming, the implicit with_clause is on the renaming whose name
-   --  is mentioned in the with_clause, and not on the package it renames.
-   --  N is the compilation unit whose list of context items receives the
-   --  implicit with_clauses.
-
    procedure Generate_Parent_References (N : Node_Id; P_Id : Entity_Id);
    --  Generate cross-reference information for the parents of child units
    --  and of subunits. N is a defining_program_unit_name, and P_Id is the
@@ -185,7 +176,7 @@ package body Sem_Ch10 is
    --  use-package clauses to avoid circularities when installing context.
 
    procedure Install_Siblings (U_Name : Entity_Id; N : Node_Id);
-   --  In the compilation of a child unit, a child of any of the  ancestor
+   --  In the compilation of a child unit, a child of any of the ancestor
    --  units is directly visible if it is visible, because the parent is in
    --  an enclosing scope. Iterate over context to find child units of U_Name
    --  or of some ancestor of it.
@@ -1234,8 +1225,14 @@ package body Sem_Ch10 is
 
       if Expander_Active and then Tagged_Type_Expansion then
          case Nkind (Unit_Node) is
-            when N_Package_Declaration | N_Package_Body =>
+            when N_Package_Declaration =>
                Build_Static_Dispatch_Tables (Unit_Node);
+
+            when N_Package_Body =>
+               if Ekind (Corresponding_Spec (Unit_Node)) /= E_Generic_Package
+               then
+                  Build_Static_Dispatch_Tables (Unit_Node);
+               end if;
 
             when N_Package_Instantiation =>
                Build_Static_Dispatch_Tables (Instance_Spec (Unit_Node));
@@ -1494,6 +1491,10 @@ package body Sem_Ch10 is
                 --  No checks required if no separate spec
 
                 or else Acts_As_Spec (N)
+
+                --  No checked needed for ignored ghost units
+
+                or else Is_Ignored_Ghost_Entity_In_Codegen (Spec_Id)
               )
             then
                --  This is a case where we only need the entity for checking to
@@ -2955,6 +2956,7 @@ package body Sem_Ch10 is
 
       if Ada_Version >= Ada_95
         and then In_Predefined_Renaming (U)
+        and then Comes_From_Source (N)
       then
          if Restriction_Check_Required (No_Obsolescent_Features) then
             Check_Restriction (No_Obsolescent_Features, N);
@@ -3167,13 +3169,12 @@ package body Sem_Ch10 is
 
       elsif Unit_Kind = N_Package_Instantiation
         and then Nkind (U) = N_Package_Instantiation
-        and then Present (Instance_Spec (U))
       then
          --  If the instance has not been rewritten as a package declaration,
          --  then it appeared already in a previous with clause. Retrieve
          --  the entity from the previous instance.
 
-         E_Name := Defining_Entity (Specification (Instance_Spec (U)));
+         E_Name := Defining_Entity_Of_Instance (U);
 
       elsif Unit_Kind in N_Subprogram_Instantiation then
 
@@ -3184,9 +3185,7 @@ package body Sem_Ch10 is
          --  been rewritten as the declaration of the wrapper itself.
 
          if Nkind (U) in N_Subprogram_Instantiation then
-            E_Name :=
-              Related_Instance
-                (Defining_Entity (Specification (Instance_Spec (U))));
+            E_Name := Defining_Entity_Of_Instance (U);
          else
             E_Name := Related_Instance (Defining_Entity (U));
          end if;
@@ -3297,7 +3296,7 @@ package body Sem_Ch10 is
             --  the renamed unit, and the renaming declaration itself has not
             --  been analyzed.
 
-            Analyze (Parent (Parent (Entity (Pref))));
+            Semantics (Parent (Parent (Entity (Pref))));
             pragma Assert (Renamed_Entity (Entity (Pref)) = Par_Name);
             Par_Name := Entity (Pref);
          end if;
@@ -4804,9 +4803,8 @@ package body Sem_Ch10 is
    ----------------------
 
    procedure Install_Siblings (U_Name : Entity_Id; N : Node_Id) is
-      Item : Node_Id;
-      Id   : Entity_Id;
-      Prev : Entity_Id;
+      Item   : Node_Id;
+      Item_E : Entity_Id;
 
    begin
       --  Iterate over explicit with clauses, and check whether the scope of
@@ -4837,42 +4835,46 @@ package body Sem_Ch10 is
            or else Private_Present (N)
            or else Nkind (Unit (N)) = N_Package_Body
          then
-            Id := Entity (Name (Item));
+            Item_E := Entity (Name (Item));
 
-            if Is_Child_Unit (Id)
-              and then Is_Ancestor_Package (Scope (Id), U_Name)
+            if Is_Child_Unit (Item_E)
+              and then Is_Ancestor_Package (Scope (Item_E), U_Name)
             then
-               Set_Is_Immediately_Visible (Id);
+               Set_Is_Immediately_Visible (Item_E);
 
                --  Check for the presence of another unit in the context that
                --  may be inadvertently hidden by the child.
 
-               Prev := Current_Entity (Id);
+               declare
+                  Clause : Node_Id;
+                  Clause_E : Entity_Id;
 
-               if Present (Prev)
-                 and then Is_Immediately_Visible (Prev)
-                 and then not Is_Child_Unit (Prev)
-               then
-                  declare
-                     Clause : Node_Id;
+               begin
+                  Clause := First (Context_Items (N));
+                  while Present (Clause) loop
+                     if Clause /= Item
+                       and then Nkind (Clause) = N_With_Clause
+                       and then not Limited_Present (Clause)
+                     then
+                        Clause_E := Entity (Name (Clause));
 
-                  begin
-                     Clause := First (Context_Items (N));
-                     while Present (Clause) loop
-                        if Nkind (Clause) = N_With_Clause
-                          and then Entity (Name (Clause)) = Prev
+                        if not Is_Ancestor_Package (Clause_E, U_Name)
+                          and then Chars (Clause_E) = Chars (Item_E)
+                          and then not Has_Prefix (Name (Clause))
+                          and then not In_Use (Clause_E)
                         then
                            Error_Msg_NE
-                              ("child unit& hides compilation unit " &
-                               "with the same name??",
-                                 Name (Item), Id);
+                             ("child unit& hides compilation unit "
+                              & "with the same name??",
+                              Name (Item),
+                              Item_E);
                            exit;
                         end if;
+                     end if;
 
-                        Next (Clause);
-                     end loop;
-                  end;
-               end if;
+                     Next (Clause);
+                  end loop;
+               end;
 
             --  The With_Clause may be on a grandchild or one of its further
             --  descendants, which makes a child immediately visible. Examine
@@ -4880,12 +4882,12 @@ package body Sem_Ch10 is
             --  if current unit is A.C, and with_clause is on A.X.Y.Z, then X
             --  is immediately visible.
 
-            elsif Is_Child_Unit (Id) then
+            elsif Is_Child_Unit (Item_E) then
                declare
                   Par : Entity_Id;
 
                begin
-                  Par := Scope (Id);
+                  Par := Scope (Item_E);
                   while Is_Child_Unit (Par) loop
                      if Is_Ancestor_Package (Scope (Par), U_Name) then
                         Set_Is_Immediately_Visible (Par);
@@ -4903,9 +4905,9 @@ package body Sem_Ch10 is
          --  is already a regular with_clause for it in the current unit.
 
          elsif Private_Present (Item) then
-            Id := Entity (Name (Item));
+            Item_E := Entity (Name (Item));
 
-            if Is_Child_Unit (Id) then
+            if Is_Child_Unit (Item_E) then
                declare
                   Clause : Node_Id;
 
@@ -4929,10 +4931,13 @@ package body Sem_Ch10 is
                           and then Is_Entity_Name (Name (Clause))
                           and then not Private_Present (Clause)
                         then
-                           if Entity (Name (Clause)) = Id
+                           if Entity (Name (Clause)) = Item_E
                              or else
                                (Nkind (Name (Clause)) = N_Expanded_Name
-                                 and then Entity (Prefix (Name (Clause))) = Id)
+                                 and then
+                                   Is_Entity_Name (Prefix (Name (Clause)))
+                                 and then Entity (Prefix (Name (Clause)))
+                                          = Item_E)
                            then
                               return True;
                            end if;
@@ -4945,7 +4950,7 @@ package body Sem_Ch10 is
                   end In_Context;
 
                begin
-                  Set_Is_Visible_Lib_Unit (Id, In_Context);
+                  Set_Is_Visible_Lib_Unit (Item_E, In_Context);
                end;
             end if;
          end if;

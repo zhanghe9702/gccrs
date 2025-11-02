@@ -51,6 +51,7 @@
 #include <utility>
 #include <variant>
 #endif
+#include <bits/binders.h>
 #include <bits/ranges_util.h>
 #include <bits/refwrap.h>
 
@@ -64,6 +65,7 @@
 #define __glibcxx_want_ranges_chunk
 #define __glibcxx_want_ranges_chunk_by
 #define __glibcxx_want_ranges_enumerate
+#define __glibcxx_want_ranges_indices
 #define __glibcxx_want_ranges_join_with
 #define __glibcxx_want_ranges_repeat
 #define __glibcxx_want_ranges_slide
@@ -660,7 +662,7 @@ namespace ranges
       : _M_value(__value)
       { }
 
-      constexpr
+      constexpr explicit
       iota_view(type_identity_t<_Winc> __value,
 		type_identity_t<_Bound> __bound)
       : _M_value(__value), _M_bound(__bound)
@@ -669,19 +671,19 @@ namespace ranges
 	  __glibcxx_assert( bool(__value <= __bound) );
       }
 
-      constexpr
+      constexpr explicit
       iota_view(_Iterator __first, _Iterator __last)
 	requires same_as<_Winc, _Bound>
 	: iota_view(__first._M_value, __last._M_value)
       { }
 
-      constexpr
+      constexpr explicit
       iota_view(_Iterator __first, unreachable_sentinel_t __last)
 	requires same_as<_Bound, unreachable_sentinel_t>
 	: iota_view(__first._M_value, __last)
       { }
 
-      constexpr
+      constexpr explicit
       iota_view(_Iterator __first, _Sentinel __last)
 	requires (!same_as<_Winc, _Bound>) && (!same_as<_Bound, unreachable_sentinel_t>)
 	: iota_view(__first._M_value, __last._M_bound)
@@ -784,6 +786,19 @@ namespace views
   };
 
   inline constexpr _Iota iota{};
+
+#ifdef __cpp_lib_ranges_indices // C++ >= 26
+  struct _Indices
+  {
+    template<ranges::__detail::__is_integer_like _Tp>
+      requires __detail::__can_iota_view<_Tp>
+      [[nodiscard]] constexpr auto
+      operator() (_Tp __e) const noexcept
+      { return iota(_Tp{}, __e); }
+  };
+
+  inline constexpr _Indices indices{};
+#endif // __cpp_lib_ranges_indices
 } // namespace views
 
 #if _GLIBCXX_HOSTED
@@ -1047,14 +1062,15 @@ namespace views::__adaptor
   template<typename _Adaptor, typename... _Args>
     struct _Partial : _RangeAdaptorClosure<_Partial<_Adaptor, _Args...>>
     {
-      tuple<_Args...> _M_args;
+      using _Binder = _Bind_back_t<_Adaptor, _Args...>;
+      [[no_unique_address]] _Binder _M_binder;
 
       // First parameter is to ensure this constructor is never used
       // instead of the copy/move constructor.
       template<typename... _Ts>
 	constexpr
 	_Partial(int, _Ts&&... __args)
-	  : _M_args(std::forward<_Ts>(__args)...)
+	  : _M_binder(0, _Adaptor(), std::forward<_Ts>(__args)...)
 	{ }
 
       // Invoke _Adaptor with arguments __r, _M_args... according to the
@@ -1065,75 +1081,21 @@ namespace views::__adaptor
 	constexpr auto
 	operator()(this _Self&& __self, _Range&& __r)
 	{
-	  auto __forwarder = [&__r] (auto&&... __args) {
-	    return _Adaptor{}(std::forward<_Range>(__r),
-			      std::forward<decltype(__args)>(__args)...);
-	  };
-	  return std::apply(__forwarder, __like_t<_Self, _Partial>(__self)._M_args);
+	  return _Binder::_S_call(__like_t<_Self, _Partial>(__self)._M_binder,
+				  std::forward<_Range>(__r));
 	}
 #else
       template<typename _Range>
 	requires __adaptor_invocable<_Adaptor, _Range, const _Args&...>
 	constexpr auto
 	operator()(_Range&& __r) const &
-	{
-	  auto __forwarder = [&__r] (const auto&... __args) {
-	    return _Adaptor{}(std::forward<_Range>(__r), __args...);
-	  };
-	  return std::apply(__forwarder, _M_args);
-	}
+	{ return _Binder::_S_call(_M_binder, std::forward<_Range>(__r)); }
 
       template<typename _Range>
 	requires __adaptor_invocable<_Adaptor, _Range, _Args...>
 	constexpr auto
 	operator()(_Range&& __r) &&
-	{
-	  auto __forwarder = [&__r] (auto&... __args) {
-	    return _Adaptor{}(std::forward<_Range>(__r), std::move(__args)...);
-	  };
-	  return std::apply(__forwarder, _M_args);
-	}
-
-      template<typename _Range>
-	constexpr auto
-	operator()(_Range&& __r) const && = delete;
-#endif
-    };
-
-  // A lightweight specialization of the above primary template for
-  // the common case where _Adaptor accepts a single extra argument.
-  template<typename _Adaptor, typename _Arg>
-    struct _Partial<_Adaptor, _Arg> : _RangeAdaptorClosure<_Partial<_Adaptor, _Arg>>
-    {
-      _Arg _M_arg;
-
-      template<typename _Tp>
-	constexpr
-	_Partial(int, _Tp&& __arg)
-	  : _M_arg(std::forward<_Tp>(__arg))
-	{ }
-
-#if __cpp_explicit_this_parameter
-      template<typename _Self, typename _Range>
-	requires __adaptor_invocable<_Adaptor, _Range, __like_t<_Self, _Arg>>
-	constexpr auto
-	operator()(this _Self&& __self, _Range&& __r)
-	{
-	  return _Adaptor{}(std::forward<_Range>(__r),
-			    __like_t<_Self, _Partial>(__self)._M_arg);
-	}
-#else
-      template<typename _Range>
-	requires __adaptor_invocable<_Adaptor, _Range, const _Arg&>
-	constexpr auto
-	operator()(_Range&& __r) const &
-	{ return _Adaptor{}(std::forward<_Range>(__r), _M_arg); }
-
-      template<typename _Range>
-	requires __adaptor_invocable<_Adaptor, _Range, _Arg>
-	constexpr auto
-	operator()(_Range&& __r) &&
-	{ return _Adaptor{}(std::forward<_Range>(__r), std::move(_M_arg)); }
+	{ return _Binder::_S_call(std::move(_M_binder), std::forward<_Range>(__r)); }
 
       template<typename _Range>
 	constexpr auto
@@ -1150,12 +1112,13 @@ namespace views::__adaptor
       && (is_trivially_copy_constructible_v<_Args> && ...)
     struct _Partial<_Adaptor, _Args...> : _RangeAdaptorClosure<_Partial<_Adaptor, _Args...>>
     {
-      tuple<_Args...> _M_args;
+      using _Binder = _Bind_back_t<_Adaptor, _Args...>;
+      [[no_unique_address]] _Binder _M_binder;
 
       template<typename... _Ts>
 	constexpr
 	_Partial(int, _Ts&&... __args)
-	  : _M_args(std::forward<_Ts>(__args)...)
+	  : _M_binder(0, _Adaptor(), std::forward<_Ts>(__args)...)
 	{ }
 
       // Invoke _Adaptor with arguments __r, const _M_args&... regardless
@@ -1164,36 +1127,7 @@ namespace views::__adaptor
 	requires __adaptor_invocable<_Adaptor, _Range, const _Args&...>
 	constexpr auto
 	operator()(_Range&& __r) const
-	{
-	  auto __forwarder = [&__r] (const auto&... __args) {
-	    return _Adaptor{}(std::forward<_Range>(__r), __args...);
-	  };
-	  return std::apply(__forwarder, _M_args);
-	}
-
-      static constexpr bool _S_has_simple_call_op = true;
-    };
-
-  // A lightweight specialization of the above template for the common case
-  // where _Adaptor accepts a single extra argument.
-  template<typename _Adaptor, typename _Arg>
-    requires __adaptor_has_simple_extra_args<_Adaptor, _Arg>
-      && is_trivially_copy_constructible_v<_Arg>
-    struct _Partial<_Adaptor, _Arg> : _RangeAdaptorClosure<_Partial<_Adaptor, _Arg>>
-    {
-      _Arg _M_arg;
-
-      template<typename _Tp>
-	constexpr
-	_Partial(int, _Tp&& __arg)
-	  : _M_arg(std::forward<_Tp>(__arg))
-	{ }
-
-      template<typename _Range>
-	requires __adaptor_invocable<_Adaptor, _Range, const _Arg&>
-	constexpr auto
-	operator()(_Range&& __r) const
-	{ return _Adaptor{}(std::forward<_Range>(__r), _M_arg); }
+	{ return _Binder::_S_call(_M_binder, std::forward<_Range>(__r)); }
 
       static constexpr bool _S_has_simple_call_op = true;
     };
@@ -1585,8 +1519,6 @@ namespace views::__adaptor
       };
 
     template<random_access_range _Range>
-      requires (sizeof(range_difference_t<_Range>)
-		<= sizeof(iterator_t<_Range>))
       struct _CachedPosition<_Range>
       {
       private:
@@ -1811,7 +1743,7 @@ namespace views::__adaptor
 			      && default_initializable<_Pred>)
 	= default;
 
-      constexpr
+      constexpr explicit
       filter_view(_Vp __base, _Pred __pred)
 	: _M_base(std::move(__base)), _M_pred(std::move(__pred))
       { }
@@ -2188,7 +2120,7 @@ namespace views::__adaptor
 				 && default_initializable<_Fp>)
 	= default;
 
-      constexpr
+      constexpr explicit
       transform_view(_Vp __base, _Fp __fun)
 	: _M_base(std::move(__base)), _M_fun(std::move(__fun))
       { }
@@ -2323,7 +2255,7 @@ namespace views::__adaptor
     public:
       take_view() requires default_initializable<_Vp> = default;
 
-      constexpr
+      constexpr explicit
       take_view(_Vp __base, range_difference_t<_Vp> __count)
 	: _M_base(std::move(__base)), _M_count(std::move(__count))
       { }
@@ -2562,7 +2494,7 @@ namespace views::__adaptor
 				  && default_initializable<_Pred>)
 	= default;
 
-      constexpr
+      constexpr explicit
       take_while_view(_Vp __base, _Pred __pred)
 	: _M_base(std::move(__base)), _M_pred(std::move(__pred))
       { }
@@ -2650,7 +2582,7 @@ namespace views::__adaptor
     public:
       drop_view() requires default_initializable<_Vp> = default;
 
-      constexpr
+      constexpr explicit
       drop_view(_Vp __base, range_difference_t<_Vp> __count)
 	: _M_base(std::move(__base)), _M_count(__count)
       { __glibcxx_assert(__count >= 0); }
@@ -2804,7 +2736,7 @@ namespace views::__adaptor
 				  && default_initializable<_Pred>)
 	= default;
 
-      constexpr
+      constexpr explicit
       drop_while_view(_Vp __base, _Pred __pred)
 	: _M_base(std::move(__base)), _M_pred(std::move(__pred))
       { }
@@ -2971,7 +2903,12 @@ namespace views::__adaptor
 	      }
 
 	    if constexpr (_S_ref_is_glvalue)
-	      _M_inner.reset();
+	      {
+		if constexpr (forward_iterator<_Inner_iter>)
+		  _M_inner = _Inner_iter();
+		else
+		  _M_inner.reset();
+	      }
 	  }
 
 	  static constexpr auto
@@ -3011,6 +2948,24 @@ namespace views::__adaptor
 	      return *_M_parent->_M_outer;
 	  }
 
+	  constexpr _Inner_iter&
+	  _M_get_inner() noexcept
+	  {
+	    if constexpr (forward_iterator<_Inner_iter>)
+	      return _M_inner;
+	    else
+	      return *_M_inner;
+	  }
+
+	  constexpr const _Inner_iter&
+	  _M_get_inner() const noexcept
+	  {
+	    if constexpr (forward_iterator<_Inner_iter>)
+	      return _M_inner;
+	    else
+	      return *_M_inner;
+	  }
+
 	  constexpr
 	  _Iterator(_Parent* __parent, _Outer_iter __outer) requires forward_range<_Base>
 	    : _M_outer(std::move(__outer)), _M_parent(__parent)
@@ -3022,8 +2977,11 @@ namespace views::__adaptor
 	  { _M_satisfy(); }
 
 	  [[no_unique_address]]
-	    __detail::__maybe_present_t<forward_range<_Base>, _Outer_iter> _M_outer;
-	  optional<_Inner_iter> _M_inner;
+	    __detail::__maybe_present_t<forward_range<_Base>, _Outer_iter> _M_outer
+	      = decltype(_M_outer)();
+	  __conditional_t<forward_iterator<_Inner_iter>,
+			  _Inner_iter, optional<_Inner_iter>> _M_inner
+	    = decltype(_M_inner)();
 	  _Parent* _M_parent = nullptr;
 
 	public:
@@ -3047,7 +3005,7 @@ namespace views::__adaptor
 
 	  constexpr decltype(auto)
 	  operator*() const
-	  { return **_M_inner; }
+	  { return *_M_get_inner(); }
 
 	  // _GLIBCXX_RESOLVE_LIB_DEFECTS
 	  // 3500. join_view::iterator::operator->() is bogus
@@ -3055,7 +3013,7 @@ namespace views::__adaptor
 	  operator->() const
 	    requires __detail::__has_arrow<_Inner_iter>
 	      && copyable<_Inner_iter>
-	  { return *_M_inner; }
+	  { return _M_get_inner(); }
 
 	  constexpr _Iterator&
 	  operator++()
@@ -3066,7 +3024,7 @@ namespace views::__adaptor
 	      else
 		return *_M_parent->_M_inner;
 	    }();
-	    if (++*_M_inner == ranges::end(__inner_range))
+	    if (++_M_get_inner() == ranges::end(__inner_range))
 	      {
 		++_M_get_outer();
 		_M_satisfy();
@@ -3096,9 +3054,9 @@ namespace views::__adaptor
 	  {
 	    if (_M_outer == ranges::end(_M_parent->_M_base))
 	      _M_inner = ranges::end(__detail::__as_lvalue(*--_M_outer));
-	    while (*_M_inner == ranges::begin(__detail::__as_lvalue(*_M_outer)))
-	      *_M_inner = ranges::end(__detail::__as_lvalue(*--_M_outer));
-	    --*_M_inner;
+	    while (_M_get_inner() == ranges::begin(__detail::__as_lvalue(*_M_outer)))
+	      _M_get_inner() = ranges::end(__detail::__as_lvalue(*--_M_outer));
+	    --_M_get_inner();
 	    return *this;
 	  }
 
@@ -3125,14 +3083,14 @@ namespace views::__adaptor
 
 	  friend constexpr decltype(auto)
 	  iter_move(const _Iterator& __i)
-	  noexcept(noexcept(ranges::iter_move(*__i._M_inner)))
-	  { return ranges::iter_move(*__i._M_inner); }
+	  noexcept(noexcept(ranges::iter_move(__i._M_get_inner())))
+	  { return ranges::iter_move(__i._M_get_inner()); }
 
 	  friend constexpr void
 	  iter_swap(const _Iterator& __x, const _Iterator& __y)
-	    noexcept(noexcept(ranges::iter_swap(*__x._M_inner, *__y._M_inner)))
+	    noexcept(noexcept(ranges::iter_swap(__x._M_get_inner(), __y._M_get_inner())))
 	    requires indirectly_swappable<_Inner_iter>
-	  { return ranges::iter_swap(*__x._M_inner, *__y._M_inner); }
+	  { return ranges::iter_swap(__x._M_get_inner(), __y._M_get_inner()); }
 
 	  friend _Iterator<!_Const>;
 	  template<bool> friend struct _Sentinel;
@@ -3376,7 +3334,8 @@ namespace views::__adaptor
 
 	  [[no_unique_address]]
 	    __detail::__maybe_present_t<forward_range<_Vp>,
-					iterator_t<_Base>> _M_current;
+					iterator_t<_Base>> _M_current
+	      = decltype(_M_current)();
 	  bool _M_trailing_empty = false;
 
 	public:
@@ -3641,7 +3600,7 @@ namespace views::__adaptor
 				  && default_initializable<_Pattern>)
 	= default;
 
-      constexpr
+      constexpr explicit
       lazy_split_view(_Vp __base, _Pattern __pattern)
 	: _M_base(std::move(__base)), _M_pattern(std::move(__pattern))
       { }
@@ -3649,7 +3608,7 @@ namespace views::__adaptor
       template<input_range _Range>
 	requires constructible_from<_Vp, views::all_t<_Range>>
 	  && constructible_from<_Pattern, single_view<range_value_t<_Range>>>
-	constexpr
+	constexpr explicit
 	lazy_split_view(_Range&& __r, range_value_t<_Range> __e)
 	  : _M_base(views::all(std::forward<_Range>(__r))),
 	    _M_pattern(views::single(std::move(__e)))
@@ -3766,7 +3725,7 @@ namespace views::__adaptor
 			   && default_initializable<_Pattern>)
       = default;
 
-    constexpr
+    constexpr explicit
     split_view(_Vp __base, _Pattern __pattern)
       : _M_base(std::move(__base)), _M_pattern(std::move(__pattern))
     { }
@@ -3774,7 +3733,7 @@ namespace views::__adaptor
     template<forward_range _Range>
       requires constructible_from<_Vp, views::all_t<_Range>>
 	&& constructible_from<_Pattern, single_view<range_value_t<_Range>>>
-    constexpr
+    constexpr explicit
     split_view(_Range&& __r, range_value_t<_Range> __e)
       : _M_base(views::all(std::forward<_Range>(__r))),
 	_M_pattern(views::single(std::move(__e)))
@@ -5438,7 +5397,7 @@ namespace views::__adaptor
   {
     // Yields tuple<_Tp, ..., _Tp> with _Nm elements.
     template<typename _Tp, size_t _Nm>
-      using __repeated_tuple = decltype(std::tuple_cat(std::declval<array<_Tp, _Nm>>()));
+      using __repeated_tuple = typename __make_tuple<array<_Tp, _Nm>>::__type;
 
     // For a functor F that is callable with N arguments, the expression
     // declval<__unarize<F, N>>(x) is equivalent to declval<F>(x, ..., x).
@@ -5515,9 +5474,7 @@ namespace views::__adaptor
   public:
     using iterator_category = input_iterator_tag;
     using iterator_concept = decltype(_S_iter_concept());
-    using value_type = conditional_t<_Nm == 2,
-				     pair<range_value_t<_Base>, range_value_t<_Base>>,
-				     __detail::__repeated_tuple<range_value_t<_Base>, _Nm>>;
+    using value_type = __detail::__repeated_tuple<range_value_t<_Base>, _Nm>;
     using difference_type = range_difference_t<_Base>;
 
     _Iterator() = default;
@@ -7295,7 +7252,7 @@ namespace views::__adaptor
 			       && default_initializable<_Pattern>)
       = default;
 
-    constexpr
+    constexpr explicit
     join_with_view(_Vp __base, _Pattern __pattern)
     : _M_base(std::move(__base)), _M_pattern(std::move(__pattern))
     { }
@@ -7303,7 +7260,7 @@ namespace views::__adaptor
     template<input_range _Range>
       requires constructible_from<_Vp, views::all_t<_Range>>
 	&& constructible_from<_Pattern, single_view<range_value_t<_InnerRange>>>
-    constexpr
+    constexpr explicit
     join_with_view(_Range&& __r, range_value_t<_InnerRange> __e)
     : _M_base(views::all(std::forward<_Range>(__r))),
       _M_pattern(views::single(std::move(__e)))
@@ -7400,7 +7357,8 @@ namespace views::__adaptor
 
     _Parent* _M_parent = nullptr;
     [[no_unique_address]]
-      __detail::__maybe_present_t<forward_range<_Base>, _OuterIter> _M_outer_it;
+      __detail::__maybe_present_t<forward_range<_Base>, _OuterIter> _M_outer_it
+	= decltype(_M_outer_it)();
     variant<_PatternIter, _InnerIter> _M_inner_it;
 
     constexpr _OuterIter&
@@ -9735,7 +9693,7 @@ namespace ranges
     end() requires (!(__detail::__simple_view<_Vs> && ...))
     {
       constexpr auto __n = sizeof...(_Vs);
-      if constexpr ((semiregular<iterator_t<_Vs>> && ...)
+      if constexpr (__detail::__all_forward<false, _Vs...>
 		    && common_range<_Vs...[__n - 1]>)
 	return _Iterator<false>(this, in_place_index<__n - 1>,
 				ranges::end(std::get<__n - 1>(_M_views)));
@@ -9747,7 +9705,7 @@ namespace ranges
     end() const requires (range<const _Vs> && ...) && __detail::__concatable<const _Vs...>
     {
       constexpr auto __n = sizeof...(_Vs);
-      if constexpr ((semiregular<iterator_t<const _Vs>> && ...)
+      if constexpr (__detail::__all_forward<true, _Vs...>
 		    && common_range<const _Vs...[__n - 1]>)
 	return _Iterator<true>(this, in_place_index<__n - 1>,
 			       ranges::end(std::get<__n - 1>(_M_views)));

@@ -102,6 +102,15 @@ struct stringop_algs
 #define COSTS_N_BYTES(N) ((N) * 2)
 #endif
 
+
+enum ix86_reduc_unroll_factor{
+  X86_REDUC_FMA,
+  X86_REDUC_DOT_PROD,
+  X86_REDUC_SAD,
+
+  X86_REDUC_LAST
+};
+
 /* Define the specific costs for a given cpu.  NB: hard_register is used
    by TARGET_REGISTER_MOVE_COST and TARGET_MEMORY_MOVE_COST to compute
    hard register move costs by register allocator.  Relative costs of
@@ -225,6 +234,13 @@ struct processor_costs {
 				   to number of instructions executed in
 				   parallel.  See also
 				   ix86_reassociation_width.  */
+  const unsigned reduc_lat_mult_thr[X86_REDUC_LAST];
+				/* Latency times throughput of
+				   FMA/DOT_PROD_EXPR/SAD_EXPR,
+				   it's used to determine unroll
+				   factor in the vectorizer.  */
+  const unsigned vect_unroll_limit;    /* Limit how much the autovectorizer
+					  may unroll a loop.  */
   struct stringop_algs *memcpy, *memset;
   const int cond_taken_branch_cost;    /* Cost of taken branch for vectorizer
 					  cost model.  */
@@ -644,7 +660,8 @@ extern const char *host_detect_local_cpu (int argc, const char **argv);
   {"cpu_64", "%{" OPT_ARCH64 ":%{!mtune=*:%{!mcpu=*:%{!march=*:-mtune=%(VALUE)}}}}" }, \
   {"arch", "%{!march=*:-march=%(VALUE)}"},			   \
   {"arch_32", "%{" OPT_ARCH32 ":%{!march=*:-march=%(VALUE)}}"},	   \
-  {"arch_64", "%{" OPT_ARCH64 ":%{!march=*:-march=%(VALUE)}}"},
+  {"arch_64", "%{" OPT_ARCH64 ":%{!march=*:-march=%(VALUE)}}"},    \
+  {"tls", "%{!mtls-dialect=*:-mtls-dialect=%(VALUE)}"},
 
 /* Specs for the compiler proper */
 
@@ -1696,6 +1713,8 @@ typedef struct ix86_args {
   int stdarg;                   /* Set to 1 if function is stdarg.  */
   enum calling_abi call_abi;	/* Set to SYSV_ABI for sysv abi. Otherwise
  				   MS_ABI for ms abi.  */
+  bool preserve_none_abi;	/* Set to true if the preserve_none ABI is
+				   used.  */
   tree decl;			/* Callee decl.  */
 } CUMULATIVE_ARGS;
 
@@ -1840,8 +1859,8 @@ typedef struct ix86_args {
 #define STRIP_UNARY(X) (UNARY_P (X) ? XEXP (X, 0) : X)
 
 #define SYMBOLIC_CONST(X)	\
-  (GET_CODE (X) == SYMBOL_REF						\
-   || GET_CODE (X) == LABEL_REF						\
+  (SYMBOL_REF_P (X)							\
+   || LABEL_REF_P (X)							\
    || (GET_CODE (X) == CONST && symbolic_reference_mentioned_p (X)))
 
 /* Max number of args passed in registers.  If this is more than 3, we will
@@ -1897,13 +1916,9 @@ typedef struct ix86_args {
    MOVE_MAX_PIECES defaults to MOVE_MAX.  */
 
 #define MOVE_MAX \
-  ((TARGET_AVX512F \
-    && (ix86_move_max == PVW_AVX512 \
-	|| ix86_store_max == PVW_AVX512)) \
+  ((TARGET_AVX512F && ix86_move_max == PVW_AVX512) \
    ? 64 \
-   : ((TARGET_AVX \
-       && (ix86_move_max >= PVW_AVX256 \
-	   || ix86_store_max >= PVW_AVX256)) \
+   : ((TARGET_AVX && ix86_move_max >= PVW_AVX256) \
       ? 32 \
       : ((TARGET_SSE2 \
 	  && TARGET_SSE_UNALIGNED_LOAD_OPTIMAL \
@@ -1916,15 +1931,14 @@ typedef struct ix86_args {
    store_by_pieces of 16/32/64 bytes.  */
 #define STORE_MAX_PIECES \
   (TARGET_INTER_UNIT_MOVES_TO_VEC \
-   ? ((TARGET_AVX512F && ix86_store_max == PVW_AVX512) \
+   ? ((TARGET_AVX512F && ix86_move_max == PVW_AVX512) \
       ? 64 \
-      : ((TARGET_AVX \
-	  && ix86_store_max >= PVW_AVX256) \
+      : ((TARGET_AVX && ix86_move_max >= PVW_AVX256) \
 	  ? 32 \
 	  : ((TARGET_SSE2 \
 	      && TARGET_SSE_UNALIGNED_STORE_OPTIMAL) \
-	      ? 16 : UNITS_PER_WORD))) \
-   : UNITS_PER_WORD)
+	     ? 16 : UNITS_PER_WORD)))		     \
+      : UNITS_PER_WORD)
 
 /* If a memory-to-memory move would take MOVE_RATIO or more simple
    move-instruction pairs, we will do a cpymem or libcall instead.
@@ -2342,6 +2356,7 @@ enum processor_type
   PROCESSOR_ARROWLAKE_S,
   PROCESSOR_PANTHERLAKE,
   PROCESSOR_DIAMONDRAPIDS,
+  PROCESSOR_NOVALAKE,
   PROCESSOR_INTEL,
   PROCESSOR_LUJIAZUI,
   PROCESSOR_YONGFENG,
@@ -2446,12 +2461,14 @@ constexpr wide_int_bitmask PTA_GOLDMONT_PLUS = PTA_GOLDMONT | PTA_RDPID
   | PTA_SGX | PTA_PTWRITE;
 constexpr wide_int_bitmask PTA_TREMONT = PTA_GOLDMONT_PLUS | PTA_CLWB
   | PTA_GFNI | PTA_MOVDIRI | PTA_MOVDIR64B | PTA_CLDEMOTE | PTA_WAITPKG;
-constexpr wide_int_bitmask PTA_ALDERLAKE = PTA_TREMONT | PTA_ADX | PTA_AVX
+constexpr wide_int_bitmask PTA_ALDERLAKE = PTA_GOLDMONT_PLUS | PTA_CLWB
+  | PTA_GFNI | PTA_MOVDIRI | PTA_MOVDIR64B | PTA_WAITPKG | PTA_ADX | PTA_AVX
   | PTA_AVX2 | PTA_BMI | PTA_BMI2 | PTA_F16C | PTA_FMA | PTA_LZCNT
   | PTA_PCONFIG | PTA_PKU | PTA_VAES | PTA_VPCLMULQDQ | PTA_SERIALIZE
   | PTA_HRESET | PTA_KL | PTA_WIDEKL | PTA_AVXVNNI;
-constexpr wide_int_bitmask PTA_SIERRAFOREST = PTA_ALDERLAKE | PTA_AVXIFMA
-  | PTA_AVXVNNIINT8 | PTA_AVXNECONVERT | PTA_CMPCCXADD | PTA_ENQCMD | PTA_UINTR;
+constexpr wide_int_bitmask PTA_SIERRAFOREST = PTA_ALDERLAKE | PTA_CLDEMOTE
+  | PTA_AVXIFMA | PTA_AVXVNNIINT8 | PTA_AVXNECONVERT | PTA_CMPCCXADD
+  | PTA_ENQCMD | PTA_UINTR;
 constexpr wide_int_bitmask PTA_GRANITERAPIDS = PTA_SAPPHIRERAPIDS | PTA_AMX_FP16
   | PTA_PREFETCHI | PTA_AVX10_1;
 constexpr wide_int_bitmask PTA_GRANITERAPIDS_D = PTA_GRANITERAPIDS
@@ -2461,20 +2478,22 @@ constexpr wide_int_bitmask PTA_ARROWLAKE = PTA_ALDERLAKE | PTA_AVXIFMA
   | PTA_AVXVNNIINT8 | PTA_AVXNECONVERT | PTA_CMPCCXADD | PTA_UINTR;
 constexpr wide_int_bitmask PTA_ARROWLAKE_S = PTA_ARROWLAKE | PTA_AVXVNNIINT16
   | PTA_SHA512 | PTA_SM3 | PTA_SM4;
-constexpr wide_int_bitmask PTA_CLEARWATERFOREST = PTA_SIERRAFOREST
-  | PTA_AVXVNNIINT16 | PTA_SHA512 | PTA_SM3 | PTA_SM4 | PTA_USER_MSR
-  | PTA_PREFETCHI;
-constexpr wide_int_bitmask PTA_PANTHERLAKE = PTA_ARROWLAKE_S | PTA_PREFETCHI;
+constexpr wide_int_bitmask PTA_CLEARWATERFOREST =
+  (PTA_SIERRAFOREST & (~(PTA_KL | PTA_WIDEKL))) | PTA_AVXVNNIINT16 | PTA_SHA512
+  | PTA_SM3 | PTA_SM4 | PTA_USER_MSR | PTA_PREFETCHI;
+constexpr wide_int_bitmask PTA_PANTHERLAKE =
+  (PTA_ARROWLAKE_S & (~(PTA_KL | PTA_WIDEKL)));
 constexpr wide_int_bitmask PTA_DIAMONDRAPIDS = PTA_GRANITERAPIDS_D
   | PTA_AVXIFMA | PTA_AVXNECONVERT | PTA_AVXVNNIINT16 | PTA_AVXVNNIINT8
   | PTA_CMPCCXADD | PTA_SHA512 | PTA_SM3 | PTA_SM4 | PTA_AVX10_2
-  | PTA_APX_F | PTA_AMX_AVX512 | PTA_AMX_FP8 | PTA_AMX_TF32 | PTA_AMX_TRANSPOSE
-  | PTA_MOVRS | PTA_AMX_MOVRS | PTA_USER_MSR;
+  | PTA_APX_F | PTA_AMX_AVX512 | PTA_AMX_FP8 | PTA_AMX_TF32 | PTA_MOVRS
+  | PTA_AMX_MOVRS;
+constexpr wide_int_bitmask PTA_NOVALAKE = PTA_PANTHERLAKE | PTA_PREFETCHI;
 
 constexpr wide_int_bitmask PTA_BDVER1 = PTA_64BIT | PTA_MMX | PTA_SSE
-  | PTA_SSE2 | PTA_SSE3 | PTA_SSE4A | PTA_CX16 | PTA_ABM | PTA_SSSE3
-  | PTA_SSE4_1 | PTA_SSE4_2 | PTA_AES | PTA_PCLMUL | PTA_AVX | PTA_FMA4
-  | PTA_XOP | PTA_LWP | PTA_PRFCHW | PTA_FXSR | PTA_XSAVE;
+  | PTA_SSE2 | PTA_SSE3 | PTA_SSE4A | PTA_CX16 | PTA_POPCNT | PTA_LZCNT
+  | PTA_ABM | PTA_SSSE3 | PTA_SSE4_1 | PTA_SSE4_2 | PTA_AES | PTA_PCLMUL
+  | PTA_AVX | PTA_FMA4 | PTA_XOP | PTA_LWP | PTA_PRFCHW | PTA_FXSR | PTA_XSAVE;
 constexpr wide_int_bitmask PTA_BDVER2 = PTA_BDVER1 | PTA_BMI | PTA_TBM
   | PTA_F16C | PTA_FMA;
 constexpr wide_int_bitmask PTA_BDVER3 = PTA_BDVER2 | PTA_XSAVEOPT
@@ -2482,13 +2501,13 @@ constexpr wide_int_bitmask PTA_BDVER3 = PTA_BDVER2 | PTA_XSAVEOPT
 constexpr wide_int_bitmask PTA_BDVER4 = PTA_BDVER3 | PTA_AVX2 | PTA_BMI2
   | PTA_RDRND | PTA_MOVBE | PTA_MWAITX;
 
-constexpr wide_int_bitmask PTA_ZNVER1 = PTA_64BIT | PTA_MMX | PTA_SSE | PTA_SSE2
-  | PTA_SSE3 | PTA_SSE4A | PTA_CX16 | PTA_ABM | PTA_SSSE3 | PTA_SSE4_1
-  | PTA_SSE4_2 | PTA_AES | PTA_PCLMUL | PTA_AVX | PTA_AVX2 | PTA_BMI | PTA_BMI2
-  | PTA_F16C | PTA_FMA | PTA_PRFCHW | PTA_FXSR | PTA_XSAVE | PTA_XSAVEOPT
-  | PTA_FSGSBASE | PTA_RDRND | PTA_MOVBE | PTA_MWAITX | PTA_ADX | PTA_RDSEED
-  | PTA_CLZERO | PTA_CLFLUSHOPT | PTA_XSAVEC | PTA_XSAVES | PTA_SHA | PTA_LZCNT
-  | PTA_POPCNT;
+constexpr wide_int_bitmask PTA_ZNVER1 = PTA_64BIT | PTA_MMX | PTA_SSE
+  | PTA_SSE2 | PTA_SSE3 | PTA_SSE4A | PTA_CX16 |  PTA_POPCNT | PTA_LZCNT
+  | PTA_ABM | PTA_SSSE3 | PTA_SSE4_1 | PTA_SSE4_2 | PTA_AES | PTA_PCLMUL
+  | PTA_AVX | PTA_AVX2 | PTA_BMI | PTA_BMI2 | PTA_F16C | PTA_FMA | PTA_PRFCHW
+  | PTA_FXSR | PTA_XSAVE | PTA_XSAVEOPT | PTA_FSGSBASE | PTA_RDRND | PTA_MOVBE
+  | PTA_MWAITX | PTA_ADX | PTA_RDSEED | PTA_CLZERO | PTA_CLFLUSHOPT
+  | PTA_XSAVEC | PTA_XSAVES | PTA_SHA;
 constexpr wide_int_bitmask PTA_ZNVER2 = PTA_ZNVER1 | PTA_CLWB | PTA_RDPID
   | PTA_WBNOINVD;
 constexpr wide_int_bitmask PTA_ZNVER3 = PTA_ZNVER2 | PTA_VAES | PTA_VPCLMULQDQ
@@ -2501,19 +2520,19 @@ constexpr wide_int_bitmask PTA_ZNVER5 = PTA_ZNVER4 | PTA_AVXVNNI
   | PTA_MOVDIRI | PTA_MOVDIR64B | PTA_AVX512VP2INTERSECT | PTA_PREFETCHI;
 
 constexpr wide_int_bitmask PTA_BTVER1 = PTA_64BIT | PTA_MMX | PTA_SSE
-  | PTA_SSE2 | PTA_SSE3 | PTA_SSSE3 | PTA_SSE4A | PTA_ABM | PTA_CX16
-  | PTA_PRFCHW | PTA_FXSR | PTA_XSAVE;
+  | PTA_SSE2 | PTA_SSE3 | PTA_SSSE3 | PTA_SSE4A | PTA_LZCNT | PTA_POPCNT
+  | PTA_ABM | PTA_CX16 | PTA_PRFCHW | PTA_FXSR | PTA_XSAVE;
 constexpr wide_int_bitmask PTA_BTVER2 = PTA_BTVER1 | PTA_SSE4_1 | PTA_SSE4_2
   | PTA_AES | PTA_PCLMUL | PTA_AVX | PTA_BMI | PTA_F16C | PTA_MOVBE
   | PTA_XSAVEOPT;
 
 constexpr wide_int_bitmask PTA_LUJIAZUI = PTA_64BIT | PTA_MMX | PTA_SSE
-  | PTA_SSE2 | PTA_SSE3 | PTA_CX16 | PTA_ABM | PTA_SSSE3 | PTA_SSE4_1
-  | PTA_SSE4_2 | PTA_AES | PTA_PCLMUL | PTA_BMI | PTA_BMI2 | PTA_PRFCHW
-  | PTA_FXSR | PTA_XSAVE | PTA_XSAVEOPT | PTA_FSGSBASE | PTA_RDRND | PTA_MOVBE
-  | PTA_ADX | PTA_RDSEED | PTA_POPCNT;
+  | PTA_SSE2 | PTA_SSE3 | PTA_CX16 | PTA_LZCNT | PTA_POPCNT | PTA_ABM
+  | PTA_SSSE3 | PTA_SSE4_1 | PTA_SSE4_2 | PTA_AES | PTA_PCLMUL | PTA_BMI
+  | PTA_BMI2 | PTA_PRFCHW | PTA_FXSR | PTA_XSAVE | PTA_XSAVEOPT | PTA_FSGSBASE
+  | PTA_RDRND | PTA_MOVBE | PTA_ADX | PTA_RDSEED;
 constexpr wide_int_bitmask PTA_YONGFENG = PTA_LUJIAZUI | PTA_AVX | PTA_AVX2
-  | PTA_F16C | PTA_FMA | PTA_SHA | PTA_LZCNT;
+  | PTA_F16C | PTA_FMA | PTA_SHA;
 
 #ifndef GENERATOR_FILE
 
@@ -2798,11 +2817,13 @@ enum call_saved_registers_type
      or "no_caller_saved_registers" attribute.  */
   TYPE_NO_CALLER_SAVED_REGISTERS,
   /* The current function is a function specified with the
-     "no_callee_saved_registers" attribute.  */
+     "no_callee_saved_registers" attribute or a function specified with
+     the "noreturn" attribute when compiled with
+     "-mnoreturn-no-callee-saved-registers".  */
   TYPE_NO_CALLEE_SAVED_REGISTERS,
-  /* The current function is a function specified with the "noreturn"
-     attribute.  */
-  TYPE_NO_CALLEE_SAVED_REGISTERS_EXCEPT_BP,
+  /* The current function is a function specified with the
+     "preserve_none" attribute.  */
+  TYPE_PRESERVE_NONE,
 };
 
 enum queued_insn_type
@@ -2820,6 +2841,10 @@ struct GTY(()) machine_function {
 
   /* Cached initial frame layout for the current function.  */
   struct ix86_frame frame;
+
+  /* The components already handled by separate shrink-wrapping, which should
+     not be considered by the prologue and epilogue.  */
+  bool reg_is_wrapped_separately[FIRST_PSEUDO_REGISTER];
 
   /* For -fsplit-stack support: A stack local which holds a pointer to
      the stack arguments for a function with a variable number of
@@ -2854,6 +2879,9 @@ struct GTY(()) machine_function {
      approximation.  */
   BOOL_BITFIELD tls_descriptor_call_expanded_p : 1;
 
+  /* True if TLS descriptor is called more than once.  */
+  BOOL_BITFIELD tls_descriptor_call_multiple_p : 1;
+
   /* If true, the current function has a STATIC_CHAIN is placed on the
      stack below the return address.  */
   BOOL_BITFIELD static_chain_on_stack : 1;
@@ -2875,7 +2903,7 @@ struct GTY(()) machine_function {
   ENUM_BITFIELD(indirect_branch) function_return_type : 3;
 
   /* Call saved registers type.  */
-  ENUM_BITFIELD(call_saved_registers_type) call_saved_registers : 2;
+  ENUM_BITFIELD(call_saved_registers_type) call_saved_registers : 3;
 
   /* If true, there is register available for argument passing.  This
      is used only in ix86_function_ok_for_sibcall by 32-bit to determine
@@ -2919,6 +2947,12 @@ struct GTY(()) machine_function {
 
   /* True if inline asm with redzone clobber has been seen.  */
   BOOL_BITFIELD asm_redzone_clobber_seen : 1;
+
+  /* True if this is a recursive function.  */
+  BOOL_BITFIELD recursive_function : 1;
+
+  /* True if by_pieces op is currently in use.  */
+  BOOL_BITFIELD by_pieces_in_use : 1;
 
   /* The largest alignment, in bytes, of stack slot actually used.  */
   unsigned int max_used_stack_alignment;

@@ -18,8 +18,8 @@
 ;; <http://www.gnu.org/licenses/>.
 
 (define_insn "mve_mov<mode>"
-  [(set (match_operand:MVE_types 0 "nonimmediate_operand" "=w,w,r,w   , w,   r,Ux,w")
-	(match_operand:MVE_types 1 "general_operand"      " w,r,w,DnDm,UxUi,r,w, Ul"))]
+  [(set (match_operand:MVE_types 0 "nonimmediate_operand" "=w,w,r,w   ,w, r,Ux,w")
+	(match_operand:MVE_types 1 "general_operand"      " w,r,w,DnDm,Ux,r,w, UlUi"))]
   "TARGET_HAVE_MVE || TARGET_HAVE_MVE_FLOAT"
 {
   switch (which_alternative)
@@ -56,7 +56,7 @@
 	  }
       }
 
-    case 4:  /* [w,UxUi].  */
+    case 4:  /* [w,Ux].  */
       if (<MODE>mode == V2DFmode || <MODE>mode == V2DImode
 	  || <MODE>mode == TImode)
 	return "vldrw.u32\t%q0, %E1";
@@ -73,7 +73,7 @@
       else
 	return "vstr<V_sz_elem1>.<V_sz_elem>\t%q1, %E0";
 
-    case 7:  /* [w,Ul].  */
+    case 7:  /* [w,UlUi].  */
 	return output_move_neon (operands);
 
     default:
@@ -91,8 +91,8 @@
 						   (symbol_ref "CODE_FOR_nothing")])
    (set_attr "type" "mve_move,mve_move,mve_move,mve_move,mve_load,multiple,mve_store,mve_load")
    (set_attr "length" "4,8,8,4,4,8,4,8")
-   (set_attr "thumb2_pool_range" "*,*,*,*,1018,*,*,*")
-   (set_attr "neg_pool_range" "*,*,*,*,996,*,*,*")])
+   (set_attr "thumb2_pool_range" "*,*,*,*,*,*,*,1016")
+   (set_attr "thumb2_neg_pool_range" "*,*,*,*,*,*,*,996")])
 
 ;;
 ;; [vdupq_n_u, vdupq_n_s, vdupq_n_f]
@@ -1186,8 +1186,8 @@
 (define_insn "@mve_vbicq_f<mode>"
   [
    (set (match_operand:MVE_0 0 "s_register_operand" "=w")
-	(and:MVE_0 (not:MVE_0 (match_operand:MVE_0 1 "s_register_operand" "w"))
-			      (match_operand:MVE_0 2 "s_register_operand" "w")))
+	(and:MVE_0 (not:MVE_0 (match_operand:MVE_0 2 "s_register_operand" "w"))
+			      (match_operand:MVE_0 1 "s_register_operand" "w")))
   ]
   "TARGET_HAVE_MVE && TARGET_HAVE_MVE_FLOAT"
   "vbic\t%q0, %q1, %q2"
@@ -3965,14 +3965,14 @@
 
 (define_insn "get_fpscr_nzcvqc"
  [(set (match_operand:SI 0 "register_operand" "=r")
-   (unspec_volatile:SI [(reg:SI VFPCC_REGNUM)] UNSPEC_GET_FPSCR_NZCVQC))]
+   (unspec:SI [(reg:SI VFPCC_REGNUM)] UNSPEC_GET_FPSCR_NZCVQC))]
  "TARGET_HAVE_MVE"
  "vmrs\\t%0, FPSCR_nzcvqc"
  [(set_attr "type" "mve_move")])
 
 (define_insn "set_fpscr_nzcvqc"
  [(set (reg:SI VFPCC_REGNUM)
-   (unspec_volatile:SI [(match_operand:SI 0 "register_operand" "r")]
+   (unspec:SI [(match_operand:SI 0 "register_operand" "r")]
     VUNSPEC_SET_FPSCR_NZCVQC))]
  "TARGET_HAVE_MVE"
  "vmsr\\tFPSCR_nzcvqc, %0"
@@ -3988,8 +3988,9 @@
 		      (match_operand:V4SI 2 "s_register_operand" "w")]
 	 VxCIQ))
    (set (reg:SI VFPCC_REGNUM)
-	(unspec:SI [(const_int 0)]
-	 VxCIQ))
+	(unspec:SI [(match_dup 1)
+		    (match_dup 2)]
+	 <VxCIQ_carry>))
   ]
   "TARGET_HAVE_MVE"
   "<mve_insn>.i32\t%q0, %q1, %q2"
@@ -4009,8 +4010,11 @@
 		      (match_operand:V4BI 4 "vpr_register_operand" "Up")]
 	 VxCIQ_M))
    (set (reg:SI VFPCC_REGNUM)
-	(unspec:SI [(const_int 0)]
-	 VxCIQ_M))
+    (unspec:SI [(match_dup 1)
+		(match_dup 2)
+		(match_dup 3)
+		(match_dup 4)]
+	 <VxCIQ_M_carry>))
   ]
   "TARGET_HAVE_MVE"
   "vpst\;<mve_insn>t.i32\t%q0, %q2, %q3"
@@ -4025,11 +4029,14 @@
 (define_insn "@mve_<mve_insn>q_<supf>v4si"
   [(set (match_operand:V4SI 0 "s_register_operand" "=w")
 	(unspec:V4SI [(match_operand:V4SI 1 "s_register_operand" "w")
-		       (match_operand:V4SI 2 "s_register_operand" "w")]
+		      (match_operand:V4SI 2 "s_register_operand" "w")
+		      (reg:SI VFPCC_REGNUM)]
 	 VxCQ))
    (set (reg:SI VFPCC_REGNUM)
-	(unspec:SI [(reg:SI VFPCC_REGNUM)]
-	 VxCQ))
+    (unspec:SI [(match_dup 1)
+		(match_dup 2)
+		(reg:SI VFPCC_REGNUM)]
+	 <VxCQ_carry>))
   ]
   "TARGET_HAVE_MVE"
   "<mve_insn>.i32\t%q0, %q1, %q2"
@@ -4047,11 +4054,16 @@
 	(unspec:V4SI [(match_operand:V4SI 1 "s_register_operand" "0")
 		      (match_operand:V4SI 2 "s_register_operand" "w")
 		      (match_operand:V4SI 3 "s_register_operand" "w")
-		      (match_operand:V4BI 4 "vpr_register_operand" "Up")]
+		      (match_operand:V4BI 4 "vpr_register_operand" "Up")
+		      (reg:SI VFPCC_REGNUM)]
 	 VxCQ_M))
    (set (reg:SI VFPCC_REGNUM)
-	(unspec:SI [(reg:SI VFPCC_REGNUM)]
-	 VxCQ_M))
+    (unspec:SI [(match_dup 1)
+		(match_dup 2)
+		(match_dup 3)
+		(match_dup 4)
+		(reg:SI VFPCC_REGNUM)]
+	 <VxCQ_M_carry>))
   ]
   "TARGET_HAVE_MVE"
   "vpst\;<mve_insn>t.i32\t%q0, %q2, %q3"

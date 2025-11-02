@@ -19,6 +19,7 @@
 #ifndef RUST_HIR_FUNCTION_COLLECTOR_H
 #define RUST_HIR_FUNCTION_COLLECTOR_H
 
+#include "rust-hir-expr.h"
 #include "rust-hir-item.h"
 #include "rust-hir-visitor.h"
 #include "rust-hir.h"
@@ -126,6 +127,7 @@ public:
   void visit (HIR::AsyncBlockExpr &expr) override {}
   void visit (HIR::InlineAsm &expr) override {}
   void visit (HIR::LlvmInlineAsm &expr) override {}
+  void visit (HIR::OffsetOf &expr) override {}
   void visit (HIR::TypeParam &param) override {}
   void visit (HIR::ConstGenericParam &param) override {}
   void visit (HIR::LifetimeWhereClauseItem &item) override {}
@@ -168,12 +170,14 @@ public:
   void visit (HIR::StructPatternFieldIdentPat &field) override {}
   void visit (HIR::StructPatternFieldIdent &field) override {}
   void visit (HIR::StructPattern &pattern) override {}
-  void visit (HIR::TupleStructItemsNoRange &tuple_items) override {}
-  void visit (HIR::TupleStructItemsRange &tuple_items) override {}
+  void visit (HIR::TupleStructItemsNoRest &tuple_items) override {}
+  void visit (HIR::TupleStructItemsHasRest &tuple_items) override {}
   void visit (HIR::TupleStructPattern &pattern) override {}
-  void visit (HIR::TuplePatternItemsMultiple &tuple_items) override {}
-  void visit (HIR::TuplePatternItemsRanged &tuple_items) override {}
+  void visit (HIR::TuplePatternItemsNoRest &tuple_items) override {}
+  void visit (HIR::TuplePatternItemsHasRest &tuple_items) override {}
   void visit (HIR::TuplePattern &pattern) override {}
+  void visit (HIR::SlicePatternItemsNoRest &tuple_items) override {}
+  void visit (HIR::SlicePatternItemsHasRest &tuple_items) override {}
   void visit (HIR::SlicePattern &pattern) override {}
   void visit (HIR::AltPattern &pattern) override {}
   void visit (HIR::EmptyStmt &stmt) override {}

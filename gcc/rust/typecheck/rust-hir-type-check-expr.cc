@@ -17,6 +17,7 @@
 // <http://www.gnu.org/licenses/>.
 
 #include "optional.h"
+#include "rust-common.h"
 #include "rust-hir-expr.h"
 #include "rust-system.h"
 #include "rust-tyty-call.h"
@@ -31,9 +32,10 @@
 #include "rust-hir-type-check-item.h"
 #include "rust-type-util.h"
 #include "rust-immutable-name-resolution-context.h"
-
-// for flag_name_resolution_2_0
-#include "options.h"
+#include "rust-compile-base.h"
+#include "rust-tyty-util.h"
+#include "rust-tyty.h"
+#include "tree.h"
 
 namespace Rust {
 namespace Resolver {
@@ -55,6 +57,19 @@ TypeCheckExpr::Resolve (HIR::Expr &expr)
   resolver.infered->set_ref (ref);
   resolver.context->insert_type (expr.get_mappings (), resolver.infered);
 
+  return resolver.infered;
+}
+
+TyTy::BaseType *
+TypeCheckExpr::ResolveOpOverload (LangItem::Kind lang_item_type,
+				  HIR::OperatorExprMeta expr,
+				  TyTy::BaseType *lhs, TyTy::BaseType *rhs,
+				  HIR::PathIdentSegment specified_segment)
+{
+  TypeCheckExpr resolver;
+
+  resolver.resolve_operator_overload (lang_item_type, expr, lhs, rhs,
+				      specified_segment);
   return resolver.infered;
 }
 
@@ -111,7 +126,13 @@ TypeCheckExpr::visit (HIR::TupleIndexExpr &expr)
     }
 
   TyTy::ADTType *adt = static_cast<TyTy::ADTType *> (resolved);
-  rust_assert (!adt->is_enum ());
+  if (!adt->is_tuple_struct ())
+    {
+      rust_error_at (expr.get_locus (),
+		     "expected tuple or tuple struct, found %qs",
+		     adt->get_name ().c_str ());
+      return;
+    }
   rust_assert (adt->number_of_variants () == 1);
 
   TyTy::VariantDef *variant = adt->get_variants ().at (0);
@@ -146,7 +167,7 @@ TypeCheckExpr::visit (HIR::TupleExpr &expr)
   for (auto &elem : expr.get_tuple_elems ())
     {
       auto field_ty = TypeCheckExpr::Resolve (*elem);
-      fields.push_back (TyTy::TyVar (field_ty->get_ref ()));
+      fields.emplace_back (field_ty->get_ref ());
     }
   infered = new TyTy::TupleType (expr.get_mappings ().get_hirid (),
 				 expr.get_locus (), fields);
@@ -615,10 +636,9 @@ TypeCheckExpr::visit (HIR::BlockExpr &expr)
       if (s->is_unit_check_needed () && !resolved->is_unit ())
 	{
 	  auto unit = TyTy::TupleType::get_unit_type ();
-	  resolved
-	    = unify_site (s->get_mappings ().get_hirid (),
-			  TyTy::TyWithLocation (unit),
-			  TyTy::TyWithLocation (resolved), s->get_locus ());
+	  unify_site (s->get_mappings ().get_hirid (),
+		      TyTy::TyWithLocation (unit),
+		      TyTy::TyWithLocation (resolved), s->get_locus ());
 	}
     }
 
@@ -649,7 +669,15 @@ TypeCheckExpr::visit (HIR::BlockExpr &expr)
 void
 TypeCheckExpr::visit (HIR::AnonConst &expr)
 {
-  infered = TypeCheckExpr::Resolve (expr.get_inner_expr ());
+  if (!expr.is_deferred ())
+    {
+      infered = TypeCheckExpr::Resolve (expr.get_inner_expr ());
+      return;
+    }
+
+  TyTy::TyVar var
+    = TyTy::TyVar::get_implicit_const_infer_var (expr.get_locus ());
+  infered = var.get_tyty ();
 }
 
 void
@@ -701,7 +729,7 @@ TypeCheckExpr::visit (HIR::RangeFromToExpr &expr)
   // substitute it in
   std::vector<TyTy::SubstitutionArg> subst_mappings;
   const TyTy::SubstitutionParamMapping *param_ref = &adt->get_substs ().at (0);
-  subst_mappings.push_back (TyTy::SubstitutionArg (param_ref, unified));
+  subst_mappings.emplace_back (param_ref, unified);
 
   TyTy::SubstitutionArgumentMappings subst (
     subst_mappings, {}, adt->get_substitution_arguments ().get_regions (),
@@ -745,7 +773,7 @@ TypeCheckExpr::visit (HIR::RangeFromExpr &expr)
   // substitute it in
   std::vector<TyTy::SubstitutionArg> subst_mappings;
   const TyTy::SubstitutionParamMapping *param_ref = &adt->get_substs ().at (0);
-  subst_mappings.push_back (TyTy::SubstitutionArg (param_ref, from_ty));
+  subst_mappings.emplace_back (param_ref, from_ty);
 
   TyTy::SubstitutionArgumentMappings subst (
     subst_mappings, {}, adt->get_substitution_arguments ().get_regions (),
@@ -789,7 +817,7 @@ TypeCheckExpr::visit (HIR::RangeToExpr &expr)
   // substitute it in
   std::vector<TyTy::SubstitutionArg> subst_mappings;
   const TyTy::SubstitutionParamMapping *param_ref = &adt->get_substs ().at (0);
-  subst_mappings.push_back (TyTy::SubstitutionArg (param_ref, from_ty));
+  subst_mappings.emplace_back (param_ref, from_ty);
 
   TyTy::SubstitutionArgumentMappings subst (
     subst_mappings, {}, adt->get_substitution_arguments ().get_regions (),
@@ -880,6 +908,19 @@ TypeCheckExpr::visit (HIR::LlvmInlineAsm &expr)
 }
 
 void
+TypeCheckExpr::visit (HIR::OffsetOf &expr)
+{
+  TypeCheckType::Resolve (expr.get_type ());
+
+  // FIXME: Does offset_of always return a usize?
+  TyTy::BaseType *size_ty;
+  bool ok = context->lookup_builtin ("usize", &size_ty);
+  rust_assert (ok);
+
+  infered = size_ty;
+}
+
+void
 TypeCheckExpr::visit (HIR::RangeFullExpr &expr)
 {
   auto lang_item_type = LangItem::Kind::RANGE_FULL;
@@ -949,7 +990,7 @@ TypeCheckExpr::visit (HIR::RangeFromToInclExpr &expr)
   // substitute it in
   std::vector<TyTy::SubstitutionArg> subst_mappings;
   const TyTy::SubstitutionParamMapping *param_ref = &adt->get_substs ().at (0);
-  subst_mappings.push_back (TyTy::SubstitutionArg (param_ref, unified));
+  subst_mappings.emplace_back (param_ref, unified);
 
   TyTy::SubstitutionArgumentMappings subst (
     subst_mappings, {}, adt->get_substitution_arguments ().get_regions (),
@@ -983,7 +1024,10 @@ TypeCheckExpr::visit (HIR::ArrayIndexExpr &expr)
   bool ok = context->lookup_builtin ("usize", &size_ty);
   rust_assert (ok);
 
-  bool maybe_simple_array_access = index_expr_ty->can_eq (size_ty, false);
+  bool maybe_simple_array_access
+    = types_compatable (TyTy::TyWithLocation (index_expr_ty),
+			TyTy::TyWithLocation (size_ty), expr.get_locus (),
+			false);
   if (maybe_simple_array_access
       && direct_array_expr_ty->get_kind () == TyTy::TypeKind::ARRAY)
     {
@@ -1029,8 +1073,13 @@ TypeCheckExpr::visit (HIR::ArrayExpr &expr)
 {
   auto &elements = expr.get_internal_elements ();
 
+  TyTy::BaseType *expected_ty = nullptr;
+  bool ok = context->lookup_builtin ("usize", &expected_ty);
+  rust_assert (ok);
+
   HIR::Expr *capacity_expr = nullptr;
   TyTy::BaseType *element_type = nullptr;
+  TyTy::BaseType *capacity_type = nullptr;
   switch (elements.get_array_expr_type ())
     {
     case HIR::ArrayElems::ArrayExprType::COPIED:
@@ -1039,22 +1088,24 @@ TypeCheckExpr::visit (HIR::ArrayExpr &expr)
 	  = static_cast<HIR::ArrayElemsCopied &> (elements);
 	element_type = TypeCheckExpr::Resolve (elems.get_elem_to_copy ());
 
-	auto capacity_type
+	auto capacity_expr_ty
 	  = TypeCheckExpr::Resolve (elems.get_num_copies_expr ());
+	if (capacity_expr_ty->is<TyTy::ErrorType> ())
+	  return;
 
-	TyTy::BaseType *expected_ty = nullptr;
-	bool ok = context->lookup_builtin ("usize", &expected_ty);
-	rust_assert (ok);
 	context->insert_type (elems.get_num_copies_expr ().get_mappings (),
 			      expected_ty);
 
-	unify_site (expr.get_mappings ().get_hirid (),
-		    TyTy::TyWithLocation (expected_ty),
-		    TyTy::TyWithLocation (
-		      capacity_type, elems.get_num_copies_expr ().get_locus ()),
-		    expr.get_locus ());
+	auto result = unify_site (
+	  expr.get_mappings ().get_hirid (), TyTy::TyWithLocation (expected_ty),
+	  TyTy::TyWithLocation (capacity_expr_ty,
+				elems.get_num_copies_expr ().get_locus ()),
+	  expr.get_locus ());
+	if (result->is<TyTy::ErrorType> ())
+	  return;
 
 	capacity_expr = &elems.get_num_copies_expr ();
+	capacity_type = expected_ty;
       }
       break;
 
@@ -1092,17 +1143,35 @@ TypeCheckExpr::visit (HIR::ArrayExpr &expr)
 					      UNDEF_LOCATION, {});
 
 	// mark the type for this implicit node
-	TyTy::BaseType *expected_ty = nullptr;
-	bool ok = context->lookup_builtin ("usize", &expected_ty);
-	rust_assert (ok);
 	context->insert_type (mapping, expected_ty);
+	capacity_type = expected_ty;
       }
       break;
     }
 
-  infered = new TyTy::ArrayType (expr.get_mappings ().get_hirid (),
-				 expr.get_locus (), *capacity_expr,
-				 TyTy::TyVar (element_type->get_ref ()));
+  rust_assert (capacity_expr);
+  rust_assert (capacity_type);
+  auto ctx = Compile::Context::get ();
+  tree capacity_value
+    = Compile::HIRCompileBase::query_compile_const_expr (ctx, capacity_type,
+							 *capacity_expr);
+
+  // Create ConstValueType with ref == ty_ref (both pointing to capacity_expr)
+  // ty_ref gets updated during substitution via set_ty_ref()
+  HirId capacity_expr_id = capacity_expr->get_mappings ().get_hirid ();
+  auto const_type
+    = new TyTy::ConstValueType (capacity_value, expected_ty, capacity_expr_id,
+				capacity_expr_id);
+
+  // Insert the ConstValueType at its ref
+  context->insert_type (capacity_expr->get_mappings (),
+			const_type->as_base_type ());
+
+  infered
+    = new TyTy::ArrayType (expr.get_mappings ().get_hirid (), expr.get_locus (),
+			   TyTy::TyVar (
+			     const_type->as_base_type ()->get_ty_ref ()),
+			   TyTy::TyVar (element_type->get_ref ()));
 }
 
 // empty struct
@@ -1432,26 +1501,11 @@ TypeCheckExpr::visit (HIR::MethodCallExpr &expr)
   // store the expected fntype
   context->insert_type (expr.get_method_name ().get_mappings (), lookup);
 
-  if (flag_name_resolution_2_0)
-    {
-      auto &nr_ctx = const_cast<Resolver2_0::NameResolutionContext &> (
-	Resolver2_0::ImmutableNameResolutionContext::get ().resolver ());
+  auto &nr_ctx = const_cast<Resolver2_0::NameResolutionContext &> (
+    Resolver2_0::ImmutableNameResolutionContext::get ().resolver ());
 
-      nr_ctx.map_usage (Resolver2_0::Usage (expr.get_mappings ().get_nodeid ()),
-			Resolver2_0::Definition (resolved_node_id));
-    }
-  // set up the resolved name on the path
-  else if (resolver->get_name_scope ().decl_was_declared_here (
-	     resolved_node_id))
-    {
-      resolver->insert_resolved_name (expr.get_mappings ().get_nodeid (),
-				      resolved_node_id);
-    }
-  else
-    {
-      resolver->insert_resolved_misc (expr.get_mappings ().get_nodeid (),
-				      resolved_node_id);
-    }
+  nr_ctx.map_usage (Resolver2_0::Usage (expr.get_mappings ().get_nodeid ()),
+		    Resolver2_0::Definition (resolved_node_id));
 
   // return the result of the function back
   infered = function_ret_tyty;
@@ -1793,19 +1847,12 @@ TypeCheckExpr::visit (HIR::ClosureExpr &expr)
   // Resolve closure captures
 
   std::set<NodeId> captures;
-  if (flag_name_resolution_2_0)
-    {
-      auto &nr_ctx = const_cast<Resolver2_0::NameResolutionContext &> (
-	Resolver2_0::ImmutableNameResolutionContext::get ().resolver ());
+  auto &nr_ctx = const_cast<Resolver2_0::NameResolutionContext &> (
+    Resolver2_0::ImmutableNameResolutionContext::get ().resolver ());
 
-      if (auto opt_cap = nr_ctx.mappings.lookup_captures (closure_node_id))
-	for (auto cap : opt_cap.value ())
-	  captures.insert (cap);
-    }
-  else
-    {
-      captures = resolver->get_captures (closure_node_id);
-    }
+  if (auto opt_cap = nr_ctx.mappings.lookup_captures (closure_node_id))
+    for (auto cap : opt_cap.value ())
+      captures.insert (cap);
 
   infered = new TyTy::ClosureType (ref, id, ident, closure_args, result_type,
 				   subst_refs, captures);
@@ -1853,10 +1900,10 @@ TypeCheckExpr::visit (HIR::ClosureExpr &expr)
 			     // auto resolve because the hir id's match
 			  ,
 			  expr.get_locus ());
-  args.get_type_args ().push_back (std::unique_ptr<HIR::Type> (implicit_tuple));
+  args.get_type_args ().emplace_back (implicit_tuple);
 
   // apply the arguments
-  predicate.apply_generic_arguments (&args, false);
+  predicate.apply_generic_arguments (&args, false, false);
 
   // finally inherit the trait bound
   infered->inherit_bounds ({predicate});
@@ -1875,7 +1922,16 @@ TypeCheckExpr::resolve_operator_overload (
   // probe for the lang-item
   if (!lang_item_defined)
     return false;
+
   DefId &respective_lang_item_id = lang_item_defined.value ();
+  auto def_lookup = mappings.lookup_defid (respective_lang_item_id);
+  rust_assert (def_lookup.has_value ());
+
+  HIR::Item *def_item = def_lookup.value ();
+  rust_assert (def_item->get_item_kind () == HIR::Item::ItemKind::Trait);
+  HIR::Trait &trait = *static_cast<HIR::Trait *> (def_item);
+  TraitReference *defid_trait_reference = TraitResolver::Resolve (trait);
+  rust_assert (!defid_trait_reference->is_error ());
 
   // we might be in a static or const context and unknown is fine
   TypeCheckContextItem current_context = TypeCheckContextItem::get_error ();
@@ -1919,15 +1975,49 @@ TypeCheckExpr::resolve_operator_overload (
 
   if (selected_candidates.size () > 1)
     {
-      // mutliple candidates
-      rich_location r (line_table, expr.get_locus ());
-      for (auto &c : resolved_candidates)
-	r.add_range (c.candidate.locus);
+      auto infer
+	= TyTy::TyVar::get_implicit_infer_var (expr.get_locus ()).get_tyty ();
+      auto trait_subst = defid_trait_reference->get_trait_substs ();
+      rust_assert (trait_subst.size () > 0);
 
-      rust_error_at (
-	r, "multiple candidates found for possible operator overload");
+      TyTy::TypeBoundPredicate pred (respective_lang_item_id, trait_subst,
+				     BoundPolarity::RegularBound,
+				     expr.get_locus ());
 
-      return false;
+      std::vector<TyTy::SubstitutionArg> mappings;
+      auto &self_param_mapping = trait_subst[0];
+      mappings.emplace_back (&self_param_mapping, lhs);
+
+      if (rhs != nullptr)
+	{
+	  rust_assert (trait_subst.size () == 2);
+	  auto &rhs_param_mapping = trait_subst[1];
+	  mappings.emplace_back (&rhs_param_mapping, lhs);
+	}
+
+      std::map<std::string, TyTy::BaseType *> binding_args;
+      binding_args["Output"] = infer;
+
+      TyTy::SubstitutionArgumentMappings arg_mappings (mappings, binding_args,
+						       TyTy::RegionParamList (
+							 trait_subst.size ()),
+						       expr.get_locus ());
+      pred.apply_argument_mappings (arg_mappings, false);
+
+      infer->inherit_bounds ({pred});
+      DeferredOpOverload defer (expr.get_mappings ().get_hirid (),
+				lang_item_type, specified_segment, pred, expr);
+      context->insert_deferred_operator_overload (std::move (defer));
+
+      if (rhs != nullptr)
+	lhs = unify_site (expr.get_mappings ().get_hirid (),
+			  TyTy::TyWithLocation (lhs),
+			  TyTy::TyWithLocation (rhs), expr.get_locus ());
+
+      infered = unify_site (expr.get_mappings ().get_hirid (),
+			    TyTy::TyWithLocation (lhs),
+			    TyTy::TyWithLocation (infer), expr.get_locus ());
+      return true;
     }
 
   // Get the adjusted self
@@ -1954,24 +2044,6 @@ TypeCheckExpr::resolve_operator_overload (
 
   rust_debug ("is_impl_item_candidate: %s",
 	      resolved_candidate.is_impl_candidate () ? "true" : "false");
-
-  if (resolved_candidate.is_impl_candidate ())
-    {
-      auto infer_arguments = TyTy::SubstitutionArgumentMappings::error ();
-      HIR::ImplBlock &impl = *resolved_candidate.item.impl.parent;
-      TyTy::BaseType *impl_self_infer
-	= TypeCheckItem::ResolveImplBlockSelfWithInference (impl,
-							    expr.get_locus (),
-							    &infer_arguments);
-      if (impl_self_infer->get_kind () == TyTy::TypeKind::ERROR)
-	{
-	  return false;
-	}
-      if (!infer_arguments.is_empty ())
-	{
-	  lookup = SubstMapperInternal::Resolve (lookup, infer_arguments);
-	}
-    }
 
   // in the case where we resolve to a trait bound we have to be careful we are
   // able to do so there is a case where we are currently resolving the deref
@@ -2070,19 +2142,11 @@ TypeCheckExpr::resolve_operator_overload (
   context->insert_operator_overload (expr.get_mappings ().get_hirid (), type);
 
   // set up the resolved name on the path
-  if (flag_name_resolution_2_0)
-    {
-      auto &nr_ctx = const_cast<Resolver2_0::NameResolutionContext &> (
-	Resolver2_0::ImmutableNameResolutionContext::get ().resolver ());
+  auto &nr_ctx = const_cast<Resolver2_0::NameResolutionContext &> (
+    Resolver2_0::ImmutableNameResolutionContext::get ().resolver ());
 
-      nr_ctx.map_usage (Resolver2_0::Usage (expr.get_mappings ().get_nodeid ()),
-			Resolver2_0::Definition (resolved_node_id));
-    }
-  else
-    {
-      resolver->insert_resolved_name (expr.get_mappings ().get_nodeid (),
-				      resolved_node_id);
-    }
+  nr_ctx.map_usage (Resolver2_0::Usage (expr.get_mappings ().get_nodeid ()),
+		    Resolver2_0::Definition (resolved_node_id));
 
   // return the result of the function back
   infered = function_ret_tyty;
@@ -2242,7 +2306,7 @@ TypeCheckExpr::resolve_fn_trait_call (HIR::CallExpr &expr,
   for (auto &arg : expr.get_arguments ())
     {
       TyTy::BaseType *a = TypeCheckExpr::Resolve (*arg);
-      call_args.push_back (TyTy::TyVar (a->get_ref ()));
+      call_args.emplace_back (a->get_ref ());
     }
 
   // crate implicit tuple
@@ -2255,9 +2319,8 @@ TypeCheckExpr::resolve_fn_trait_call (HIR::CallExpr &expr,
   context->insert_implicit_type (implicit_arg_id, tuple);
 
   std::vector<TyTy::Argument> args;
-  TyTy::Argument a (mapping, tuple,
-		    expr.get_locus () /*FIXME is there a better location*/);
-  args.push_back (std::move (a));
+  args.emplace_back (mapping, tuple,
+		     expr.get_locus () /*FIXME is there a better location*/);
 
   TyTy::BaseType *function_ret_tyty
     = TyTy::TypeCheckMethodCallExpr::go (fn, expr.get_mappings (), args,
@@ -2275,32 +2338,15 @@ TypeCheckExpr::resolve_fn_trait_call (HIR::CallExpr &expr,
   context->insert_operator_overload (expr.get_mappings ().get_hirid (), fn);
 
   // set up the resolved name on the path
-  if (flag_name_resolution_2_0)
-    {
-      auto &nr_ctx = const_cast<Resolver2_0::NameResolutionContext &> (
-	Resolver2_0::ImmutableNameResolutionContext::get ().resolver ());
+  auto &nr_ctx = const_cast<Resolver2_0::NameResolutionContext &> (
+    Resolver2_0::ImmutableNameResolutionContext::get ().resolver ());
 
-      auto existing = nr_ctx.lookup (expr.get_mappings ().get_nodeid ());
-      if (existing)
-	rust_assert (*existing == resolved_node_id);
-      else
-	nr_ctx.map_usage (Resolver2_0::Usage (
-			    expr.get_mappings ().get_nodeid ()),
-			  Resolver2_0::Definition (resolved_node_id));
-    }
+  auto existing = nr_ctx.lookup (expr.get_mappings ().get_nodeid ());
+  if (existing)
+    rust_assert (*existing == resolved_node_id);
   else
-    {
-      NodeId existing = UNKNOWN_NODEID;
-      bool ok
-	= resolver->lookup_resolved_name (expr.get_mappings ().get_nodeid (),
-					  &existing);
-
-      if (ok)
-	rust_assert (existing == resolved_node_id);
-      else
-	resolver->insert_resolved_name (expr.get_mappings ().get_nodeid (),
-					resolved_node_id);
-    }
+    nr_ctx.map_usage (Resolver2_0::Usage (expr.get_mappings ().get_nodeid ()),
+		      Resolver2_0::Definition (resolved_node_id));
 
   // return the result of the function back
   *result = function_ret_tyty;

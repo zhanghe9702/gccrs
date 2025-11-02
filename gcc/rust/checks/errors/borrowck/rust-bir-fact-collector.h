@@ -824,6 +824,7 @@ protected: // Subset helpers.
       case TyTy::PLACEHOLDER:
       case TyTy::INFER:
       case TyTy::PARAM:
+      case TyTy::CONST:
       case TyTy::OPAQUE:
 	rust_unreachable ();
       }
@@ -883,7 +884,7 @@ protected: // Subset helpers.
 
     return region_end;
   }
-}; // namespace BIR
+};
 
 } // namespace BIR
 } // namespace Rust

@@ -74,6 +74,8 @@ along with GCC; see the file COPYING3.  If not see
 #include "output.h"
 #include "builtins.h"
 #include "opts.h"
+#include "gimple-range.h"
+#include "rtl-iter.h"
 
 /* Some systems use __main in a way incompatible with its use in gcc, in these
    cases use the macros NAME__MAIN to give a quoted symbol and SYMBOL__MAIN to
@@ -88,7 +90,7 @@ along with GCC; see the file COPYING3.  If not see
 struct ssaexpand SA;
 
 /* This variable holds the currently expanded gimple statement for purposes
-   of comminucating the profile info to the builtin expanders.  */
+   of communicating the profile info to the builtin expanders.  */
 gimple *currently_expanding_gimple_stmt;
 
 static rtx expand_debug_expr (tree);
@@ -832,8 +834,8 @@ add_scope_conflicts_2 (vars_ssa_cache &cache, tree name,
 {
   gcc_assert (TREE_CODE (name) == SSA_NAME);
 
-  /* Querry the cache for the mapping of addresses that are referendd by
-     ssa name NAME. Querrying it will fill in it.  */
+  /* Query the cache for the mapping of addresses that are referenced by
+     ssa name NAME.  Querying it will fill in it.  */
   bitmap_iterator bi;
   unsigned i;
   const_bitmap bmap = cache (name);
@@ -2771,6 +2773,10 @@ maybe_dump_rtl_for_gimple_stmt (gimple *stmt, rtx_insn *since)
     }
 }
 
+/* Temporary storage for BB_HEAD and BB_END of bbs until they are converted
+   to BB_RTL.  */
+static vec<std::pair <rtx_insn *, rtx_insn *>> head_end_for_bb;
+
 /* Maps the blocks that do not contain tree labels to rtx labels.  */
 
 static hash_map<basic_block, rtx_code_label *> *lab_rtx_for_bb;
@@ -2778,10 +2784,22 @@ static hash_map<basic_block, rtx_code_label *> *lab_rtx_for_bb;
 /* Returns the label_rtx expression for a label starting basic block BB.  */
 
 static rtx_code_label *
-label_rtx_for_bb (basic_block bb ATTRIBUTE_UNUSED)
+label_rtx_for_bb (basic_block bb)
 {
   if (bb->flags & BB_RTL)
     return block_label (bb);
+
+  if ((unsigned) bb->index < head_end_for_bb.length ()
+      && head_end_for_bb[bb->index].first)
+    {
+      if (!LABEL_P (head_end_for_bb[bb->index].first))
+	{
+	  head_end_for_bb[bb->index].first
+	    = emit_label_before (gen_label_rtx (),
+				 head_end_for_bb[bb->index].first);
+	}
+      return as_a <rtx_code_label *> (head_end_for_bb[bb->index].first);
+    }
 
   rtx_code_label **elt = lab_rtx_for_bb->get (bb);
   if (elt)
@@ -2798,6 +2816,44 @@ label_rtx_for_bb (basic_block bb ATTRIBUTE_UNUSED)
   rtx_code_label *l = gen_label_rtx ();
   lab_rtx_for_bb->put (bb, l);
   return l;
+}
+
+
+/* Wrapper around remove_edge during expansion.  */
+
+void
+expand_remove_edge (edge e)
+{
+  if (current_ir_type () != IR_GIMPLE
+      && (e->dest->flags & BB_RTL) == 0
+      && !gimple_seq_empty_p (phi_nodes (e->dest)))
+    remove_phi_args (e);
+  remove_edge (e);
+}
+
+/* Split edge E during expansion and instead of creating a new
+   bb on that edge, add there BB.  FLAGS should be flags on the
+   new edge from BB to former E->dest.  */
+
+static void
+expand_split_edge (edge e, basic_block bb, int flags)
+{
+  unsigned int dest_idx = e->dest_idx;
+  basic_block dest = e->dest;
+  redirect_edge_succ (e, bb);
+  e = make_single_succ_edge (bb, dest, flags);
+  if ((dest->flags & BB_RTL) == 0
+      && phi_nodes (dest)
+      && e->dest_idx != dest_idx)
+    {
+      /* If there are any PHI nodes on dest, swap the new succ edge
+	 with the one moved into false_edge's former position, so that
+	 PHI arguments don't need adjustment.  */
+      edge e2 = EDGE_PRED (dest, dest_idx);
+      std::swap (e->dest_idx, e2->dest_idx);
+      std::swap (EDGE_PRED (dest, e->dest_idx),
+		 EDGE_PRED (dest, e2->dest_idx));
+    }
 }
 
 
@@ -2823,7 +2879,7 @@ maybe_cleanup_end_of_block (edge e, rtx_insn *last)
   if (BARRIER_P (get_last_insn ()))
     {
       rtx_insn *insn;
-      remove_edge (e);
+      expand_remove_edge (e);
       /* Now, we have a single successor block, if we have insns to
 	 insert on the remaining edge we potentially will insert
 	 it at the end of this block (if the dest block isn't feasible)
@@ -2942,10 +2998,6 @@ expand_gimple_cond (basic_block bb, gcond *stmt)
   extract_true_false_edges_from_block (bb, &true_edge, &false_edge);
   set_curr_insn_location (gimple_location (stmt));
 
-  /* These flags have no purpose in RTL land.  */
-  true_edge->flags &= ~EDGE_TRUE_VALUE;
-  false_edge->flags &= ~EDGE_FALSE_VALUE;
-
   /* We can either have a pure conditional jump with one fallthru edge or
      two-way jump that needs to be decomposed into two basic blocks.  */
   if (false_edge->dest == bb->next_bb)
@@ -2978,14 +3030,16 @@ expand_gimple_cond (basic_block bb, gcond *stmt)
     set_curr_insn_location (false_edge->goto_locus);
   emit_jump (label_rtx_for_bb (false_edge->dest));
 
-  BB_END (bb) = last;
-  if (BARRIER_P (BB_END (bb)))
-    BB_END (bb) = PREV_INSN (BB_END (bb));
-  update_bb_for_insn (bb);
+  head_end_for_bb[bb->index].second = last;
+  if (BARRIER_P (head_end_for_bb[bb->index].second))
+    head_end_for_bb[bb->index].second
+      = PREV_INSN (head_end_for_bb[bb->index].second);
+  update_bb_for_insn_chain (head_end_for_bb[bb->index].first,
+			    head_end_for_bb[bb->index].second, bb);
 
   new_bb = create_basic_block (NEXT_INSN (last), get_last_insn (), bb);
   dest = false_edge->dest;
-  redirect_edge_succ (false_edge, new_bb);
+  expand_split_edge (false_edge, new_bb, 0);
   false_edge->flags |= EDGE_FALLTHRU;
   new_bb->count = false_edge->count ();
   loop_p loop = find_common_loop (bb->loop_father, dest->loop_father);
@@ -2993,7 +3047,6 @@ expand_gimple_cond (basic_block bb, gcond *stmt)
   if (loop->latch == bb
       && loop->header == dest)
     loop->latch = new_bb;
-  make_single_succ_edge (new_bb, dest, 0);
   if (BARRIER_P (BB_END (new_bb)))
     BB_END (new_bb) = PREV_INSN (BB_END (new_bb));
   update_bb_for_insn (new_bb);
@@ -3222,44 +3275,6 @@ expand_asm_loc (tree string, int vol, location_t locus)
   emit_insn (body);
 }
 
-/* Return the number of times character C occurs in string S.  */
-static int
-n_occurrences (int c, const char *s)
-{
-  int n = 0;
-  while (*s)
-    n += (*s++ == c);
-  return n;
-}
-
-/* A subroutine of expand_asm_operands.  Check that all operands have
-   the same number of alternatives.  Return true if so.  */
-
-static bool
-check_operand_nalternatives (const vec<const char *> &constraints)
-{
-  unsigned len = constraints.length();
-  if (len > 0)
-    {
-      int nalternatives = n_occurrences (',', constraints[0]);
-
-      if (nalternatives + 1 > MAX_RECOG_ALTERNATIVES)
-	{
-	  error ("too many alternatives in %<asm%>");
-	  return false;
-	}
-
-      for (unsigned i = 1; i < len; ++i)
-	if (n_occurrences (',', constraints[i]) != nalternatives)
-	  {
-	    error ("operand constraints for %<asm%> differ "
-		   "in number of alternatives");
-	    return false;
-	  }
-    }
-  return true;
-}
-
 /* Check for overlap between registers marked in CLOBBERED_REGS and
    anything inappropriate in T.  Emit error and return the register
    variable definition for error, NULL_TREE for ok.  */
@@ -3425,10 +3440,6 @@ expand_asm_stmt (gasm *stmt)
 	= TREE_STRING_POINTER (TREE_VALUE (TREE_PURPOSE (t)));
     }
 
-  /* ??? Diagnose during gimplification?  */
-  if (! check_operand_nalternatives (constraints))
-    return;
-
   /* Count the number of meaningful clobbered registers, ignoring what
      we would ignore later.  */
   auto_vec<rtx> clobber_rvec;
@@ -3502,7 +3513,8 @@ expand_asm_stmt (gasm *stmt)
 	 no point in going further.  */
       constraint = constraints[i];
       if (!parse_output_constraint (&constraint, i, ninputs, noutputs,
-				    &allows_mem, &allows_reg, &is_inout))
+				    &allows_mem, &allows_reg, &is_inout,
+				    nullptr))
 	return;
 
       /* If the output is a hard register, verify it doesn't conflict with
@@ -3580,8 +3592,8 @@ expand_asm_stmt (gasm *stmt)
 
       constraint = constraints[i + noutputs];
       if (! parse_input_constraint (&constraint, i, ninputs, noutputs, 0,
-				    constraints.address (),
-				    &allows_mem, &allows_reg))
+				    constraints.address (), &allows_mem,
+				    &allows_reg, nullptr))
 	return;
 
       if (! allows_reg && allows_mem)
@@ -3611,7 +3623,7 @@ expand_asm_stmt (gasm *stmt)
 
       ok = parse_output_constraint (&constraints[i], i, ninputs,
 				    noutputs, &allows_mem, &allows_reg,
-				    &is_inout);
+				    &is_inout, nullptr);
       gcc_assert (ok);
 
       /* If an output operand is not a decl or indirect ref and our constraint
@@ -3716,7 +3728,7 @@ expand_asm_stmt (gasm *stmt)
       constraint = constraints[i + noutputs];
       ok = parse_input_constraint (&constraint, i, ninputs, noutputs, 0,
 				   constraints.address (),
-				   &allows_mem, &allows_reg);
+				   &allows_mem, &allows_reg, nullptr);
       gcc_assert (ok);
 
       /* EXPAND_INITIALIZER will not generate code for valid initializer
@@ -4406,9 +4418,10 @@ expand_gimple_stmt (gimple *stmt)
    tailcall) and the normal result happens via a sqrt instruction.  */
 
 static basic_block
-expand_gimple_tailcall (basic_block bb, gcall *stmt, bool *can_fallthru)
+expand_gimple_tailcall (basic_block bb, gcall *stmt, bool *can_fallthru,
+			rtx_insn *asan_epilog_seq)
 {
-  rtx_insn *last2, *last;
+  rtx_insn *last2, *last, *first = get_last_insn ();
   edge e;
   edge_iterator ei;
   profile_probability probability;
@@ -4425,6 +4438,58 @@ expand_gimple_tailcall (basic_block bb, gcall *stmt, bool *can_fallthru)
   return NULL;
 
  found:
+
+  if (asan_epilog_seq)
+    {
+      /* We need to emit a copy of the asan_epilog_seq before
+	 the insns emitted by expand_gimple_stmt above.  The sequence
+	 can contain labels, which need to be remapped.  */
+      hash_map<rtx, rtx> label_map;
+      start_sequence ();
+      emit_note (NOTE_INSN_DELETED);
+      for (rtx_insn *insn = asan_epilog_seq; insn; insn = NEXT_INSN (insn))
+	switch (GET_CODE (insn))
+	  {
+	  case INSN:
+	  case CALL_INSN:
+	  case JUMP_INSN:
+	    emit_copy_of_insn_after (insn, get_last_insn ());
+	    break;
+	  case CODE_LABEL:
+	    label_map.put ((rtx) insn, (rtx) emit_label (gen_label_rtx ()));
+	    break;
+	  case BARRIER:
+	    emit_barrier ();
+	    break;
+	  default:
+	    gcc_unreachable ();
+	  }
+      for (rtx_insn *insn = get_insns (); insn; insn = NEXT_INSN (insn))
+	if (JUMP_P (insn))
+	  {
+	    subrtx_ptr_iterator::array_type array;
+	    FOR_EACH_SUBRTX_PTR (iter, array, &PATTERN (insn), ALL)
+	      {
+		rtx *loc = *iter;
+		if (LABEL_REF_P (*loc))
+		  {
+		    rtx *lab = label_map.get ((rtx) label_ref_label (*loc));
+		    gcc_assert (lab);
+		    set_label_ref_label (*loc, as_a <rtx_insn *> (*lab));
+		  }
+	      }
+	    if (JUMP_LABEL (insn))
+	      {
+		rtx *lab = label_map.get (JUMP_LABEL (insn));
+		gcc_assert (lab);
+		JUMP_LABEL (insn) = *lab;
+	      }
+	  }
+      asan_epilog_seq = NEXT_INSN (get_insns ());
+      end_sequence ();
+      emit_insn_before (asan_epilog_seq, NEXT_INSN (first));
+    }
+
   /* ??? Wouldn't it be better to just reset any pending stack adjust?
      Any instructions emitted here are about to be deleted.  */
   do_pending_stack_adjust ();
@@ -4445,7 +4510,7 @@ expand_gimple_tailcall (basic_block bb, gcall *stmt, bool *can_fallthru)
 	  if (e->dest != EXIT_BLOCK_PTR_FOR_FN (cfun))
 	    e->dest->count -= e->count ();
 	  probability += e->probability;
-	  remove_edge (e);
+	  expand_remove_edge (e);
 	}
       else
 	ei_next (&ei);
@@ -4473,8 +4538,9 @@ expand_gimple_tailcall (basic_block bb, gcall *stmt, bool *can_fallthru)
   e = make_edge (bb, EXIT_BLOCK_PTR_FOR_FN (cfun), EDGE_ABNORMAL
 		 | EDGE_SIBCALL);
   e->probability = probability;
-  BB_END (bb) = last;
-  update_bb_for_insn (bb);
+  head_end_for_bb[bb->index].second = last;
+  update_bb_for_insn_chain (head_end_for_bb[bb->index].first,
+			    head_end_for_bb[bb->index].second, bb);
 
   if (NEXT_INSN (last))
     {
@@ -5251,6 +5317,9 @@ expand_debug_expr (tree exp)
       return simplify_gen_binary (MULT, mode, op0, op1);
 
     case RDIV_EXPR:
+      gcc_assert (FLOAT_MODE_P (mode)
+		  || ALL_FIXED_POINT_MODE_P (mode));
+      /* Fall through.  */
     case TRUNC_DIV_EXPR:
     case EXACT_DIV_EXPR:
       if (unsignedp)
@@ -6089,10 +6158,9 @@ reorder_operands (basic_block bb)
 /* Expand basic block BB from GIMPLE trees to RTL.  */
 
 static basic_block
-expand_gimple_basic_block (basic_block bb, bool disable_tail_calls)
+expand_gimple_basic_block (basic_block bb, rtx_insn *asan_epilog_seq)
 {
   gimple_stmt_iterator gsi;
-  gimple_seq stmts;
   gimple *stmt = NULL;
   rtx_note *note = NULL;
   rtx_insn *last;
@@ -6110,18 +6178,12 @@ expand_gimple_basic_block (basic_block bb, bool disable_tail_calls)
      access the BB sequence directly.  */
   if (optimize)
     reorder_operands (bb);
-  stmts = bb_seq (bb);
-  bb->il.gimple.seq = NULL;
-  bb->il.gimple.phi_nodes = NULL;
   rtl_profile_for_bb (bb);
-  init_rtl_bb_info (bb);
-  bb->flags |= BB_RTL;
 
   /* Remove the RETURN_EXPR if we may fall though to the exit
      instead.  */
-  gsi = gsi_last (stmts);
-  if (!gsi_end_p (gsi)
-      && gimple_code (gsi_stmt (gsi)) == GIMPLE_RETURN)
+  gsi = gsi_last_bb (bb);
+  if (!gsi_end_p (gsi) && gimple_code (gsi_stmt (gsi)) == GIMPLE_RETURN)
     {
       greturn *ret_stmt = as_a <greturn *> (gsi_stmt (gsi));
 
@@ -6136,7 +6198,7 @@ expand_gimple_basic_block (basic_block bb, bool disable_tail_calls)
 	}
     }
 
-  gsi = gsi_start (stmts);
+  gsi = gsi_start_bb (bb);
   if (!gsi_end_p (gsi))
     {
       stmt = gsi_stmt (gsi);
@@ -6145,6 +6207,8 @@ expand_gimple_basic_block (basic_block bb, bool disable_tail_calls)
     }
 
   rtx_code_label **elt = lab_rtx_for_bb->get (bb);
+  if ((unsigned) bb->index >= head_end_for_bb.length ())
+    head_end_for_bb.safe_grow_cleared (bb->index + 1);
 
   if (stmt || elt)
     {
@@ -6160,16 +6224,18 @@ expand_gimple_basic_block (basic_block bb, bool disable_tail_calls)
       if (elt)
 	emit_label (*elt);
 
-      BB_HEAD (bb) = NEXT_INSN (last);
-      if (NOTE_P (BB_HEAD (bb)))
-	BB_HEAD (bb) = NEXT_INSN (BB_HEAD (bb));
-      gcc_assert (LABEL_P (BB_HEAD (bb)));
-      note = emit_note_after (NOTE_INSN_BASIC_BLOCK, BB_HEAD (bb));
+      head_end_for_bb[bb->index].first = NEXT_INSN (last);
+      if (NOTE_P (head_end_for_bb[bb->index].first))
+	head_end_for_bb[bb->index].first
+	  = NEXT_INSN (head_end_for_bb[bb->index].first);
+      gcc_assert (LABEL_P (head_end_for_bb[bb->index].first));
+      note = emit_note_after (NOTE_INSN_BASIC_BLOCK,
+			      head_end_for_bb[bb->index].first);
 
       maybe_dump_rtl_for_gimple_stmt (stmt, last);
     }
   else
-    BB_HEAD (bb) = note = emit_note (NOTE_INSN_BASIC_BLOCK);
+    head_end_for_bb[bb->index].first = note = emit_note (NOTE_INSN_BASIC_BLOCK);
 
   if (note)
     NOTE_BASIC_BLOCK (note) = bb;
@@ -6397,14 +6463,16 @@ expand_gimple_basic_block (basic_block bb, bool disable_tail_calls)
 	{
 	  gcall *call_stmt = dyn_cast <gcall *> (stmt);
 	  if (call_stmt
+	      && asan_epilog_seq
 	      && gimple_call_tail_p (call_stmt)
-	      && disable_tail_calls)
+	      && !gimple_call_must_tail_p (call_stmt))
 	    gimple_call_set_tail (call_stmt, false);
 
 	  if (call_stmt && gimple_call_tail_p (call_stmt))
 	    {
 	      bool can_fallthru;
-	      new_bb = expand_gimple_tailcall (bb, call_stmt, &can_fallthru);
+	      new_bb = expand_gimple_tailcall (bb, call_stmt, &can_fallthru,
+					       asan_epilog_seq);
 	      if (new_bb)
 		{
 		  if (can_fallthru)
@@ -6485,9 +6553,10 @@ expand_gimple_basic_block (basic_block bb, bool disable_tail_calls)
     last = PREV_INSN (PREV_INSN (last));
   if (BARRIER_P (last))
     last = PREV_INSN (last);
-  BB_END (bb) = last;
+  head_end_for_bb[bb->index].second = last;
 
-  update_bb_for_insn (bb);
+  update_bb_for_insn_chain (head_end_for_bb[bb->index].first,
+			    head_end_for_bb[bb->index].second, bb);
 
   return bb;
 }
@@ -6498,7 +6567,7 @@ expand_gimple_basic_block (basic_block bb, bool disable_tail_calls)
 static basic_block
 construct_init_block (void)
 {
-  basic_block init_block, first_block;
+  basic_block init_block;
   edge e = NULL;
   int flags;
 
@@ -6529,11 +6598,7 @@ construct_init_block (void)
   init_block->count = ENTRY_BLOCK_PTR_FOR_FN (cfun)->count;
   add_bb_to_loop (init_block, ENTRY_BLOCK_PTR_FOR_FN (cfun)->loop_father);
   if (e)
-    {
-      first_block = e->dest;
-      redirect_edge_succ (e, init_block);
-      make_single_succ_edge (init_block, first_block, flags);
-    }
+    expand_split_edge (e, init_block, flags);
   else
     make_single_succ_edge (init_block, EXIT_BLOCK_PTR_FOR_FN (cfun),
 			   EDGE_FALLTHRU);
@@ -7175,10 +7240,35 @@ pass_expand::execute (function *fun)
       >= param_max_debug_marker_count)
     cfun->debug_nonbind_markers = false;
 
+  enable_ranger (fun);
   lab_rtx_for_bb = new hash_map<basic_block, rtx_code_label *>;
+  head_end_for_bb.create (last_basic_block_for_fn (fun));
   FOR_BB_BETWEEN (bb, init_block->next_bb, EXIT_BLOCK_PTR_FOR_FN (fun),
 		  next_bb)
-    bb = expand_gimple_basic_block (bb, var_ret_seq != NULL_RTX);
+    bb = expand_gimple_basic_block (bb, var_ret_seq);
+  disable_ranger (fun);
+  FOR_BB_BETWEEN (bb, init_block->next_bb, EXIT_BLOCK_PTR_FOR_FN (fun),
+		  next_bb)
+    {
+      if ((bb->flags & BB_RTL) == 0)
+	{
+	  bb->il.gimple.seq = NULL;
+	  bb->il.gimple.phi_nodes = NULL;
+	  init_rtl_bb_info (bb);
+	  bb->flags |= BB_RTL;
+	  BB_HEAD (bb) = head_end_for_bb[bb->index].first;
+	  BB_END (bb) = head_end_for_bb[bb->index].second;
+	}
+      /* These flags have no purpose in RTL land.  */
+      if (EDGE_COUNT (bb->succs) == 2)
+	{
+	  EDGE_SUCC (bb, 0)->flags &= ~(EDGE_TRUE_VALUE | EDGE_FALSE_VALUE);
+	  EDGE_SUCC (bb, 1)->flags &= ~(EDGE_TRUE_VALUE | EDGE_FALSE_VALUE);
+	}
+      else if (single_succ_p (bb))
+	single_succ_edge (bb)->flags &= ~(EDGE_TRUE_VALUE | EDGE_FALSE_VALUE);
+    }
+  head_end_for_bb.release ();
 
   if (MAY_HAVE_DEBUG_BIND_INSNS)
     expand_debug_locations ();

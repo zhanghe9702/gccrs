@@ -941,9 +941,18 @@ pru_init_libfuncs (void)
 
   /* Long long.  */
   set_optab_libfunc (ashr_optab, DImode, "__pruabi_asrll");
-  set_optab_libfunc (smul_optab, DImode, "__pruabi_mpyll");
   set_optab_libfunc (ashl_optab, DImode, "__pruabi_lslll");
   set_optab_libfunc (lshr_optab, DImode, "__pruabi_lsrll");
+
+  if (TARGET_OPT_MUL)
+    {
+      set_optab_libfunc (smul_optab, DImode, "__pruabi_mpyll");
+    }
+  else
+    {
+      set_optab_libfunc (smul_optab, DImode, "__pruabi_softmpyll");
+      set_optab_libfunc (smul_optab, SImode, "__pruabi_softmpyi");
+    }
 
   set_optab_libfunc (sdiv_optab, SImode, "__pruabi_divi");
   set_optab_libfunc (udiv_optab, SImode, "__pruabi_divu");
@@ -1428,7 +1437,7 @@ pru_valid_const_ubyte_offset (machine_mode mode, HOST_WIDE_INT offset)
 /* Recognize a CTABLE base address.  Return CTABLE entry index, or -1 if
    base was not found in the pragma-filled pru_ctable.  */
 int
-pru_get_ctable_exact_base_index (unsigned HOST_WIDE_INT caddr)
+pru_get_ctable_exact_base_index (HOST_WIDE_INT caddr)
 {
   unsigned int i;
 
@@ -1444,7 +1453,7 @@ pru_get_ctable_exact_base_index (unsigned HOST_WIDE_INT caddr)
 /* Check if the given address can be addressed via CTABLE_BASE + UBYTE_OFFS,
    and return the base CTABLE index if possible.  */
 int
-pru_get_ctable_base_index (unsigned HOST_WIDE_INT caddr)
+pru_get_ctable_base_index (HOST_WIDE_INT caddr)
 {
   unsigned int i;
 
@@ -1461,7 +1470,7 @@ pru_get_ctable_base_index (unsigned HOST_WIDE_INT caddr)
 
 /* Return the offset from some CTABLE base for this address.  */
 int
-pru_get_ctable_base_offset (unsigned HOST_WIDE_INT caddr)
+pru_get_ctable_base_offset (HOST_WIDE_INT caddr)
 {
   int i;
 
@@ -2004,7 +2013,7 @@ pru_print_operand_address (FILE *file, machine_mode mode, rtx op)
 
     case CONST_INT:
       {
-	unsigned HOST_WIDE_INT caddr = INTVAL (op);
+	HOST_WIDE_INT caddr = INTVAL (op);
 	int base = pru_get_ctable_base_index (caddr);
 	int offs = pru_get_ctable_base_offset (caddr);
 	if (base < 0)

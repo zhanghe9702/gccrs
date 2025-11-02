@@ -26,6 +26,9 @@ along with GCC; see the file COPYING3.  If not see
 #include "tree-logical-location.h"
 #include "langhooks.h"
 #include "intl.h"
+#include "diagnostics/dumping.h"
+
+using namespace diagnostics::logical_locations;
 
 static void
 assert_valid_tree (const_tree node)
@@ -35,7 +38,15 @@ assert_valid_tree (const_tree node)
   gcc_assert (TREE_CODE (node) != TRANSLATION_UNIT_DECL);
 }
 
-/* class tree_logical_location_manager : public logical_location_manager.  */
+/* class tree_logical_location_manager
+   : public diagnostics::logical_locations::manager.  */
+
+void
+tree_logical_location_manager::dump (FILE *outfile, int indent) const
+{
+  diagnostics::dumping::emit_heading (outfile, indent,
+				      "tree_logical_location_manager");
+}
 
 const char *
 tree_logical_location_manager::get_short_name (key k) const
@@ -81,7 +92,7 @@ tree_logical_location_manager::get_internal_name (key k) const
   return NULL;
 }
 
-enum logical_location_kind
+enum kind
 tree_logical_location_manager::get_kind (key k) const
 {
   tree node = tree_from_key (k);
@@ -90,18 +101,18 @@ tree_logical_location_manager::get_kind (key k) const
   switch (TREE_CODE (node))
     {
     default:
-      return LOGICAL_LOCATION_KIND_UNKNOWN;
+      return kind::unknown;
     case FUNCTION_DECL:
-      return LOGICAL_LOCATION_KIND_FUNCTION;
+      return kind::function;
     case PARM_DECL:
-      return LOGICAL_LOCATION_KIND_PARAMETER;
+      return kind::parameter;
     case VAR_DECL:
-      return LOGICAL_LOCATION_KIND_VARIABLE;
+      return kind::variable;
     case NAMESPACE_DECL:
-      return LOGICAL_LOCATION_KIND_NAMESPACE;
+      return kind::namespace_;
 
     case RECORD_TYPE:
-      return LOGICAL_LOCATION_KIND_TYPE;
+      return kind::type;
     }
 }
 
@@ -123,7 +134,7 @@ tree_logical_location_manager::get_name_for_path_output (key k) const
   return label_text ();
 }
 
-logical_location
+key
 tree_logical_location_manager::get_parent (key k) const
 {
   tree node = tree_from_key (k);
@@ -132,16 +143,16 @@ tree_logical_location_manager::get_parent (key k) const
   if (DECL_P (node))
     {
       if (!DECL_CONTEXT (node))
-	return logical_location ();
+	return key ();
       if (TREE_CODE (DECL_CONTEXT (node)) == TRANSLATION_UNIT_DECL)
-	return logical_location ();
+	return key ();
       return key_from_tree (DECL_CONTEXT (node));
     }
   else if (TYPE_P (node))
     {
       if (!TYPE_CONTEXT (node))
-	return logical_location ();
+	return key ();
       return key_from_tree (TYPE_CONTEXT (node));
     }
-  return logical_location ();
+  return key ();
 }

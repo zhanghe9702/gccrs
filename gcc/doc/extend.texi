@@ -670,16 +670,21 @@ tester (int len; char data[len][len], int len)
 @end smallexample
 
 @cindex parameter forward declaration
-The @samp{int len} before the semicolon is a @dfn{parameter forward
-declaration}, and it serves the purpose of making the name @code{len}
-known when the declaration of @code{data} is parsed.
+The @samp{int len} before the semicolon
+is a @dfn{parameter forward declaration},
+and it serves the purpose of making the name @code{len} known
+when the declaration of @code{data} is parsed.
 
-You can write any number of such parameter forward declarations in the
-parameter list.  They can be separated by commas or semicolons, but the
-last one must end with a semicolon, which is followed by the ``real''
-parameter declarations.  Each forward declaration must match a ``real''
-declaration in parameter name and data type.  ISO C99 does not support
-parameter forward declarations.
+Lists of parameter forward declarations are terminated by semicolons,
+and parameter forward declarations are separated within such lists by commas,
+just like in the regular list of parameter declarations.
+
+You can write any number of lists of parameter forward declaration,
+but using more than one is unnecessary.
+The last semicolon is followed by the list of parameter declarations.
+Each parameter forward declaration must match
+a parameter declaration in parameter name and data type.
+ISO C99 does not support parameter forward declarations.
 
 @node Zero Length
 @subsection Arrays of Length Zero
@@ -1971,6 +1976,13 @@ declares that @code{my_alloc1} returns 16-byte aligned pointers and
 that @code{my_alloc2} returns a pointer whose value modulo 32 is equal
 to 8.
 
+@cindex @code{btf_decl_tag} function attribute
+@item btf_decl_tag
+The @code{btf_decl_tag} attribute may be used to associate function
+declarations with arbitrary strings by recording those strings in DWARF
+and/or BTF information in the same way that it is used for variables.
+See @ref{Common Variable Attributes}.
+
 @cindex @code{cold} function attribute
 @item cold
 The @code{cold} attribute on functions is used to inform the compiler that
@@ -2887,13 +2899,18 @@ my_memcpy (void *dest, const void *src, size_t len)
 @cindex @code{nonnull_if_nonzero} function attribute
 @item nonnull_if_nonzero
 @itemx nonnull_if_nonzero (@var{arg-index}, @var{arg2-index})
+@itemx nonnull_if_nonzero (@var{arg-index}, @var{arg2-index}, @var{arg3-index})
 The @code{nonnull_if_nonzero} attribute is a conditional version of the
-@code{nonnull} attribute.  It has two arguments, the first argument
+@code{nonnull} attribute.  It has two or three arguments, the first argument
 shall be argument index of a pointer argument which must be in some
 cases non-null and the second argument shall be argument index of an
 integral argument (other than boolean).  If the integral argument is
 zero, the pointer argument can be null, if it is non-zero, the pointer
-argument must not be null.
+argument must not be null.  If three arguments are provided, the third
+argument shall be argument index of another integral argument (other than
+boolean) and the pointer argument can be null if either of the integral
+arguments are zero and if both are non-zero, the pointer argument must not
+be null.
 
 @smallexample
 extern void *
@@ -2903,12 +2920,21 @@ extern void *
 my_memcpy2 (void *dest, const void *src, size_t len)
         __attribute__((nonnull_if_nonzero (1, 3),
                        nonnull_if_nonzero (2, 3)));
+extern size_t
+my_fread (void *buf, size_t size, size_t count, FILE *stream)
+        __attribute__((nonnull (4),
+                       nonnull_if_nonzero (1, 2, 3)));
 @end smallexample
 
 With these declarations, it is invalid to call
 @code{my_memcpy (NULL, NULL, 0);} or to
-call @code{my_memcpy2 (NULL, NULL, 4);} but it is valid
-to call @code{my_memcpy2 (NULL, NULL, 0);}.  This attribute should be
+call @code{my_memcpy2 (NULL, NULL, 4);} or to call
+@code{my_fread(@var{buf}, 0, 0, NULL);} or to call
+@code{my_fread(NULL, 1, 1, @var{stream});} but it is valid
+to call @code{my_memcpy2 (NULL, NULL, 0);} or
+@code{my_fread(NULL, 0, 0, @var{stream});} or
+@code{my_fread(NULL, 0, 1, @var{stream});} or
+@code{my_fread(NULL, 1, 0, @var{stream});}.  This attribute should be
 used on declarations which have e.g.@: an exception for zero sizes,
 in which case null may be passed.
 
@@ -3879,9 +3905,20 @@ behavior and permissible arguments are the same as for the command-line option
 
 @cindex @code{outline-atomics} function attribute, AArch64
 @item outline-atomics
+@itemx no-outline-atomics
 Enable or disable calls to out-of-line helpers to implement atomic operations.
 This corresponds to the behavior of the command-line options
 @option{-moutline-atomics} and @option{-mno-outline-atomics}.
+
+@cindex @code{max-vectorization} function attribute, AArch64
+@item max-vectorization
+@itemx no-max-vectorization
+@code{max-vectorization} tells GCC's vectorizer to treat all vector
+loops as being more profitable than the original scalar loops when
+optimizing the current function.  @code{no-max-vectorization} disables
+this behavior.
+This corresponds to the behavior of the command-line options
+@option{-mmax-vectorization} and @option{-mno-max-vectorization}.
 
 @cindex @code{indirect_return} function attribute, AArch64
 @item indirect_return
@@ -5629,12 +5666,12 @@ You can specify the kind of interrupt to be handled by adding an optional
 parameter to the interrupt attribute like this:
 
 @smallexample
-void f (void) __attribute__ ((interrupt ("user")));
+void f (void) __attribute__ ((interrupt ("supervisor")));
 @end smallexample
 
-Permissible values for this parameter are @code{user}, @code{supervisor},
-and @code{machine}.  If there is no parameter, then it defaults to
-@code{machine}.
+Permissible values for this parameter are @code{supervisor},
+@code{machine}, and @code{rnmi}.  If there is no parameter, then it
+defaults to @code{machine}.
 
 @cindex @code{riscv_vector_cc} function attribute, RISC-V
 @item riscv_vector_cc
@@ -5879,8 +5916,7 @@ accordingly to point to the start of the vector table before any functions with
 this attribute are invoked.  Usually a good place to do the initialization is
 the startup routine.  The TBR relative vector table can have at max 256 function
 entries.  The jumps to these functions are generated using a SH2A specific,
-non delayed branch instruction JSR/N @@(disp8,TBR).  You must use GAS and GLD
-from GNU binutils version 2.7 or later for this attribute to work correctly.
+non delayed branch instruction JSR/N @@(disp8,TBR).
 
 In an application, for a function being called once, this attribute
 saves at least 8 bytes of code; and if other successive calls are being
@@ -6113,10 +6149,18 @@ pass arguments, unless it takes a variable number of arguments.
 @cindex @code{no_callee_saved_registers} function attribute, x86
 @item no_callee_saved_registers
 Use this attribute to indicate that the specified function has no
-callee-saved registers. That is, all registers can be used as scratch
-registers. For example, this attribute can be used for a function
-called from the interrupt handler assembly stub which will preserve
-all registers and return from interrupt.
+callee-saved registers. That is, all registers, except for stack and
+frame pointers, can be used as scratch registers. For example, this
+attribute can be used for a function called from the interrupt handler
+assembly stub which will preserve all registers and return from
+interrupt.
+
+@cindex @code{preserve_none} function attribute, x86
+@item preserve_none
+This attribute is similar to @code{no_callee_saved_registers}, except
+on x86-64, r12, r13, r14, r15, rdi and rsi registers are used for
+integer parameter passing and this calling convention is subject to
+change.
 
 @cindex @code{no_caller_saved_registers} function attribute, x86
 @item no_caller_saved_registers
@@ -6125,9 +6169,10 @@ caller-saved registers. That is, all registers are callee-saved. For
 example, this attribute can be used for a function called from an
 interrupt handler. The compiler generates proper function entry and
 exit sequences to save and restore any modified registers, except for
-the EFLAGS register.  Since GCC doesn't preserve SSE, MMX nor x87
-states, the GCC option @option{-mgeneral-regs-only} should be used to
-compile functions with @code{no_caller_saved_registers} attribute.
+the EFLAGS register.  Since GCC doesn't preserve YMM nor ZMM registers,
+@code{no_caller_saved_registers} attribute can't be used on functions
+with AVX enabled.  Note that MMX and x87 registers aren't preserved by
+@code{no_caller_saved_registers} attribute.
 
 @cindex @code{interrupt} function attribute, x86
 @item interrupt
@@ -6705,11 +6750,6 @@ Enable/disable the generation of the AMX-AVX512 instructions.
 @itemx no-amx-tf32
 Enable/disable the generation of the AMX-TF32 instructions.
 
-@cindex @code{target("amx-transpose")} function attribute, x86
-@item amx-transpose
-@itemx no-amx-transpose
-Enable/disable the generation of the AMX-TRANSPOSE instructions.
-
 @cindex @code{target("amx-fp8")} function attribute, x86
 @item amx-fp8
 @itemx no-amx-fp8
@@ -6763,6 +6803,11 @@ Do/do not align destination of inlined string operations.
 Enable/disable the generation of RCPSS, RCPPS, RSQRTSS and RSQRTPS
 instructions followed an additional Newton-Raphson step instead of
 doing a floating-point division.
+
+@cindex @code{target("80387")} function attribute, x86
+@item 80387
+@itemx no-80387
+Generate code containing 80387 instructions for floating point.
 
 @cindex @code{target("general-regs-only")} function attribute, x86
 @item general-regs-only
@@ -6851,15 +6896,14 @@ compiler checks for @code{nocf_check} attribute mismatch and reports
 a warning in case of mismatch.
 
 @smallexample
-@{
-int foo (void) __attribute__(nocf_check);
-void (*foo1)(void) __attribute__(nocf_check);
+int foo (void) __attribute__((nocf_check));
+void (*foo1)(void) __attribute__((nocf_check));
 void (*foo2)(void);
 
 /* foo's address is assumed to be valid.  */
 int
 foo (void) 
-
+@{
   /* This call site is not checked for control-flow 
      validity.  */
   (*foo1)();
@@ -7101,78 +7145,6 @@ align them on any target.
 The @code{aligned} attribute can also be used for functions
 (@pxref{Common Function Attributes}.)
 
-@cindex @code{counted_by} variable attribute
-@item counted_by (@var{count})
-The @code{counted_by} attribute may be attached to the C99 flexible array
-member of a structure.  It indicates that the number of the elements of the
-array is given by the field "@var{count}" in the same structure as the
-flexible array member.
-
-This attribute is available only in C for now.
-In C++ this attribute is ignored.
-
-GCC may use this information to improve detection of object size information
-for such structures and provide better results in compile-time diagnostics
-and runtime features like the array bound sanitizer and
-the @code{__builtin_dynamic_object_size}.
-
-For instance, the following code:
-
-@smallexample
-struct P @{
-  size_t count;
-  char other;
-  char array[] __attribute__ ((counted_by (count)));
-@} *p;
-@end smallexample
-
-@noindent
-specifies that the @code{array} is a flexible array member whose number of
-elements is given by the field @code{count} in the same structure.
-
-The field that represents the number of the elements should have an
-integer type.  Otherwise, the compiler reports an error and ignores
-the attribute.
-
-When the field that represents the number of the elements is assigned a
-negative integer value, the compiler treats the value as zero.
-
-An explicit @code{counted_by} annotation defines a relationship between
-two objects, @code{p->array} and @code{p->count}, and there are the
-following requirements on the relationship between this pair:
-
-@itemize @bullet
-@item
-@code{p->count} must be initialized before the first reference to
-@code{p->array};
-
-@item
-@code{p->array} has @emph{at least} @code{p->count} number of elements
-available all the time.  This relationship must hold even after any of
-these related objects are updated during the program.
-@end itemize
-
-It's the programmer's responsibility to make sure the above requirements to
-be kept all the time.  Otherwise the compiler reports warnings and
-the results of the array bound sanitizer and the
-@code{__builtin_dynamic_object_size} built-in are undefined.
-
-One important feature of the attribute is that a reference to the flexible
-array member field uses the latest value assigned to the field that
-represents the number of the elements before that reference.  For example,
-
-@smallexample
-  p->count = val1;
-  p->array[20] = 0;  // ref1 to p->array
-  p->count = val2;
-  p->array[30] = 0;  // ref2 to p->array
-@end smallexample
-
-@noindent
-In the above, @code{ref1} uses @code{val1} as the number of the elements in
-@code{p->array}, and @code{ref2} uses @code{val2} as the number of elements
-in @code{p->array}.
-
 @cindex @code{alloc_size} variable attribute
 @item alloc_size (@var{position})
 @itemx alloc_size (@var{position-1}, @var{position-2})
@@ -7200,6 +7172,41 @@ the standard C function @code{calloc}, returns an object whose size
 is given by the product of arguments 1 and 2, and similarly, that
 @code{malloc_ptr}, like the standard C function @code{malloc},
 returns an object whose size is given by argument 1 to the function.
+
+@cindex @code{btf_decl_tag} variable attribute
+@item btf_decl_tag (@var{argument})
+The @code{btf_decl_tag} attribute may be used to associate variable
+declarations, struct or union member declarations, function
+declarations, and function parameter declarations with arbitrary strings.
+These strings are not interpreted by the compiler in any way, and have
+no effect on code generation.  Instead, these user-provided strings
+are recorded in DWARF (via @code{DW_AT_GNU_annotation} and
+@code{DW_TAG_GNU_annotation} extensions) and BTF information (via
+@code{BTF_KIND_DECL_TAG} records), and associated to the attributed
+declaration.  If neither DWARF nor BTF information is generated, the
+attribute has no effect.
+
+The argument is treated as a null-terminated sequence of zero or more
+non-null bytes.  Wide character strings are not supported.
+
+The attribute may be supplied multiple times for a single declaration,
+in which case each distinct argument string will be recorded in a
+separate DIE or BTF record, each associated to the declaration.  For
+a single declaration with multiple @code{btf_decl_tag} attributes,
+the order of the @code{DW_TAG_GNU_annotation} DIEs produced is not
+guaranteed to maintain the order of attributes in the source code.
+
+For example:
+
+@smallexample
+int *foo __attribute__ ((btf_decl_tag ("__percpu")));
+@end smallexample
+
+@noindent
+when compiled with @option{-gbtf} results in an additional
+@code{BTF_KIND_DECL_TAG} BTF record to be emitted in the BTF info,
+associating the string @samp{__percpu} with the @code{BTF_KIND_VAR}
+record for the variable @code{foo}.
 
 @cindex @code{cleanup} variable attribute
 @item cleanup (@var{cleanup_function})
@@ -7251,6 +7258,109 @@ but not attributes that affect a symbol's linkage or visibility such as
 @code{alias}, @code{visibility}, or @code{weak}.  The @code{deprecated}
 attribute is also not copied.  @xref{Common Function Attributes}.
 @xref{Common Type Attributes}.
+
+@cindex @code{counted_by} variable attribute
+@item counted_by (@var{count})
+The @code{counted_by} attribute may be attached to the C99 flexible array
+member, or a pointer field of a structure.  It indicates that the number
+of the elements of the array that is held by the flexible array member
+field, or is pointed to by the pointer field, is given by the field
+"@var{count}" in the same structure as the flexible array member or the
+pointer field.
+
+This attribute is available only in C for now.
+In C++ this attribute is ignored.
+
+GCC may use this information to improve detection of object size information
+for such structures and provide better results in compile-time diagnostics
+and runtime features like the array bound sanitizer and
+the @code{__builtin_dynamic_object_size}.
+
+For instance, the following code:
+
+@smallexample
+struct P @{
+  size_t count;
+  char other;
+  char array[] __attribute__ ((counted_by (count)));
+@} *p;
+@end smallexample
+
+@noindent
+specifies that the @code{array} is a flexible array member whose number
+of elements is given by the field @code{count} in the same structure.
+
+@smallexample
+struct PP @{
+  size_t count2;
+  char other1;
+  char *array2 __attribute__ ((counted_by (count2)));
+  int other2;
+@} *pp;
+@end smallexample
+
+@noindent
+specifies that the @code{array2} is an array that is pointed by the
+pointer field, and its number of elements is given by the field
+@code{count2} in the same structure.
+
+The field that represents the number of the elements should have an
+integer type.  Otherwise, the compiler reports an error and ignores
+the attribute.
+
+When the field that represents the number of the elements is assigned a
+negative integer value, the compiler treats the value as zero.
+
+The @code{counted_by} attribute is not allowed for a pointer to @code{void},
+a pointer to function, or a pointer to a structure or union that includes
+a flexible array member.  However, it is allowed for a pointer to
+non-void incomplete structure or union types, as long as the type could
+be completed before the first reference to the pointer.
+
+An explicit @code{counted_by} annotation defines a relationship between
+two objects, @code{p->array} and @code{p->count}, and there are the
+following requirements on the relationship between this pair:
+
+@itemize @bullet
+@item
+@code{p->count} must be initialized before the first reference to
+@code{p->array};
+
+@item
+@code{p->array} has @emph{at least} @code{p->count} number of elements
+available all the time.  This relationship must hold even after any of
+these related objects are updated during the program.
+@end itemize
+
+In addition to the above requirements, there is one more requirement
+between this pair if and only if @code{p->array} is an array that is
+pointed by the pointer field:
+
+@code{p->array} and @code{p->count} can only be changed by changing the
+whole structure at the same time.
+
+It's the programmer's responsibility to make sure the above requirements to
+be kept all the time.  Otherwise the compiler reports warnings and
+the results of the array bound sanitizer and the
+@code{__builtin_dynamic_object_size} built-in are undefined.
+
+One important feature of the attribute is that a reference to the flexible
+array member field uses the latest value assigned to the field that
+represents the number of the elements before that reference.  For example,
+
+@smallexample
+  p->count = val1;
+  p->array[20] = 0;  // ref1 to p->array
+  p->count = val2;
+  p->array[30] = 0;  // ref2 to p->array
+@end smallexample
+
+@noindent
+In the above, @code{ref1} uses @code{val1} as the number of the elements in
+@code{p->array}, and @code{ref2} uses @code{val2} as the number of elements
+in @code{p->array}.
+
+Note, however, the above feature is not valid for the pointer field.
 
 @cindex @code{deprecated} variable attribute
 @item deprecated
@@ -7855,9 +7965,6 @@ The compiler generates more efficient code for certain operations
 on data in the eight-bit data area.  Note the eight-bit data area is limited to
 256 bytes of data.
 
-You must use GAS and GLD from GNU binutils version 2.7 or later for
-this attribute to work correctly.
-
 @cindex @code{tiny_data} variable attribute, H8/300
 @cindex tiny data section on the H8/300H and H8S
 @item tiny_data
@@ -8289,6 +8396,43 @@ the standard C function @code{calloc}, returns an object whose size
 is given by the product of arguments 1 and 2, and that
 @code{malloc_type}, like the standard C function @code{malloc},
 returns an object whose size is given by argument 1 to the function.
+
+@cindex @code{btf_type_tag} type attribute
+@item btf_type_tag (@var{argument})
+The @code{btf_type_tag} attribute may be used to associate (to ``tag'')
+particular types with arbitrary string annotations.  These annotations
+are recorded in debugging info by supported debug formats, currently
+DWARF (via @code{DW_AT_GNU_annotation} and @code{DW_TAG_GNU_annotation}
+extensions) and BTF (via @code{BTF_KIND_TYPE_TAG} records).  These
+annotation strings are not interpreted by the compiler in any way, and
+have no effect on code generation.  If neither DWARF nor BTF
+information is generated, the attribute has no effect.
+
+The argument is treated as a null-terminated sequence of zero or more
+non-null bytes.  Wide character strings are not supported.
+
+The attribute may be supplied multiple times for a single type, in
+which case each distinct argument string will be recorded in a
+separate DIE or BTF record, each associated to the type.  For a single
+type with multiple @code{btf_type_tag} attributes, the order of the
+@code{DW_TAG_GNU_annotation} DIEs produced is not guaranteed to
+maintain the order of attributes in the source code.
+
+For example the following code:
+
+@smallexample
+int * __attribute__ ((btf_type_tag ("__user"))) foo;
+@end smallexample
+
+@noindent
+when compiled with @option{-gbtf} results in an additional
+@code{BTF_KIND_TYPE_TAG} BTF record to be emitted in the BTF info,
+associating the string @samp{__user} with the normal @code{BTF_KIND_PTR}
+record for the pointer-to-integer type used in the declaration.
+
+Note that the BTF format currently only has a representation for type
+tags associated with pointer types.  Type tags on non-pointer types
+may be silently skipped when generating BTF.
 
 @cindex @code{copy} type attribute
 @item copy
@@ -9176,7 +9320,7 @@ NoError:
 @item unused
 This feature is intended for program-generated code that may contain 
 unused labels, but which is compiled with @option{-Wall}.  It is
-not normally appropriate to use in it human-written code, though it
+not normally appropriate to use it in human-written code, though it
 could be useful in cases where the code that jumps to the label is
 contained within an @code{#ifdef} conditional.
 
@@ -10381,6 +10525,12 @@ loop or a @code{#pragma GCC ivdep}, and applies only to the loop that follows.
 @var{n} is an integer constant expression specifying the unrolling factor.
 The values of @math{0} and @math{1} block any unrolling of the loop.
 
+If the loop is vectorized the vectorizer considers extra unrolling to honor the
+unroll factor.  After vectorizing a loop the pragma is dropped.  Whether the
+loop is unrolled or not will be determined by target costing.  The resulting
+vectorized loop may still be unrolled more in later passes depending on the
+target costing.
+
 @end table
 
 @node Thread-Local
@@ -10667,7 +10817,7 @@ and @samp{[[omp::sequence(...)]]} in C and C++,
 GCC needs to be invoked with the @option{-fopenmp} option.
 This option also arranges for automatic linking of the OpenMP
 runtime library.
-@xref{,,,libgomp,GNU Offloading and Multi Processing Runtime Library}.
+@xref{Top,,,libgomp,GNU Offloading and Multi Processing Runtime Library}.
 
 @xref{OpenMP and OpenACC Options}, for additional options useful with
 @option{-fopenmp}.
@@ -10689,7 +10839,7 @@ To enable the processing of OpenACC directives @samp{#pragma acc}
 in C and C++, GCC needs to be invoked with the @option{-fopenacc} option.
 This option also arranges for automatic linking of the OpenACC runtime
 library.
-@xref{,,,libgomp,GNU Offloading and Multi Processing Runtime Library}.
+@xref{Top,,,libgomp,GNU Offloading and Multi Processing Runtime Library}.
 
 @xref{OpenMP and OpenACC Options}, for additional options useful with
 @option{-fopenacc}.
@@ -12736,6 +12886,7 @@ the two, as explained in the sections below.
 @menu
 * Global Register Variables::   Variables declared at global scope.
 * Local Register Variables::    Variables declared within a function.
+* Hard Register Constraints::   Operands forced into specific machine registers.
 @end menu
 
 @node Global Register Variables
@@ -12940,6 +13091,167 @@ On the MIPS platform, there is related use for local register variables
 with slightly different characteristics (@pxref{MIPS Coprocessors,, 
 Defining coprocessor specifics for MIPS targets, gccint, 
 GNU Compiler Collection (GCC) Internals}).
+
+@node Hard Register Constraints
+@subsubsection Hard Register Constraints
+
+Similar to register @code{asm} but still distinct, hard register constraints
+are another way to force operands of inline @code{asm} into specific machine
+registers.  In contrast to register @code{asm} where a variable is bound to a
+machine register, a hard register constraint binds an @code{asm} operand to a
+machine register.  Assume in the following that @code{r4} is a general-purpose
+register, @code{f5} a floating-point register, and @code{v6} a vector register
+for some target.
+
+@smallexample
+int x;
+int y __attribute__ ((vector_size (16)));
+@dots{}
+asm ("some instructions"
+     : "=@{r4@}" (x)
+     : "@{f5@}" (42.0), "@{v6@}" (y));
+@end smallexample
+
+For the inline @code{asm}, variable @code{x} is bound to register @code{r4},
+and @code{y} is loaded to @code{v6}.  Furthermore, constant @code{42.0} is
+loaded into floating-point register @code{f5}.
+
+A key difference between register @code{asm} and hard register constraints is
+that the latter are specified at the point where they are supposed to
+materialize, namely at inline @code{asm}, which may lead to more readable code.
+
+@subsubheading Usage
+
+Each input operand is loaded into the register specified by its corresponding
+hard register constraint.  Furthermore, each hard register must be used at most
+once among an alternative for inputs.  This renders hard register constraints
+more strict compared to register @code{asm} where multiple inputs may share a
+register as for example in
+
+@smallexample
+int x;
+register int y asm ("0") = @dots{};
+asm ("" : "=r" (x) : "r" (y), "r" (y));
+@end smallexample
+
+or even
+
+@smallexample
+register int x asm ("0") = 42;
+register int y asm ("0") = 24;
+asm ("" : "=r" (x) : "r" (x), "r" (y));
+@end smallexample
+
+The analogue for hard register constraints is invalid in order to prevent
+subtle bugs.
+
+Likewise, two outputs must not share a register among an alternative.  That
+means, the following example is invalid
+
+@smallexample
+int x, y;
+asm ("" : "=@{r4@}" (x), "=@{r4@}" (y));  // invalid
+@end smallexample
+
+which also aligns with register @code{asm}.  Despite that, each output must
+refer to a distinct object if a hard register constraint is involved.  For
+example, in the following, object @code{x} is assigned two registers.
+
+@smallexample
+int x;
+asm ("" : "=r" (x), "=r" (x));
+@end smallexample
+
+This is not allowed for hard register constraints in order to prevent subtle
+bugs.  Even if only one output operand has a hard register constraint, the code
+is rejected since the allocation for the object is still ambiguous.
+
+@smallexample
+int x;
+asm ("" : "=r" (x), "=@{1@}" (x));  // invalid
+@end smallexample
+
+The type of an operand must be supported by the corresponding machine register.
+
+A hard register constraint may refer to any general, floating-point, or vector
+register except a fixed register as e.g.@: the stack-pointer register.  The set
+of allowed registers is target dependent analogue to register @code{asm}.
+Furthermore, the referenced register must be a valid register name of the
+target.  Note, on some targets, a single register may be referred to by
+different names where each name specifies the length of the register.  For
+example, on x86_64 the register names @code{rcx}, @code{ecx}, and @code{cx} all
+refer to the same register but in different sizes.  If any of those names is
+used for a hard register constraint, the actual size of a register is
+determined by its corresponding operand.  For example
+
+@smallexample
+long x;
+asm ("mov\t$42, %0" : "=@{ecx@}" (x));
+@end smallexample
+
+Although the hard register constraint refers to register @code{ecx}, the actual
+register will be @code{rcx} since on x86_64 a @code{long} is 8 byte in total.
+This aligns with register @code{asm} where you could have
+
+@smallexample
+register long x asm ("ecx");
+@end smallexample
+
+@subsubheading Interaction with Register @code{asm}
+
+A mixture of both constructs as for example
+
+@smallexample
+register int x asm ("r4") = 42;
+int y;
+asm ("" : "=@{r5@}" (y) : "r" (x));
+@end smallexample
+
+is valid.
+
+If an operand is a register @code{asm} and the corresponding constraint a hard
+register, then both must refer to the same register.  That means
+
+@smallexample
+register int x asm ("r4");
+asm ("" : "=@{r4@}" (x));
+@end smallexample
+
+is valid and
+
+@smallexample
+register int x asm ("r4");
+asm ("" : "=@{r5@}" (x));  // invalid
+@end smallexample
+
+is invalid.
+
+Note, register @code{asm} may not only be clobbered by function calls but also
+by inline @code{asm} in conjunction with hard register constraints.  For
+example, in the following
+
+@smallexample
+register int x asm ("r5") = 42;
+int y;
+asm ("" : "=@{r5@}" (y));
+asm ("" : "+r" (x));
+@end smallexample
+
+variable @code{x} materializes before the very first inline @code{asm} which
+writes to register @code{r5} and therefore clobbers @code{x} which in turn is
+read by the subsequent inline @code{asm}.
+
+@subsubheading Limitations
+
+At the moment fixed registers are not supported for hard register constraints.
+Thus, idioms like
+
+@smallexample
+register void *x asm ("rsp");
+asm ("" : "=r" (x));
+@end smallexample
+
+are not supported for hard register constraints.  This might be lifted.
 
 @node Size of an asm
 @subsection Size of an @code{asm}
@@ -15483,7 +15795,7 @@ are 128-bit.  Only supported on targets when 128-bit types are supported.
 Returns the calculated 8-bit bit-reversed CRC using the initial CRC (8-bit),
 data (8-bit) and the polynomial (8-bit).
 @var{crc} is the initial CRC, @var{data} is the data and
-@var{poly} is the polynomial without leading 1.
+@var{poly} is the polynomial without leading 1. @var{poly} is required to be a compile-time constant.
 Table-based or clmul-based CRC may be used for the
 calculation, depending on the target architecture.
 @enddefbuiltin
@@ -15538,7 +15850,7 @@ is 32-bit.
 Returns the calculated 8-bit bit-forward CRC using the initial CRC (8-bit),
 data (8-bit) and the polynomial (8-bit).
 @var{crc} is the initial CRC, @var{data} is the data and
-@var{poly} is the polynomial without leading 1.
+@var{poly} is the polynomial without leading 1. @var{poly} is required to be a compile-time constant.
 Table-based or clmul-based CRC may be used for the
 calculation, depending on the target architecture.
 @enddefbuiltin
@@ -16286,17 +16598,18 @@ invoke undefined behavior at run time.  Warnings for out of bound
 accesses for vector subscription can be enabled with
 @option{-Warray-bounds}.
 
-Vector comparison is supported with standard comparison
-operators: @code{==, !=, <, <=, >, >=}. Comparison operands can be
+Vector comparison is supported with standard comparison operators:
+@code{==}, @code{!=}, @code{<}, @code{<=}, @code{>}, and
+@code{>=}. Comparison operands can be
 vector expressions of integer-type or real-type. Comparison between
 integer-type vectors and real-type vectors are not supported.  The
 result of the comparison is a vector of the same width and number of
 elements as the comparison operands with a signed integral element
 type.
 
-Vectors are compared element-wise producing 0 when comparison is false
-and -1 (constant of the appropriate type where all bits are set)
-otherwise. Consider the following example.
+Vectors are compared elementwise producing 0 when the comparison is false
+and -1 (a constant of the appropriate type where all bits are set)
+otherwise. Consider the following example:
 
 @smallexample
 typedef int v4si __attribute__ ((vector_size (16)));
@@ -17015,7 +17328,8 @@ is computed.
 
 @smallexample
 struct V @{ char buf1[10]; int b; char buf2[10]; @} var;
-char *p = &var.buf1[1], *q = &var.b;
+char *p = &var.buf1[1];
+int *q = &var.b;
 
 /* Here the object p points to is var.  */
 assert (__builtin_object_size (p, 0) == sizeof (var) - 1);
@@ -28093,6 +28407,9 @@ Intel Core i7 Panther Lake CPU.
 @item diamondrapids
 Intel Core i7 Diamond Rapids CPU.
 
+@item novalake
+Intel Core i7 Nova Lake CPU.
+
 @item bonnell
 Intel Atom Bonnell CPU.
 
@@ -30612,6 +30929,12 @@ efficient implementation of @code{std::make_integer_sequence}.
 @defbuiltin{bool __is_same (@var{type1}, @var{type2})}
 A binary type trait: @code{true} whenever the @var{type1} and
 @var{type2} refer to the same type.
+@enddefbuiltin
+
+@defbuiltin{size_t __builtin_structured_binding_size (@var{type})}
+This trait returns the structured binding size ([dcl.struct.bind])
+of @var{type}.  If a type does not have a structured binding size,
+an error is diagnosed unless it is used in SFINAE contexts.
 @enddefbuiltin
 
 

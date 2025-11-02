@@ -73,6 +73,9 @@ GRS_OBJS = \
     rust/rust-lex.o \
     rust/rust-cfg-parser.o \
     rust/rust-parse.o \
+    rust/rust-parse-impl-proc-macro.o \
+    rust/rust-parse-impl-macro.o \
+    rust/rust-parse-impl-lexer.o \
     rust/rust-ast.o \
     rust/rust-ast-formatting.o \
     rust/rust-path.o \
@@ -81,6 +84,7 @@ GRS_OBJS = \
     rust/rust-ast-dump.o \
     rust/rust-ast-collector.o \
     rust/rust-ast-visitor.o \
+    rust/rust-ast-pointer-visitor.o \
     rust/rust-hir-visitor.o \
     rust/rust-hir-dump.o \
     rust/rust-session-manager.o \
@@ -115,6 +119,7 @@ GRS_OBJS = \
     rust/rust-macro-builtins-log-debug.o \
     rust/rust-macro-builtins-test-bench.o \
     rust/rust-macro-builtins-format-args.o \
+    rust/rust-macro-builtins-offset-of.o \
     rust/rust-macro-builtins-location.o \
     rust/rust-macro-builtins-include.o \
     rust/rust-token-tree-desugar.o \
@@ -143,17 +148,8 @@ GRS_OBJS = \
 	rust/rust-ice-finalizer.o \
     rust/rust-late-name-resolver-2.0.o \
 	rust/rust-immutable-name-resolution-context.o \
-    rust/rust-early-name-resolver.o \
     rust/rust-name-resolver.o \
-    rust/rust-ast-resolve.o \
-    rust/rust-ast-resolve-base.o \
-    rust/rust-ast-resolve-item.o \
-    rust/rust-ast-resolve-pattern.o \
-    rust/rust-ast-resolve-expr.o \
-    rust/rust-ast-resolve-type.o \
-    rust/rust-ast-resolve-path.o \
-    rust/rust-ast-resolve-stmt.o \
-    rust/rust-ast-resolve-struct-expr-field.o \
+    rust/rust-resolve-builtins.o \
     rust/rust-forever-stack.o \
     rust/rust-hir-type-check.o \
     rust/rust-privacy-check.o \
@@ -242,9 +238,12 @@ GRS_OBJS = \
 	rust/rust-expand-format-args.o \
 	rust/rust-lang-item.o \
 	rust/rust-collect-lang-items.o \
+	rust/rust-expression-yeast.o \
 	rust/rust-desugar-for-loops.o \
+	rust/rust-desugar-while-let.o \
 	rust/rust-desugar-question-mark.o \
 	rust/rust-desugar-apit.o \
+	rust/rust-desugar-try-block.o \
     $(END)
 # removed object files from here
 
@@ -435,6 +434,7 @@ RUST_INCLUDES = -I $(srcdir)/rust \
 	-I $(srcdir)/rust/checks/errors \
 	-I $(srcdir)/rust/checks/errors/privacy \
 	-I $(srcdir)/rust/checks/errors/borrowck \
+	-I $(srcdir)/rust/checks/errors/feature \
 	-I $(srcdir)/rust/util \
         -I $(srcdir)/rust/metadata \
 		-I $(srcdir)/../libgrust
@@ -504,6 +504,11 @@ rust/%.o: rust/checks/lints/%.cc
 
 # build rust/checks/errors files in rust folder
 rust/%.o: rust/checks/errors/%.cc
+	$(COMPILE) $(RUST_CXXFLAGS) $(RUST_INCLUDES) $<
+	$(POSTCOMPILE)
+
+# build feature related files in rust folder
+rust/%.o: rust/checks/errors/feature/%.cc
 	$(COMPILE) $(RUST_CXXFLAGS) $(RUST_INCLUDES) $<
 	$(POSTCOMPILE)
 

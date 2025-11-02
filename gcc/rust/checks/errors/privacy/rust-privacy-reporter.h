@@ -19,10 +19,12 @@
 #ifndef RUST_PRIVACY_REPORTER_H
 #define RUST_PRIVACY_REPORTER_H
 
+#include "rust-hir-expr.h"
 #include "rust-hir-map.h"
 #include "rust-hir-visitor.h"
+#include "rust-hir-type-check.h"
 #include "rust-mapping-common.h"
-#include "rust-name-resolver.h"
+#include "rust-name-resolution-context.h"
 
 namespace Rust {
 namespace Privacy {
@@ -37,7 +39,7 @@ class PrivacyReporter : public HIR::HIRExpressionVisitor,
 {
 public:
   PrivacyReporter (Analysis::Mappings &mappings,
-		   Rust::Resolver::Resolver &resolver,
+		   const Resolver2_0::NameResolutionContext &resolver,
 		   const Rust::Resolver::TypeCheckContext &ty_ctx);
 
   /**
@@ -128,6 +130,7 @@ types
   virtual void visit (HIR::AsyncBlockExpr &expr);
   virtual void visit (HIR::InlineAsm &expr);
   virtual void visit (HIR::LlvmInlineAsm &expr);
+  virtual void visit (HIR::OffsetOf &expr);
 
   virtual void visit (HIR::EnumItemTuple &);
   virtual void visit (HIR::EnumItemStruct &);
@@ -155,7 +158,7 @@ types
   virtual void visit (HIR::ExprStmt &stmt);
 
   Analysis::Mappings &mappings;
-  Rust::Resolver::Resolver &resolver;
+  const Resolver2_0::NameResolutionContext &resolver;
   const Rust::Resolver::TypeCheckContext &ty_ctx;
 
   // `None` means we're in the root module - the crate

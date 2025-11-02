@@ -1,4 +1,4 @@
-;); Machine description for RISC-V Bit Manipulation operations.
+;; Machine description for RISC-V Bit Manipulation operations.
 ;; Copyright (C) 2021-2025 Free Software Foundation, Inc.
 
 ;; This file is part of GCC.
@@ -237,19 +237,20 @@
   [(set_attr "type" "bitmanip")
    (set_attr "mode" "<X:MODE>")])
 
-(define_insn_and_split "*<optab>_not_const<mode>"
-  [(set (match_operand:X 0 "register_operand" "=r")
-       (bitmanip_bitwise:X (not:X (match_operand:X 1 "register_operand" "r"))
-              (match_operand:X 2 "const_arith_operand" "I")))
-  (clobber (match_scratch:X 3 "=&r"))]
+(define_peephole2
+  [(match_scratch:X 4 "r")
+   (set (match_operand:X 0 "register_operand")
+	(not:X (match_operand:X 1 "register_operand")))
+   (set (match_operand:X 2 "register_operand")
+	(bitmanip_bitwise:X (match_dup 0)
+			    (match_operand 3 "const_int_operand")))
+   (match_dup 4)]
   "(TARGET_ZBB || TARGET_ZBKB) && !TARGET_ZCB
-   && !optimize_function_for_size_p (cfun)"
-  "#"
-  "&& reload_completed"
-  [(set (match_dup 3) (match_dup 2))
-   (set (match_dup 0) (bitmanip_bitwise:X (not:X (match_dup 1)) (match_dup 3)))]
-  ""
-  [(set_attr "type" "bitmanip")])
+   && !optimize_function_for_size_p (cfun)
+   && rtx_equal_p (operands[0], operands[2])
+   && riscv_const_insns (operands[3], false) == 1"
+  [(set (match_dup 4) (match_dup 3))
+   (set (match_dup 0) (bitmanip_bitwise:X (not:X (match_dup 1)) (match_dup 4)))])
 
 ;; '(a >= 0) ? b : 0' is emitted branchless (from if-conversion).  Without a
 ;; bit of extra help for combine (i.e., the below split), we end up emitting
@@ -552,6 +553,19 @@
   "TARGET_ZBB"
   "<bitmanip_insn>\t%0,%1,%z2"
   [(set_attr "type" "<bitmanip_insn>")])
+
+;; Provide a minmax pattern for ifcvt to match.
+(define_insn "*<bitmanip_minmax_cmp_insn>_cmp_<mode>3"
+  [(set (match_operand:X 0 "register_operand" "=r")
+	(if_then_else:X
+	    (bitmanip_minmax_cmp_op
+		(match_operand:X 1 "register_operand" "r")
+		(match_operand:X 2 "register_operand" "r"))
+	    (match_dup 1)
+	    (match_dup 2)))]
+  "TARGET_ZBB"
+  "<bitmanip_minmax_cmp_insn>\t%0,%1,%z2"
+  [(set_attr "type" "<bitmanip_minmax_cmp_insn>")])
 
 ;; Optimize the common case of a SImode min/max against a constant
 ;; that is safe both for sign- and zero-extension.
@@ -1205,13 +1219,13 @@
 ;; Reversed CRC 8, 16, 32 for TARGET_64
 (define_expand "crc_rev<ANYI1:mode><ANYI:mode>4"
 	;; return value (calculated CRC)
-  [(set (match_operand:ANYI 0 "register_operand" "=r")
+  [(set (match_operand:ANYI 0 "register_operand")
 		      ;; initial CRC
-	(unspec:ANYI [(match_operand:ANYI 1 "register_operand" "r")
+	(unspec:ANYI [(match_operand:ANYI 1 "register_operand")
 		      ;; data
-		      (match_operand:ANYI1 2 "register_operand" "r")
+		      (match_operand:ANYI1 2 "register_operand")
 		      ;; polynomial without leading 1
-		      (match_operand:ANYI 3)]
+		      (match_operand:ANYI 3 "const_int_operand")]
 		      UNSPEC_CRC_REV))]
   /* We don't support the case when data's size is bigger than CRC's size.  */
   "<ANYI:MODE>mode >= <ANYI1:MODE>mode"
@@ -1245,13 +1259,13 @@
 ;; CRC 8, 16, (32 for TARGET_64)
 (define_expand "crc<SUBX1:mode><SUBX:mode>4"
 	;; return value (calculated CRC)
-  [(set (match_operand:SUBX 0 "register_operand" "=r")
+  [(set (match_operand:SUBX 0 "register_operand")
 		      ;; initial CRC
-	(unspec:SUBX [(match_operand:SUBX 1 "register_operand" "r")
+	(unspec:SUBX [(match_operand:SUBX 1 "register_operand")
 		      ;; data
-		      (match_operand:SUBX1 2 "register_operand" "r")
+		      (match_operand:SUBX1 2 "register_operand")
 		      ;; polynomial without leading 1
-		      (match_operand:SUBX 3)]
+		      (match_operand:SUBX 3 "const_int_operand")]
 		      UNSPEC_CRC))]
   /* We don't support the case when data's size is bigger than CRC's size.  */
   "(TARGET_ZBKC || TARGET_ZBC || TARGET_ZVBC)
